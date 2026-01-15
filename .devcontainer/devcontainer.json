@@ -1,0 +1,25 @@
+{
+    "name": "Observation Assimilation Transformer",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+    "settings": {
+        "python.defaultInterpreterPath": "/workspaces/oat/.venv/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.mypyEnabled": true,
+        "python.formatting.provider": "black",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": true
+        }
+    },
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-toolsai.jupyter",
+    ],
+    "postCreateCommand": "poetry install && poetry run pip install ipykernel && poetry run python -m ipykernel install --user --name=poetry_project --display-name 'Python (.venv)'"
+
+}

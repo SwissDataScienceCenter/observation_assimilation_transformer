@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+env/
+
+# Data
+data/processed/
+data/raw/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+!.devcontainer/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Misc
+.DS_Store
