@@ -205,6 +205,8 @@ class WindDataset(Dataset[OATBatch]):
         for key in self.constant_input:
             const_data = xr.open_zarr(self.input_paths[key])[self.input_vars[key]]  # (C, H, W)
             interp_data = const_data.interp(x=ref_zarr.x, y=ref_zarr.y, method="nearest").to_array().values  # (C, H_ref, W_ref)
+            # set nan to 0 (TODO: better handling?)
+            interp_data = np.nan_to_num(interp_data, nan=0.0)
             constants.append(torch.tensor(interp_data, dtype=self.dtype))
         return torch.cat(constants, dim=0)
                 
