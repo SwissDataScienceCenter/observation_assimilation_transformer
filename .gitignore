@@ -11,6 +11,7 @@ env/
 # Data
 data/processed/
 data/raw/
+notebooks/wip/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -26,3 +27,5 @@ build/
 
 # Misc
 .DS_Store
+poetry.lock
+.cache_constant_inputs
