@@ -2,7 +2,7 @@
 name = "oat"
 version = "0.1.0"
 description = ""
-authors = ["Christian Donner <christian.donner@meteoswiss.ch>"]
+authors = [{name = "Christian Donner", email="christian.donner@meteoswiss.ch"}]
 packages = [{include = "oat", from = "src"}]
 
 [tool.poetry.dependencies]
