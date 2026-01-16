@@ -1,0 +1,70 @@
+paths:
+  root: /scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked
+  nwp: ${paths.root}/nwp.zarr
+  obs: ${paths.root}/obs.zarr
+  topo: ${paths.root}/topo.zarr
+  station_info: "/scratch/mch/illornsj/data/cosmo-1e/station_classification.csv"
+  # cache_dir: TODO
+
+vars:
+  nwp_vars: [U_10M, VMAX_10M, V_10M]
+  obs_vars: [fkl010h1]
+  topo_vars: [DEM, TPI_500M, TPI_2000M, WE_DERIVATIVE_2000M_SIGRATIO1, SN_DERIVATIVE_2000M_SIGRATIO1]
+  global_grid_reference: nwp
+
+loader:
+  batch_size: 4 # 32
+  num_workers: 0 # 16
+  #prefetch_factor: 1 # 4
+  device: cpu
+  persistent_workers: false # true
+  pin_memory: true
+
+split:
+  type: random
+  subsets: [smn, spn] # smn spn	foreign	jura	w_midlands	e_midlands	w_valley_n_slope	e_valley_n_slope	inneralp_valley	mountaintop	valley_s_slope
+  n_train: 100
+  n_val: 20
+  seed: 42
+
+use_time_embedding: true
+  
+
+# Transforms applied on the fly
+transforms:
+  global_data:
+    global_field:
+      - type: standard_normalize
+        channel_dim: -3
+  
+  observation_data:
+    topo:
+      - type: standard_normalize
+        channel_dim: -3
+    obs:
+      - type: log
+        offset: 1.0
+      - type: standard_normalize
+        channel_dim: -1
+
+  query_data:
+    topo:
+      - type: standard_normalize
+        channel_dim: -3
+    obs:
+      - type: log
+        offset: 1.0
+      - type: standard_normalize
+        channel_dim: -1
+
+
+# Transforms that are applied before computing statistics
+pre_stats_transforms:
+  observation_data:
+    obs:
+      - type: log
+        offset: 1.0
+    query_data:
+      obs:
+        - type: log
+          offset: 1.0
