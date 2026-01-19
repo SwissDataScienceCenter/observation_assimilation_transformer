@@ -1,6 +1,6 @@
 import torch
 import yaml
-from typing import Any, Callable
+from typing import Any
 
 TRANSFORM_REGISTRY: dict[str, type['Transform']] = {}
 
@@ -8,7 +8,7 @@ def register_transform(cls: type['Transform']) -> type['Transform']:
     TRANSFORM_REGISTRY[cls.__name__] = cls
     return cls
 
-class Transform(Callable[[torch.Tensor], torch.Tensor]):
+class Transform:
     """Base class for data transformations."""
 
     def __call__(self, sample: torch.Tensor) -> torch.Tensor:
