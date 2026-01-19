@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import torch
 import pandas as pd
 from omegaconf import OmegaConf
 from src.oat.data_module import factory
@@ -26,7 +27,7 @@ def main():
     print("With content:\n", df)
 
 
-def create_batch_fixture_table(batch: dict[str]) -> pd.DataFrame:
+def create_batch_fixture_table(batch: dict[str, dict[str, torch.Tensor]]) -> pd.DataFrame:
 
     rows = []
     for k, v in batch.items():
