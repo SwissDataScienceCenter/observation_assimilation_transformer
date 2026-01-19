@@ -1,9 +1,11 @@
-[project]
+[tool.poetry]
 name = "oat"
 version = "0.1.0"
 description = ""
-authors = [{name = "Christian Donner", email="christian.donner@meteoswiss.ch"}]
-packages = [{include = "oat", from = "src"}]
+authors = ["Christian Donner <christian.donner@meteoswiss.ch>"]
+packages = [{include = "oat", from = "src"},
+            {include = "oat_test", from = "test"}]
+include = ["test/oat_test/**/*.py"]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.15"
