@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 
 # Path to the table containing the shapes and dtypes.
-TABLE_PATH = Path(__file__).resolve().parents[1] / "test" / "batch_shapes.pickle"
+TABLE_PATH = Path(__file__).resolve().parent / "batch_shapes.pickle"
 
 def generate_batch_from_table(df: pd.DataFrame) -> dict:
     """
