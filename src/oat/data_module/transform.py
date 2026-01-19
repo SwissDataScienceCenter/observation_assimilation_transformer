@@ -209,7 +209,7 @@ class LogTransform(Transform):
 class ComposedTransform(Transform):
     """Concatenates multiple transformations."""
 
-    def __init__(self, transforms: list[Transform]):
+    def __init__(self, transforms: list[Transform]) -> None:
         """
         Args:
             transforms (list): List of Transform instances to concatenate.
