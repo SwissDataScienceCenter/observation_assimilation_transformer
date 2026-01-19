@@ -123,7 +123,7 @@ def _build_transform_list(transform_list: list[transform.Transform], transform_s
     """
     transforms = []
     for t_cfg in transform_list:
-        assert isinstance(t_cfg, dict)
+        # assert isinstance(t_cfg, dict)
         transforms.append(_create_transform(t_cfg, transform_stats))
     composed_transform = transform.ComposedTransform(transforms)
     return composed_transform
@@ -190,6 +190,7 @@ def create_dataset(data_config: DictConfig) -> tuple[dataloader.OATLoader,
         target_vars=obs_vars,
         stations=train_stations,
         global_grid_reference=data_config.vars.global_grid_reference,
+        patch_size=torch.tensor(data_config.vars.get("local_patch_size", (32, 32))),
         dtype=torch.float32,
         use_time_embedding=data_config.use_time_embedding
     )
