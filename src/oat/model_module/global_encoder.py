@@ -1,14 +1,17 @@
 import torch
 from typing import Any, Dict
 from monai.networks.nets import SwinUNETR
-from monai.networks.layers import split_args, Pad
-from torch.nn.functional import grid_sample
 from oat.data_module.wind_dataset import pos_transform
+from torch.nn import functional as F
 
 class BaseGlobalEncoder(torch.nn.Module):
     """Base class for global encoders processing global data inputs."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
+        """
+        Args:
+            config: Configuration dictionary.
+        """
         super().__init__()
         self.config = config
 
@@ -27,13 +30,30 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
     """Global encoder using SwinUNETR architecture."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
+        """
+        Args:
+            config: Configuration dictionary. 
+                    - 'swin_unetr_params': Parameters for SwinUNETR model. See [monai](https://monai.readthedocs.io/en/stable/networks.html#swinunetr) documentation for details.
+                    - 'field_extent': Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
+        """
         super().__init__(config)
+        
         self.model = SwinUNETR(
-            in_channels=config["in_channels"],
-            out_channels=config["out_channels"],
-            spatial_dims=config["spatial_dims"],
+            **config['swin_unetr_params']
         )
         self.field_extent = config['field_extent']
+        
+    def _pad(self, img: torch.Tensor, padding_x: int, padding_y: int, unpad: bool=False) -> torch.Tensor:
+        if not unpad:
+            img_padded = F.pad(img, (padding_y // 2, 
+                                     padding_y // 2 + (padding_y % 2), 
+                                     padding_x // 2, 
+                                     padding_x // 2 + (padding_x % 2)), mode='replicate')
+            return img_padded
+        else:
+            return img[..., padding_x // 2: img.shape[-2] - (padding_x - padding_x // 2) - (padding_x % 2), 
+                       padding_y // 2: img.shape[-1] - (padding_y - padding_y // 2) - (padding_y % 2)]
+    
 
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """
@@ -43,21 +63,18 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
         Returns:
             torch.Tensor: Encoded global features at local positions (B, S, D).
         """
+        assert self.model.patch_size == 2, "This padding logic+monai only works for patch_size 2 currently."
         global_field = global_data["global_field"]  # Expecting shape (B, C, H, W, D)
-        pad_typ, params = split_args("replicationpad")
-
-        padding_x = global_field.shape[2] % 32
-        padding_y = 32 - global_field.shape[3] % 32
-        params['padding'] = (padding_y // 2, padding_y - padding_y // 2, padding_x // 2, padding_x - padding_x // 2)
-        pad = Pad[pad_typ, 2](**params)
-        global_field_padded = pad(global_field)
+        padding_divisor = int(self.model.patch_size ** 5)
+        padding_x = padding_divisor - global_field.shape[-2] % padding_divisor
+        padding_y = padding_divisor - global_field.shape[-1] % padding_divisor
+        global_field_padded = self._pad(global_field, padding_x, padding_y, unpad=False)
         output = self.model(global_field_padded)
-        output = output[..., padding_x // 2: output.shape[-2] - (padding_x - padding_x // 2), padding_y // 2: output.shape[-1] - (padding_y - padding_y // 2)] 
-        
+        output = self._pad(output, padding_x, padding_y, unpad=True)
         # interpolation
         pos_transformed = pos_transform(local_data['coords'], 
                                 self.field_extent['min'], 
                                 self.field_extent['max']).unsqueeze(2)
-        emb = grid_sample(output, pos_transformed, align_corners=True, mode='bilinear', padding_mode='border')
+        emb = F.grid_sample(output, pos_transformed, align_corners=True, mode='bilinear', padding_mode='border')
         emb = emb.squeeze(-1).permute(0, 2, 1)
         return emb
