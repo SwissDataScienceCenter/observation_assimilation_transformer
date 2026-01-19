@@ -1,0 +1,211 @@
+import pytest
+import torch
+
+from oat.data_module.transform import (
+    Transform,
+    IdentityTransform,
+    TranslateScaleTransform,
+    StandardNormalizeTransform,
+    MinMaxTransform,
+    LogTransform,
+    ComposedTransform,
+    transform_dict_to_yaml,
+    transform_dict_from_yaml,
+    TRANSFORM_REGISTRY,
+)
+
+
+class TestIdentityTransform:
+    def test_identity_forward(self) -> None:
+        transform = IdentityTransform()
+        sample = torch.tensor([1.0, 2.0, 3.0])
+        result = transform(sample)
+        assert torch.allclose(result, sample)
+
+    def test_identity_inverse(self) -> None:
+        transform = IdentityTransform()
+        sample = torch.tensor([1.0, 2.0, 3.0])
+        result = transform.inverse(sample)
+        assert torch.allclose(result, sample)
+
+    def test_identity_serialization(self) -> None:
+        transform = IdentityTransform()
+        d = transform.to_dict()
+        assert d == {"type": "IdentityTransform"}
+        restored = IdentityTransform.from_dict(d)
+        assert isinstance(restored, IdentityTransform)
+
+
+class TestTranslateScaleTransform:
+    def test_translate_scale_forward(self) -> None:
+        translate = torch.tensor([1.0, 2.0])
+        scale = torch.tensor([0.5, 2.0])
+        transform = TranslateScaleTransform(translate, scale)
+        sample = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        result = transform(sample)
+        expected = torch.tensor([[1.0, 8.0], [2.0, 12.0]])
+        assert torch.allclose(result, expected)
+
+    def test_translate_scale_inverse(self) -> None:
+        translate = torch.tensor([1.0, 2.0])
+        scale = torch.tensor([0.5, 2.0])
+        transform = TranslateScaleTransform(translate, scale)
+        sample = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_translate_scale_serialization(self) -> None:
+        translate = torch.tensor([1.0, 2.0])
+        scale = torch.tensor([0.5, 2.0])
+        transform = TranslateScaleTransform(translate, scale, channel_dim=1)
+        d = transform.to_dict()
+        restored = TranslateScaleTransform.from_dict(d)
+        assert torch.allclose(restored.translate, translate)
+        assert torch.allclose(restored.scale, scale)
+        assert restored.channel_dim == 1
+
+
+class TestStandardNormalizeTransform:
+    def test_normalize_forward(self) -> None:
+        mean = torch.tensor([1.0, 2.0])
+        std = torch.tensor([0.5, 1.0])
+        transform = StandardNormalizeTransform(mean, std)
+        sample = torch.tensor([[1.5, 3.0], [2.0, 4.0]])
+        result = transform(sample)
+        expected = torch.tensor([[1.0, 1.0], [2.0, 2.0]])
+        assert torch.allclose(result, expected)
+
+    def test_normalize_inverse(self) -> None:
+        mean = torch.tensor([1.0, 2.0])
+        std = torch.tensor([0.5, 1.0])
+        transform = StandardNormalizeTransform(mean, std)
+        sample = torch.tensor([[1.5, 3.0], [2.0, 4.0]])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_normalize_serialization(self) -> None:
+        mean = torch.tensor([1.0, 2.0])
+        std = torch.tensor([0.5, 1.0])
+        transform = StandardNormalizeTransform(mean, std)
+        d = transform.to_dict()
+        restored = StandardNormalizeTransform.from_dict(d)
+        assert torch.allclose(restored.mean, mean)
+        assert torch.allclose(restored.std, std)
+
+
+class TestMinMaxTransform:
+    def test_minmax_forward(self) -> None:
+        data_min = torch.tensor([0.0, 10.0])
+        data_max = torch.tensor([10.0, 20.0])
+        transform = MinMaxTransform(data_min, data_max)
+        sample = torch.tensor([[5.0, 15.0], [10.0, 20.0]])
+        result = transform(sample)
+        expected = torch.tensor([[0.5, 0.5], [1.0, 1.0]])
+        assert torch.allclose(result, expected)
+
+    def test_minmax_inverse(self) -> None:
+        data_min = torch.tensor([0.0, 10.0])
+        data_max = torch.tensor([10.0, 20.0])
+        transform = MinMaxTransform(data_min, data_max)
+        sample = torch.tensor([[5.0, 15.0], [10.0, 20.0]])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_minmax_serialization(self) -> None:
+        data_min = torch.tensor([0.0, 10.0])
+        data_max = torch.tensor([10.0, 20.0])
+        transform = MinMaxTransform(data_min, data_max)
+        d = transform.to_dict()
+        restored = MinMaxTransform.from_dict(d)
+        assert torch.allclose(restored.data_min, data_min)
+        assert torch.allclose(restored.data_max, data_max)
+
+
+class TestLogTransform:
+    def test_log_forward(self) -> None:
+        transform = LogTransform(offset=1.0)
+        sample = torch.tensor([1.0, 2.0, 3.0])
+        result = transform(sample)
+        expected = torch.log(sample + 1.0)
+        assert torch.allclose(result, expected)
+
+    def test_log_inverse(self) -> None:
+        transform = LogTransform(offset=1.0)
+        sample = torch.tensor([1.0, 2.0, 3.0])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_log_serialization(self) -> None:
+        transform = LogTransform(offset=0.5)
+        d = transform.to_dict()
+        assert d == {"type": "LogTransform", "offset": 0.5}
+        restored = LogTransform.from_dict(d)
+        assert restored.offset == 0.5
+
+
+class TestComposedTransform:
+    def test_composed_forward(self) -> None:
+        t1 = TranslateScaleTransform(torch.tensor([1.0]), torch.tensor([2.0]))
+        t2 = LogTransform(offset=0.0)
+        transform = ComposedTransform([t1, t2])
+        sample = torch.tensor([1.0, 2.0])
+        result = transform(sample)
+        expected = torch.log((sample + 1.0) * 2.0)
+        assert torch.allclose(result, expected)
+
+    def test_composed_inverse(self) -> None:
+        t1 = TranslateScaleTransform(torch.tensor([1.0]), torch.tensor([2.0]))
+        t2 = LogTransform(offset=0.0)
+        transform = ComposedTransform([t1, t2])
+        sample = torch.tensor([1.0, 2.0])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_composed_serialization(self) -> None:
+        t1 = IdentityTransform()
+        t2 = LogTransform(offset=1.0)
+        transform = ComposedTransform([t1, t2])
+        d = transform.to_dict()
+        restored = ComposedTransform.from_dict(d)
+        assert len(restored.transforms) == 2
+        assert isinstance(restored.transforms[0], IdentityTransform)
+        assert isinstance(restored.transforms[1], LogTransform)
+
+
+class TestYAMLSerialization:
+    def test_yaml_roundtrip(self) -> None:
+        transform = StandardNormalizeTransform(
+            mean=torch.tensor([1.0, 2.0]),
+            std=torch.tensor([0.5, 1.0])
+        )
+        yaml_str = transform.to_yaml()
+        restored = Transform.from_yaml(yaml_str)
+        assert isinstance(restored, StandardNormalizeTransform)
+        assert torch.allclose(restored.mean, transform.mean)
+
+    def test_transform_dict_yaml(self) -> None:
+        transforms = {
+            "norm": StandardNormalizeTransform(torch.tensor([0.0]), torch.tensor([1.0])),
+            "log": LogTransform(offset=1.0),
+        }
+        yaml_str = transform_dict_to_yaml(transforms)
+        restored = transform_dict_from_yaml(yaml_str)
+        assert "norm" in restored
+        assert "log" in restored
+        assert isinstance(restored["norm"], StandardNormalizeTransform)
+        assert isinstance(restored["log"], LogTransform)
+
+    def test_unknown_transform_type(self) -> None:
+        d = {"type": "UnknownTransform"}
+        with pytest.raises(ValueError, match="Unknown transform type"):
+            Transform.from_dict(d)
+
+
+class TestRegistry:
+    def test_registry_contains_transforms(self) -> None:
+        assert "IdentityTransform" in TRANSFORM_REGISTRY
+        assert "TranslateScaleTransform" in TRANSFORM_REGISTRY
+        assert "StandardNormalizeTransform" in TRANSFORM_REGISTRY
+        assert "MinMaxTransform" in TRANSFORM_REGISTRY
+        assert "LogTransform" in TRANSFORM_REGISTRY
+        assert "ComposedTransform" in TRANSFORM_REGISTRY
