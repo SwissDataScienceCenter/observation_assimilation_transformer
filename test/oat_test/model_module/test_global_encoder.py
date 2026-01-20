@@ -31,6 +31,13 @@ def encoder(img: torch.Tensor, swin_unetr_params: Dict[str, Any], field_extent: 
         field_extent=field_extent
     )
 
+@pytest.fixture
+def encoder_from_batch(batch_fixture: dict[str, Any], swin_unetr_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> SwinUNETRGlobalEncoder:
+    swin_unetr_params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+    return SwinUNETRGlobalEncoder(
+        swin_unetr_params=swin_unetr_params,
+        field_extent=field_extent
+    )
 
 def test_swin_unetr_global_encoder_initialization(encoder: SwinUNETRGlobalEncoder, 
                                                   field_extent: Dict[str, torch.Tensor]) -> None:
@@ -98,3 +105,10 @@ def test_forward_different_station_counts(encoder: SwinUNETRGlobalEncoder, img: 
         
         output = encoder(global_data, local_data)
         assert output.shape[1] == num_stations
+        
+def test_with_batch(encoder_from_batch: SwinUNETRGlobalEncoder, batch_fixture: dict[str, Any]) -> None:
+    global_data = batch_fixture["global_data"]
+    local_data = batch_fixture["observation_data"]
+    batch_size, num_stations = local_data["coords"].shape[:2]
+    output = encoder_from_batch(global_data, local_data)
+    assert output.shape == (batch_size, num_stations, 32)
