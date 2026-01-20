@@ -1,6 +1,6 @@
 import torch
 import yaml
-from typing import Any, Callable
+from typing import Any
 
 TRANSFORM_REGISTRY: dict[str, type['Transform']] = {}
 
@@ -8,7 +8,7 @@ def register_transform(cls: type['Transform']) -> type['Transform']:
     TRANSFORM_REGISTRY[cls.__name__] = cls
     return cls
 
-class Transform(Callable[[torch.Tensor], torch.Tensor]):
+class Transform:
     """Base class for data transformations."""
 
     def __call__(self, sample: torch.Tensor) -> torch.Tensor:
@@ -209,7 +209,7 @@ class LogTransform(Transform):
 class ComposedTransform(Transform):
     """Concatenates multiple transformations."""
 
-    def __init__(self, transforms: list[Transform]):
+    def __init__(self, transforms: list[Transform]) -> None:
         """
         Args:
             transforms (list): List of Transform instances to concatenate.

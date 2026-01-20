@@ -12,8 +12,18 @@ _NWP_DATA: xr.Dataset | None = None
 _OBS_DATA: xr.Dataset | None = None
 
 
-
 def _random_split(stations: np.ndarray, n_train: int, n_val: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """ Split stations randomly into train/val/test sets.
+
+    Args:
+        stations: Contains all available stations.
+        n_train: Number of training stations
+        n_val: Number of validation stations
+        seed: Random seed for reproducibility
+
+    Returns:
+        Tuple of (train_stations, val_stations, test_stations) arrays.
+    """
     rng = np.random.default_rng(seed)
     shuffled_stations = rng.permutation(stations)
     train_stations = shuffled_stations[:n_train]
@@ -25,8 +35,11 @@ def _random_split(stations: np.ndarray, n_train: int, n_val: int, seed: int) -> 
 
 def create_splits(data_cfg: DictConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Create train/val station splits based on data configuration.
-    No classes, no Hydra instantiation.
+    Create train/val/test splits based on data configuration.
+    Args:
+        data_cfg: Configuration dictionary for data module.
+    Returns:
+        Tuple of (train_stations, val_stations, test_stations).
     """
 
     # --- load available stations ---
@@ -62,7 +75,7 @@ def create_splits(data_cfg: DictConfig) -> tuple[np.ndarray, np.ndarray, np.ndar
     else:
         raise ValueError(f"Unknown split type: {split_type}")
 
-def get_channel_dims(transform_dict: dict) -> dict:
+def get_channel_dims(transform_dict: dict[str, Any]) -> dict[str, Any] | None:
     if transform_dict is None:
         return None
     channel_dims = {}
@@ -76,11 +89,17 @@ def get_channel_dims(transform_dict: dict) -> dict:
     return channel_dims
 
 
-def build_transforms(transform_cfg: DictConfig, stats: dict[str, Any]) -> dict[str, transform.Transform]:
-    X_transforms: list[transform.Transform] = []
-    
+def build_transforms(transform_cfg: DictConfig, stats: dict[str, Any]) -> dict[str, Any]:
+    """Build transforms from configuration dictionary.
+    Args:
+        transform_cfg: Configuration dictionary for transforms.
+        stats: Statistics dictionary for normalization transforms.
+    Returns:
+        Dictionary of transforms keyed by data name.
+    """   
     transform_dict = {}
     for key, value in transform_cfg.items():
+        assert isinstance(key, str)
         if not isinstance(value, (dict, DictConfig)):
             # Leaf node - build transform list
             transform_dict[key] = _build_transform_list(value, stats.get(key, {}))
@@ -93,16 +112,30 @@ def build_transforms(transform_cfg: DictConfig, stats: dict[str, Any]) -> dict[s
     return transform_dict
 
 
-def _build_transform_list(transform_list: list, transform_stats: dict) -> list[transform.Transform]:
-    """Build a list of transforms from configuration."""
+def _build_transform_list(transform_list: list[dict[str, Any]], transform_stats: dict[str, Any]) -> transform.ComposedTransform:
+    """Build a list of transforms from configuration.
+    
+    Args:
+        transform_list: List of transform configuration dictionaries.
+        transform_stats: Statistics dictionary for the transforms.
+    Returns:
+        A composed transform consisting of the specified transforms.
+    """
     transforms = []
     for t_cfg in transform_list:
         transforms.append(_create_transform(t_cfg, transform_stats))
     composed_transform = transform.ComposedTransform(transforms)
     return composed_transform
 
-def _create_transform(t_cfg: dict, t_stats: dict) -> transform.Transform:
-    """Create a single transform from config."""
+def _create_transform(t_cfg: dict[str, Any], t_stats: dict[str, Any]) -> transform.Transform:
+    """Create a single transform from config.
+    
+    Args:
+        t_cfg: Configuration dictionary for the transform.
+        t_stats: Statistics dictionary for the transform.
+    Returns:
+        An instance of the specified transform.
+    """
     transform_type = t_cfg['type']
     params = {k: v for k, v in t_cfg.items() if k != 'type'}
     
@@ -114,56 +147,22 @@ def _create_transform(t_cfg: dict, t_stats: dict) -> transform.Transform:
         return transform.LogTransform(**params)
     else:
         raise ValueError(f"Unknown transform type: {transform_type}")
-        
-    # if "global_data" in transform_cfg:
-    #     if "global_fields" in transform_cfg.global_data:
-    #         for t in transform_cfg.global_data.global_fields:
-    #             if t.type == "standard_normalize":
-    #                 X_transforms.append(
-    #                     transform.StandardNormalizeTransform(
-    #                         mean=stats["global_data"]["global_fields"]["mean"],
-    #                         std=stats["global_data"]["global_fields"]["std"],
-    #                         channel_dim=t.channel_dim,
-    #                     )
-    #                 )
-    #             else:
-    #                 raise ValueError(f"Unknown transform: {t.type}")
-
-
-    # Y_transforms: list[transform.Transform] = []
-    # if "query_data" in transform_cfg:
-    #     if "t"
-    #     for t in transform_cfg.query_data:
-    #         if t.type == "log":
-    #             Y_transforms.append(
-    #                 transform.LogTransform(offset=t.offset)
-    #         )
-    #         elif t.type == "standard_normalize":
-    #             Y_transforms.append(
-    #                 transform.StandardNormalizeTransform(
-    #                     mean=stats["query_data"]["mean"],
-    #                     std=stats["query_data"]["std"],
-    #                     channel_dim=t.channel_dim,
-    #                 )
-    #             )
-    #         else:
-    #             raise ValueError(f"Unknown transform: {t.type}")
-
-    # return {
-    #     "X": transform.ComposedTransform(X_transforms),
-    #     "Y": transform.ComposedTransform(Y_transforms),
-    # }
 
 
 def create_dataset(data_config: DictConfig) -> tuple[dataloader.OATLoader, 
                                                         dataloader.OATLoader, 
                                                         dataloader.OATLoader]:
     """
+    Create datasets and dataloaders based on data configuration.
+    
+    Args:
+        data_config: Configuration dictionary for data module.
+    Returns:
+        Tuple of (train_loader, val_loader, test_loader).
     """
     # Load data configuration
     loader_config = dict(data_config.loader)
     train_stations, val_stations, test_stations = create_splits(data_config)
-    data_path = Path(data_config.paths.root)
     nwp_path = Path(data_config.paths.nwp)
     obs_path = Path(data_config.paths.obs)
     topo_path = Path(data_config.paths.topo)
@@ -190,6 +189,7 @@ def create_dataset(data_config: DictConfig) -> tuple[dataloader.OATLoader,
         target_vars=obs_vars,
         stations=train_stations,
         global_grid_reference=data_config.vars.global_grid_reference,
+        patch_size=torch.tensor(data_config.vars.get("local_patch_size", (32, 32))),
         dtype=torch.float32,
         use_time_embedding=data_config.use_time_embedding
     )

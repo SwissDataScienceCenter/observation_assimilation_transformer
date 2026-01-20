@@ -11,6 +11,7 @@ vars:
   obs_vars: [fkl010h1]
   topo_vars: [DEM, TPI_500M, TPI_2000M, WE_DERIVATIVE_2000M_SIGRATIO1, SN_DERIVATIVE_2000M_SIGRATIO1]
   global_grid_reference: nwp
+  local_patch_size: [32, 32]
 
 loader:
   batch_size: 4 # 32
