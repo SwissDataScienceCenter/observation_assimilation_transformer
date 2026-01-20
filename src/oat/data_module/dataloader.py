@@ -13,7 +13,6 @@ class OATLoader(DataLoader[Dict[str, torch.Tensor]]):
        
     Works exactly like DataLoader: accepts a dataset directly.
     """
-
     def __init__(
         self,
         dataset: WindDataset,
@@ -29,10 +28,10 @@ class OATLoader(DataLoader[Dict[str, torch.Tensor]]):
         self.dtype = dtype
         self.non_blocking = non_blocking
         self.transforms = transforms
-    # ---------------------------------------------------------
-    # Override __iter__ to postprocess batches
-    # ---------------------------------------------------------
+
     def __iter__(self) -> _BaseDataLoaderIter:
+        """ Ensures post-processing is applied to each batch.
+        """
         for batch in super().__iter__():
             yield self._process(batch, transform=self.transforms)
 
@@ -40,7 +39,15 @@ class OATLoader(DataLoader[Dict[str, torch.Tensor]]):
     # Recursive device + dtype + flatten
     # ---------------------------------------------------------
     def _process(self, data: torch.Tensor | dict[str, torch.Tensor], transform: dict | Callable | None) -> Any:
-        
+        """ Applies transforms to data and move to indicated device.
+
+        Args:
+            data: Tensor or dict containing relevant data.
+            transform: Transform or dict thereof that needs to be applied to the data.
+
+        Returns:
+            Transformed data.
+        """
         if isinstance(data, torch.Tensor):
             # Move to device
             if transform is not None:
@@ -60,6 +67,7 @@ class OATLoader(DataLoader[Dict[str, torch.Tensor]]):
             if transform is None:
                 return {k: self._process(v, None) for k, v in data.items()}
             else:
+                assert isinstance(transform, dict), "Transform must be a dict if data is a dict."
                 return {k: self._process(v, transform.get(k)) for k, v in data.items()}
 
         else:
@@ -79,6 +87,15 @@ def compute_stats_from_loader(
     - `chan_dims` mirrors the (nested) batch structure
     - Only tensor leaves with an associated channel dim are processed
     - Channel dims may be negative
+    
+    Args:
+        loader: DataLoader providing batches of data.
+        chan_dims: Nested dict specifying channel dims for tensor leaves.
+        max_batches: Maximum number of batches to process. If None, process all.
+        device: Device to perform computations on. If None, uses CPU.
+        
+    Returns:
+        Dictionary of statistics for each tensor leaf.
     """
 
     stats: dict[tuple[str, ...], dict[str, torch.Tensor]] = {}
