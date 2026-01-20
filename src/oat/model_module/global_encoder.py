@@ -7,13 +7,12 @@ from torch.nn import functional as F
 class BaseGlobalEncoder(torch.nn.Module):
     """Base class for global encoders processing global data inputs."""
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Args:
             config: Configuration dictionary.
         """
         super().__init__()
-        self.config = config
 
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """
@@ -29,19 +28,18 @@ class BaseGlobalEncoder(torch.nn.Module):
 class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
     """Global encoder using SwinUNETR architecture."""
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, *, swin_unetr_params: Dict[str, Any], field_extent: Dict[str, Any], **kwargs: Any) -> None:
         """
         Args:
-            config: Configuration dictionary. 
-                    - 'swin_unetr_params': Parameters for SwinUNETR model. See [monai](https://monai.readthedocs.io/en/stable/networks.html#swinunetr) documentation for details.
-                    - 'field_extent': Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
+            swin_unetr_params: Parameters for SwinUNETR model. See [monai](https://monai.readthedocs.io/en/stable/networks.html#swinunetr) documentation for details.
+            field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
-        super().__init__(config)
+        super().__init__()
         
         self.model = SwinUNETR(
-            **config['swin_unetr_params']
+            **swin_unetr_params
         )
-        self.field_extent = config['field_extent']
+        self.field_extent = field_extent
         
     def _pad(self, img: torch.Tensor, padding_x: int, padding_y: int, unpad: bool=False) -> torch.Tensor:
         if not unpad:
