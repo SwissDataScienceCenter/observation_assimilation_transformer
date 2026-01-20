@@ -14,7 +14,7 @@ def main():
 
     ROOT = Path(__file__).resolve().parents[1]
 
-    out_file = ROOT / "test" / "batch_shapes.pickle"
+    out_file = ROOT / "test" / "oat_test" / "batch_shapes.pickle"
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
