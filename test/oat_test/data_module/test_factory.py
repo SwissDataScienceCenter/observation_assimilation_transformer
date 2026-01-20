@@ -4,8 +4,6 @@ from omegaconf import OmegaConf
 from oat.data_module import factory
 import torch
 
-
-
 @pytest.mark.skipif(
     os.getenv("CI") == "true",
     reason="Skipped on CI (requires local datasets)"
@@ -13,7 +11,6 @@ import torch
 def test_with_local_data() -> None:
     data_config = OmegaConf.load('configs/data/wind_data.yaml')
     loaders = factory.create_dataset(data_config)
-    
     for loader in loaders:
         sample_batch = next(iter(loader))
         assert 'global_data' in sample_batch
@@ -49,7 +46,7 @@ def test_with_local_data() -> None:
                     pass
                 elif key == 'topo':
                     assert data.shape[2] == len(data_config.vars.topo_vars)
-                    assert data.shape[3:] == data_config.vars.local_patch_size
+                    assert tuple(data.shape[3:]) == tuple(data_config.vars.local_patch_size)
                     
         # check observation shape
         num_obs = sample_batch['observation_data']['coords'].shape[1]
@@ -64,9 +61,6 @@ def test_with_local_data() -> None:
                     pass
                 elif key == 'topo':
                     assert data.shape[2] == len(data_config.vars.topo_vars)
-                    assert data.shape[3:] == data_config.vars.local_patch_size
+                    assert tuple(data.shape[3:]) == tuple(data_config.vars.local_patch_size)
                 elif key == 'obs' or key == 'obs_mask':
                     assert data.shape[2] == len(data_config.vars.obs_vars)
-                    
-                
-            

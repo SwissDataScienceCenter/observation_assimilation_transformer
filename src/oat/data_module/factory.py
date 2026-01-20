@@ -123,7 +123,6 @@ def _build_transform_list(transform_list: list[dict[str, Any]], transform_stats:
     """
     transforms = []
     for t_cfg in transform_list:
-        # assert isinstance(t_cfg, dict)
         transforms.append(_create_transform(t_cfg, transform_stats))
     composed_transform = transform.ComposedTransform(transforms)
     return composed_transform
