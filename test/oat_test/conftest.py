@@ -11,8 +11,19 @@ def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
     Reconstructs a batch dict example from batch_shapes.pickle.
     All tensors are filled with random values.
     """
-    df = pd.read_pickle(TABLE_PATH)
-    
+    try:
+        df = pd.read_pickle(TABLE_PATH)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"Could not open batch shapes table at '{TABLE_PATH}'.\n"
+            "Make sure the file exists and has been generated "
+            "by running: python -m scripts.create_batch_fixture_shapes"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(
+            f"Unexpected error while loading batch shapes table at '{TABLE_PATH}'.\n"
+        ) from e
+
     batch: dict[str, dict[str, torch.Tensor]] = {}
     for group_name in df['group'].unique():
         batch[group_name] = {}
