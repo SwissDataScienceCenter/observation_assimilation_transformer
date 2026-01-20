@@ -2,7 +2,7 @@
 name = "oat"
 version = "0.1.0"
 description = ""
-authors = ["Christian Donner <christian.donner@meteoswiss.ch>"]
+authors = ["Christian Donner <christian.donner@meteoswiss.ch>", "Michele Cattaneo <michele.cattaneo@meteoswiss.ch>"]
 packages = [{include = "oat", from = "src"},
             {include = "oat_test", from = "test"}]
 include = ["test/oat_test/**/*.py"]

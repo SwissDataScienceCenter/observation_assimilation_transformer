@@ -1,9 +1,6 @@
 import pandas as pd
 from oat_test.conftest import TABLE_PATH
 
-
-
-
 def test_batch_fixture_structure(batch_fixture):
     """
     Test that the test batch fixture matches the shapes and dtype of the
