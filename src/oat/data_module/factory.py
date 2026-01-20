@@ -112,7 +112,7 @@ def build_transforms(transform_cfg: DictConfig, stats: dict[str, Any]) -> dict[s
     return transform_dict
 
 
-def _build_transform_list(transform_list: list[transform.Transform], transform_stats: dict[str, Any]) -> transform.ComposedTransform:
+def _build_transform_list(transform_list: list[dict[str, Any]], transform_stats: dict[str, Any]) -> transform.ComposedTransform:
     """Build a list of transforms from configuration.
     
     Args:
