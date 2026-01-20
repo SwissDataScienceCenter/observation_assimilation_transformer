@@ -9,7 +9,8 @@ TABLE_PATH = Path(__file__).resolve().parent / "batch_shapes.pickle"
 def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
     """
     Reconstructs a batch dict example from batch_shapes.pickle.
-    All tensors are filled with random values.
+    All float tensors are filled with random values.
+    Non-float tensors are filled with zeros.
     """
     try:
         df = pd.read_pickle(TABLE_PATH)
