@@ -27,7 +27,13 @@ def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
             else:
                 dtype = torch.float32
 
-            batch[group_name][row['key']] = torch.randn(shape, dtype=dtype)
+            if getattr(dtype, "is_floating_point", False):
+                tensor = torch.randn(shape, dtype=dtype)
+            else:
+                # Fallback for non-floating dtypes: use zeros to avoid torch.randn errors.
+                tensor = torch.zeros(shape, dtype=dtype)
+
+            batch[group_name][row['key']] = tensor
     return batch
 
 @pytest.fixture
