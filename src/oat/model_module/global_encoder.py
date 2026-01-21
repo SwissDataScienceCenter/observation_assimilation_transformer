@@ -62,7 +62,7 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
             torch.Tensor: Encoded global features at local positions (B, S, D).
         """
         assert self.model.patch_size == 2, "This padding logic+monai only works for patch_size 2 currently."
-        global_field = global_data["global_field"]  # Expecting shape (B, C, H, W, D)
+        global_field = global_data["global_field"]  # Expecting shape (B, C, H, W)
         padding_divisor = int(self.model.patch_size ** 5)
         padding_x = padding_divisor - global_field.shape[-2] % padding_divisor
         padding_y = padding_divisor - global_field.shape[-1] % padding_divisor
