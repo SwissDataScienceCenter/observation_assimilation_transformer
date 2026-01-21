@@ -9,8 +9,18 @@ class BaseOutputHead(nn.Module, ABC):
     """
     Base class for decoders.
     """
-    def __init__(self) -> None:
+    def __init__(self, *, 
+                 in_features: int, 
+                 target_features: int, 
+                 **kwargs) -> None:
+        """
+        Args:
+            in_features: Channels of input features.
+            target_features: Channels of output features.
+        """
         super().__init__()
+        self.in_features = in_features
+        self.target_features = target_features
         
     @abstractmethod
     def forward(self, x: torch.Tensor) -> torch.Tensor | dict[str, torch.Tensor]:
@@ -18,9 +28,9 @@ class BaseOutputHead(nn.Module, ABC):
         Get the predictions given input features.
         
         Args:
-            x: input features [B, S, in_features]
+            x: input features [..., in_features]
         Returns:
-            Predictions [B, S, target_features]
+            Predictions [..., target_features] or dict of tensors
         """
         raise NotImplementedError()
     
@@ -30,11 +40,11 @@ class BaseOutputHead(nn.Module, ABC):
         Compute the innovation (residual) between predictions and target.
         
         Args:
-            x: input features [B, S, in_features]
-            target: target values [B, S, target_features]
+            x: input features [..., in_features]
+            target: target values [..., target_features]
             
         Returns:
-            Innovation (residuals) [B, S, target_features]
+            Innovation (residuals) [..., target_features]
         """
         raise NotImplementedError()
     
@@ -44,9 +54,9 @@ class BaseOutputHead(nn.Module, ABC):
         Compute the loss between predictions and target, applying the mask.
         
         Args:
-            x: input features [B, S, in_features]
-            target: target values [B, S, target_features]
-            mask: boolean mask indicating valid entries [B, S, target_features]
+            x: input features [..., in_features]
+            target: target values [..., target_features]
+            mask: boolean mask indicating valid entries [..., target_features]
             
         Returns:
             Loss value (scalar tensor)
@@ -58,6 +68,7 @@ class LinearOutputHead(BaseOutputHead):
     Linear output head.
     """
     def __init__(self, 
+                 *,
                  in_features: int, 
                  target_features: int,
                  loss_fn: str | None = None) -> None:
@@ -70,7 +81,7 @@ class LinearOutputHead(BaseOutputHead):
         Raises:
             ValueError: If an unknown loss function is specified.
         """
-        super().__init__()
+        super().__init__(in_features=in_features, target_features=target_features)
         self.in_features = in_features
         self.target_features = target_features
         self.net = nn.Linear(self.in_features, 
@@ -129,6 +140,7 @@ class LinearOutputHead(BaseOutputHead):
 class GaussianOutputHead(BaseOutputHead):
     
     def __init__(self, 
+                *,
                 in_features: int, 
                 target_features: int,
                 std_fn: str | None = "softplus",
@@ -143,7 +155,7 @@ class GaussianOutputHead(BaseOutputHead):
         Raises:
             ValueError: If an unknown loss function is specified.
         """
-        super().__init__()
+        super().__init__(in_features=in_features, target_features=target_features)
         self.in_features = in_features
         self.target_features = target_features
         self.net = nn.Linear(self.in_features, 
@@ -160,7 +172,7 @@ class GaussianOutputHead(BaseOutputHead):
         """ Generate predictions.
 
         Args:
-            x: input [B, S, in_features]
+            x: input [..., in_features]
 
         Returns:
             Predictions dict with 'mean' and 'std' tensors, each of shape [B, S, target_features]
@@ -178,26 +190,25 @@ class GaussianOutputHead(BaseOutputHead):
         """ Compute innovation (residuals).
 
         Args:
-            x: input [B, S, in_features]
-            target: target values [B, S, target_features]
+            x: input [..., in_features]
+            target: target values [..., target_features]
 
         Returns:
-            Innovation (residuals) [B, S, target_features]
+            Innovation (residuals) [..., target_features]
         """
         preds = self.forward(x)
         mean = preds["mean"]
         std = preds["std"]
-        innovation = (target - mean) / std  # [B, S, target_features]
+        innovation = (target - mean) / std  # [..., target_features]
         return mask * innovation
     
     def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """ Compute negative log-likelihood loss.
 
         Args:
-            x: input [B, S, in_features]
-            target: target values [B, S, target_features]
-            mask: boolean mask [B, S, target_features]
-
+            x: input [..., in_features]
+            target: target values [..., target_features]
+            mask: boolean mask [..., target_features]
         Returns:
             Loss value (scalar tensor)
         """
@@ -218,14 +229,24 @@ class QuantileOutputHead(BaseOutputHead):
 
     def __init__(
         self,
+        *,
         in_features: int,
         target_features: int,
-        degree: int,
+        degree: int = 20,
         non_linearity: nn.Module | None = None,
         min_val: float | None = None,
         train_taus: torch.Tensor | None = None,
     ):
-        super().__init__()
+        """
+        Args:
+            in_features: dimensions of input features
+            target_features: target dimension
+            degree: Number of basis functions for quantile function. Defaults to 20.
+            non_linearity: Non-linearity to ensure positive coefficients. Defaults to None.
+            min_val: Minimum quantile value. Defaults to None.
+            train_taus: Training quantile levels. Defaults to None.
+        """
+        super().__init__(in_features=in_features, target_features=target_features)
         self.in_features = in_features
         self.target_features = target_features
         self.degree = degree
@@ -282,7 +303,15 @@ class QuantileOutputHead(BaseOutputHead):
         return basis  # [..., Q, degree+1]
 
     def forward(self, x: torch.Tensor, tau: torch.Tensor | None = None) -> torch.Tensor:
-        
+        """ Compute quantiles values for given input and quantile values.
+
+        Args:
+            x: Input tensor. [..., in_features]
+            tau: Quantile levels. Defaults to None.
+
+        Returns:
+            Quantile values. [..., Q, target_features]
+        """
         leading_shape = x.shape[:-1]
         
         if not isinstance(self.taus, torch.Tensor):
@@ -318,6 +347,11 @@ class QuantileOutputHead(BaseOutputHead):
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
         Integrated quantile regression innovation.
+        
+        Args:
+            x: input [..., in_features]
+            target: target values [..., target_features]
+            mask: boolean mask [..., target_features]
         """
         leading_shape = x.shape[:-1]
         # tau is [.25, .5, .75]
@@ -335,6 +369,14 @@ class QuantileOutputHead(BaseOutputHead):
     def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
         Integrated quantile regression loss.
+        
+        Args:
+            x: input [..., in_features]
+            target: target values [..., target_features]
+            mask: boolean mask [..., target_features]
+            
+        Returns:
+            Loss value (scalar tensor)
         """
         leading_shape = x.shape[:-1]
         
