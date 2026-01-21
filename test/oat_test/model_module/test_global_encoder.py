@@ -25,17 +25,19 @@ def img() -> torch.Tensor:
 
 @pytest.fixture
 def encoder(img: torch.Tensor, swin_unetr_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> SwinUNETRGlobalEncoder:
-    swin_unetr_params['in_channels'] = img.shape[-3]
+    params = swin_unetr_params.copy()
+    params['in_channels'] = img.shape[-3]
     return SwinUNETRGlobalEncoder(
-        swin_unetr_params=swin_unetr_params,
+        swin_unetr_params=params,
         field_extent=field_extent
     )
 
 @pytest.fixture
 def encoder_from_batch(batch_fixture: dict[str, Any], swin_unetr_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> SwinUNETRGlobalEncoder:
-    swin_unetr_params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+    params = swin_unetr_params.copy()
+    params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
     return SwinUNETRGlobalEncoder(
-        swin_unetr_params=swin_unetr_params,
+        swin_unetr_params=params,
         field_extent=field_extent
     )
 
