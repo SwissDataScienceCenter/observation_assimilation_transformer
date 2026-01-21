@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
+from typing import Any
 
+import math
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 # TODO move in a shared location?
 def get_activation(name: str, **kwargs):
@@ -18,50 +21,66 @@ class TopographyEncoder(nn.Module, ABC):
         self.out_channels = out_channels
         self.in_channels = in_channels
 
-    def forward(self, topography_patch: torch.Tensor) -> torch.Tensor:
-        return self._encode_patch(topography_patch)
-
-    @abstractmethod
-    def _encode_patch(self, topography_patch: torch.Tensor) -> torch.Tensor:
-        """Encode a topography patch into a feature representation."""
-        pass
-
 
 class CNNTopographyEncoder(TopographyEncoder):
 
     def __init__(self, *,
                  in_channels: int,
                  out_channels: int,
+                 n_layers: int,
                  kernel_sizes: int | list[int],
-                 target_hw: list[tuple[int, int]],
-                 channels: list[int],
-                 act_fn: str,
+                 initial_hw: tuple[int, int] | None = None,
+                 target_hw: list[tuple[int, int]] | None = None,
+                 channels: list[int] | None = None,
+                 act_fn: str = "ReLU",
+                 act_fn_kwargs: dict[str, Any] | None = None,
                  use_batchnorm: bool = True
                  ):
         """ Encoder for topographic patches of shape [C,H,W] or [B,C,H,W] with a CNN 
         backbone. Returns a flat vector of shape [B, out_channels] or [1, out_channels].
 
         Args:
-            in_channels (int): The input channels of the patch.
-            out_channels (int): The number of output embedding feature.
-            kernel_sizes (int | list[int]): The size of the learnable kernels.
+            in_channels: The input channels of the patch.
+            out_channels: The number of output embedding feature.
+            n_layers (int): The number of convolutional layers.
+            kernel_sizes: The size of the learnable kernels.
                 If integer, the same size is used for all layers.
-            target_hw (list[tuple[int, int]]): The intermediate output sizes [H,W] 
-                after each layer.
-            channels (list[int]): The number of learnable filters for each layer.
-                The length of this list defines the number of layers and must match
-                the length of target_hw.
-            act_fn (str): The activation string of an activation function of torch.nn
+            initial_hw: The initial height and width of an input sample.
+                Must be given is target_hw is set to None.
+                In that case, the height and width are halved at each layer.
+            target_hw: The intermediate output sizes [H,W]
+                after each layer. If not given, the height and width are halved at each layer.
+            channels: The number of learnable filters for each layer. If not given, the 
+                channels are doubled at each layer.
+            act_fn: The activation string of an activation function of torch.nn
                 such as ReLU, GELU (case sensitive). The activation is used after each
                 convolution (but before batch norm).
-            use_batchnorm (bool, optional): Whether a batch norm is applied after every
-                convolution. Defaults to True.
+            act_fn_kwargs: Any key-value arguments necessary to initialize the activation
+                function layer.
+            use_batchnorm: Whether a batch norm is applied after every
+                convolution.
         """
         super().__init__(in_channels=in_channels, out_channels=out_channels)
 
         # TODO add kwargs for some act (eg LeakyReLU)
-        n_layers = len(channels)
+        if target_hw is None:
+            assert initial_hw is not None, "With initial_hw set to None, \
+            you must define the initial height and width."
+
+            # Create targets hw that are halved at each layer
+            target_hw = [
+                (math.ceil(initial_hw[0] / 2**i), math.ceil(initial_hw[1] / 2**i))
+                for i in range(n_layers)
+            ]
+
+        if channels is None:
+            # Double the number of channels for each layer
+            channels = [in_channels * 2**i for i in range(n_layers)]
+
         assert len(target_hw) == n_layers
+        assert len(channels) == n_layers
+
+        act_fn_kwargs = act_fn_kwargs or {}
 
         if isinstance(kernel_sizes, int):
             kernel_sizes = [kernel_sizes] * n_layers
@@ -74,18 +93,15 @@ class CNNTopographyEncoder(TopographyEncoder):
         # Create each conv layer (+ optional BN)
         for i in range(n_layers):
             ks = kernel_sizes[i]
-            padding = ks // 2
 
             layers = [
-                nn.Conv2d(curr_c, channels[i], 
-                          kernel_size=ks, padding=padding, padding_mode='replicate')
+                nn.Conv2d(curr_c, channels[i], kernel_size=ks)
             ]
-            # TODO 'replicate' ok to hardcode?
 
             if use_batchnorm:
                 layers.append(nn.BatchNorm2d(channels[i]))
 
-            layers.append(get_activation(act_fn))
+            layers.append(get_activation(act_fn, **act_fn_kwargs))
             layers.append(nn.AdaptiveAvgPool2d(target_hw[i]))
 
             blocks.append(nn.Sequential(*layers))
@@ -100,14 +116,30 @@ class CNNTopographyEncoder(TopographyEncoder):
         self.flatten = nn.Flatten()
         self.output_head = nn.Linear(flat_dim, out_channels)
 
-    def _encode_patch(self, topography_patch: torch.Tensor) -> torch.Tensor:
+    def _prepare_input_shapes(self, x):
 
-        if topography_patch.ndim == 3:
+        if x.ndim == 5:
+            output_shape = (*x.shape[:2], self.out_channels)
+            # Merge station and batch dim (needed for conv2d)
+            x = rearrange(x, 'b s ... -> (b s) ...')
+            return x, output_shape
+        if x.ndim == 4:
+            return x, None
+        if x.ndim == 3:
             # if the tensor is [C,H,W], add a dummy batch size
             # This is needed for batch norm 2d to work.
-            topography_patch = topography_patch.unsqueeze(0)
+            return x.unsqueeze(0), None
+
+    def forward(self, topography_patch: torch.Tensor) -> torch.Tensor:
+
+        topography_patch, out_shape = self._prepare_input_shapes(topography_patch)
 
         out = self.conv_blocks(topography_patch)
         out_flat = self.flatten(out)
 
-        return self.output_head(out_flat)
+        out_flat = self.output_head(out_flat)
+
+        if out_shape is not None:
+            out_flat = out_flat.reshape(*out_shape)
+
+        return out_flat
