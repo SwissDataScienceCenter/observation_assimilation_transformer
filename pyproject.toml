@@ -31,6 +31,7 @@ mypy = ">=1.8.0"
 line-profiler = ">=5.0.0,<6.0.0"
 pylance = "*"
 pytest = "*"
+pytest-cov = "*"
 
 [build-system]
 requires = ["poetry-core"]
