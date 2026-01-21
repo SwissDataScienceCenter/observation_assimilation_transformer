@@ -75,7 +75,7 @@ class LinearOutputHead(BaseOutputHead):
         """
         Args:
             in_features: Channels of input features.
-            out_features: Channels of output features.
+            target_features: Channels of output features.
             loss_fn: Loss function to use [mse, mae, huber]. Defaults to None (MSE loss).
 
         Raises:
