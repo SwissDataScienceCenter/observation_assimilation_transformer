@@ -10,7 +10,7 @@ class BaseGlobalEncoder(torch.nn.Module):
     def __init__(self, **kwargs: Any) -> None:
         """
         Args:
-            config: Configuration dictionary.
+            **kwargs: Additional configuration parameters for subclasses.
         """
         super().__init__()
 
