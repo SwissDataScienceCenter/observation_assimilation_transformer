@@ -1,3 +1,5 @@
+from oat.model_module.activations import get_activation
+
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -6,12 +8,6 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-# TODO move in a shared location?
-def get_activation(name: str, **kwargs):
-    cls = getattr(nn, name, None)
-    if cls is None:
-        raise ValueError(f"Activation {name} not found in torch.nn")
-    return cls(**kwargs)
 
 
 class TopographyEncoder(nn.Module, ABC):
@@ -116,7 +112,23 @@ class CNNTopographyEncoder(TopographyEncoder):
         self.flatten = nn.Flatten()
         self.output_head = nn.Linear(flat_dim, out_channels)
 
-    def _prepare_input_shapes(self, x):
+    def _prepare_input_shapes(self, x: torch.Tensor) -> tuple[torch.Tensor, tuple | None]:
+        """Prepares the input x such that 
+        it becomes of shape [B,C,H,W].
+
+        Cases:
+            - [B,S,C,H,W] -> [(B*S),C,H,W]
+            - [B,C,H,W] -> [B,C,H,W]
+            - [C,H,W] -> [1,C,H,W]
+
+        Args:
+            x : the input tensor.
+
+        Returns:
+            the reshaped tensor. If batch and station dimensons were 
+            merged, it additionally returns the shape tuple that allows to
+            reshape the tensor back.
+        """
 
         if x.ndim == 5:
             output_shape = (*x.shape[:2], self.out_channels)

@@ -1,5 +1,6 @@
 from oat.model_module import CNNTopographyEncoder
 
+import pytest
 import math
 import torch
 
@@ -64,7 +65,47 @@ def test_cnn_with_different_dims():
     assert out.shape[0] == stations
     assert out.shape[1] == out_channels
 
-def test_cnn_with_batch_fixture(batch_fixture):
-    # TODO finish
+
+configs = [
+        {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 2,
+            "kernel_sizes": 3,
+            "initial_hw": (32, 32)
+        },
+        {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 2,
+            "kernel_sizes": 3,
+            "target_hw": [(16,16), (10,10)]
+        },
+        {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 2,
+            "kernel_sizes": 3,
+            "target_hw": [(16,16), (10,10)],
+            "use_batchnorm": False
+        },
+        {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 2,
+            "kernel_sizes": 3,
+            "target_hw": [(16,16), (10,10)],
+            "act_fn": "LeakyReLU",
+            "act_fn_kwargs": {"negative_slope": 0.05}
+        }
+    ]
+@pytest.mark.parametrize("cfg", configs)
+def test_cnn_with_batch_fixture(batch_fixture, cfg):
+
     sample_input = batch_fixture['query_data']['topo']
 
+    topo_enc = CNNTopographyEncoder(**cfg)
+
+    out = topo_enc(sample_input)
+
+    assert out.shape[-1] == cfg['out_channels']
