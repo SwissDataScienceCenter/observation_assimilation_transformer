@@ -21,8 +21,8 @@ def field_extent() -> Dict[str, torch.Tensor]:
     }
 
 @pytest.fixture(params=[
-    (8, 10, 800, 904),
-    (8, 5, 832, 896),
+    (4, 10, 200, 129),
+    (4, 5, 128, 256),
 ])
 def img(request: pytest.FixtureRequest) -> torch.Tensor:
     return torch.randn(*request.param)
@@ -85,7 +85,7 @@ def test_forward_output_shape(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor
 
 
 def test_forward_different_batch_sizes(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
-    for batch_size in [1, 4, 8]:
+    for batch_size in [1, 3, 4,]:
         num_stations = 5
         global_data = {
             "global_field": img[:batch_size]
