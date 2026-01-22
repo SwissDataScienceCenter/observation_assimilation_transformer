@@ -151,10 +151,11 @@ class GaussianOutputHead(BaseOutputHead):
         Args:
             in_features: Channels of input features.
             target_features: Channels of output features.
-            loss_fn: Loss function to use [mse, mae, huber]. Defaults to None (MSE loss).
+            std_fn: Function used to transform the raw standard deviation (e.g. "softplus", "exp"). Defaults to "softplus".
+            min_val: Minimum standard deviation value used to clamp the output. If None, no clamping is applied. Defaults to 0.
 
         Raises:
-            ValueError: If an unknown loss function is specified.
+            ValueError: If an unknown std_fn is specified.
         """
         super().__init__(in_features=in_features, target_features=target_features)
         self.net = nn.Linear(self.in_features, 
