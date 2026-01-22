@@ -8,7 +8,7 @@ from typing import Dict, Any
 class BaseOutputHead(nn.Module, ABC):
     
     """
-    Base class for decoders.
+    Base class for output heads.
     """
     def __init__(self, *, 
                  in_features: int, 
