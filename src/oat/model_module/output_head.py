@@ -83,8 +83,6 @@ class LinearOutputHead(BaseOutputHead):
             ValueError: If an unknown loss function is specified.
         """
         super().__init__(in_features=in_features, target_features=target_features)
-        self.in_features = in_features
-        self.target_features = target_features
         self.net = nn.Linear(self.in_features, 
                              self.target_features)
         if loss_fn is None or loss_fn == "mse":
