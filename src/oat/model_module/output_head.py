@@ -13,7 +13,7 @@ class BaseOutputHead(nn.Module, ABC):
     def __init__(self, *, 
                  in_features: int, 
                  target_features: int, 
-                 **kwargs: Dict[str, Any]) -> None:
+                 **kwargs: Any) -> None:
         """
         Args:
             in_features: Channels of input features.
