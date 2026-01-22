@@ -124,6 +124,10 @@ class CNNTopographyEncoder(TopographyEncoder):
         leading_dims = topography_patch.shape[:-3]
         C, H, W = topography_patch.shape[-3:]
         out = self.conv_blocks(topography_patch.reshape(-1, C, H, W))
-        out_flat = out.reshape(*leading_dims, -1)
+        if leading_dims:
+            out_flat = out.reshape(*leading_dims, -1)
+        else:
+            # Preserve a batch dimension for 3D inputs [C, H, W] -> [1, out_channels]
+            out_flat = out.reshape(1, -1)
         out_flat = self.output_head(out_flat)
         return out_flat
