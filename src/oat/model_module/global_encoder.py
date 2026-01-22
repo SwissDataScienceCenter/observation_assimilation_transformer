@@ -3,8 +3,9 @@ from typing import Any, Dict
 from monai.networks.nets import SwinUNETR
 from oat.data_module.wind_dataset import pos_transform
 from torch.nn import functional as F
+from abc import ABC, abstractmethod
 
-class BaseGlobalEncoder(torch.nn.Module):
+class BaseGlobalEncoder(torch.nn.Module, ABC):
     """Base class for global encoders processing global data inputs."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -13,14 +14,15 @@ class BaseGlobalEncoder(torch.nn.Module):
             **kwargs: Additional configuration parameters for subclasses.
         """
         super().__init__()
-
+        
+    @abstractmethod
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """
         Args:
-            global_data (dict): Dictionary of global data tensors.
-            local_data (dict):
+            global_data: Dictionary of global data tensors.
+            local_data: Should contain 'coords' key with local coordinates. [B, S, 2]
         Returns:
-            torch.Tensor: Encoded global features at local positions (B, S, D).
+            torch.Tensor: Encoded global features at local positions [B, S, D].
         """
         raise NotImplementedError("Subclasses must implement the forward method.")
     
@@ -40,6 +42,7 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
             **swin_unetr_params
         )
         self.field_extent = field_extent
+        assert self.model.patch_size == 2, "This padding logic+monai only works for patch_size 2 currently."
         
     def _pad(self, img: torch.Tensor, padding_x: int, padding_y: int, unpad: bool=False) -> torch.Tensor:
         if not unpad:
@@ -49,23 +52,22 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
                                      padding_x // 2 + (padding_x % 2)), mode='replicate')
             return img_padded
         else:
-            return img[..., padding_x // 2: img.shape[-2] - (padding_x - padding_x // 2) - (padding_x % 2), 
-                       padding_y // 2: img.shape[-1] - (padding_y - padding_y // 2) - (padding_y % 2)]
+            return img[..., padding_x // 2: img.shape[-2] - padding_x // 2 - (padding_x % 2), 
+                       padding_y // 2: img.shape[-1] - padding_y // 2 - (padding_y % 2)]
     
 
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """
         Args:
-            global_data (dict): Dictionary of global data tensors.
-            local_data (dict):
+            global_data: Dictionary of global data tensors.
+            local_data: Should contain 'coords' key with local coordinates. [B, S, 2]
         Returns:
-            torch.Tensor: Encoded global features at local positions (B, S, D).
+            Encoded global features at local positions [B, S, D].
         """
-        assert self.model.patch_size == 2, "This padding logic+monai only works for patch_size 2 currently."
         global_field = global_data["global_field"]  # Expecting shape (B, C, H, W)
-        padding_divisor = int(self.model.patch_size ** 5)
-        padding_x = padding_divisor - global_field.shape[-2] % padding_divisor
-        padding_y = padding_divisor - global_field.shape[-1] % padding_divisor
+        padding_divisor = int(32)
+        padding_x = (padding_divisor - global_field.shape[-2] % padding_divisor) % padding_divisor
+        padding_y = (padding_divisor - global_field.shape[-1] % padding_divisor) % padding_divisor
         global_field_padded = self._pad(global_field, padding_x, padding_y, unpad=False)
         output = self.model(global_field_padded)
         output = self._pad(output, padding_x, padding_y, unpad=True)

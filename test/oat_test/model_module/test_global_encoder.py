@@ -19,9 +19,13 @@ def field_extent() -> Dict[str, torch.Tensor]:
         "max": torch.tensor([100.0, 100.0]),
     }
 
-@pytest.fixture
-def img() -> torch.Tensor:
-    return torch.randn(16, 20, 800, 904)
+@pytest.fixture(params=[
+    (16, 20, 800, 904),
+    (16, 20, 832, 896),
+])
+def img(request: pytest.FixtureRequest) -> torch.Tensor:
+    return torch.randn(*request.param)
+
 
 @pytest.fixture
 def encoder(img: torch.Tensor, swin_unetr_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> SwinUNETRGlobalEncoder:
@@ -48,21 +52,19 @@ def test_swin_unetr_global_encoder_initialization(encoder: SwinUNETRGlobalEncode
 
 
 def test_pad_forward(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
-    padding_x, padding_y = 4, 4
-    
-    padded = encoder._pad(img, padding_x, padding_y, unpad=False)
-    assert padded.shape[-2] == img.shape[-2] + padding_x
-    assert padded.shape[-1] == img.shape[-1] + padding_y
 
+    for padding_x, padding_y in [(0, 0), (2, 2), (3, 5), (4, 4), (7, 1)]:
+        padded = encoder._pad(img, padding_x, padding_y, unpad=False)
+        assert padded.shape[-2] == img.shape[-2] + padding_x
+        assert padded.shape[-1] == img.shape[-1] + padding_y
 
 def test_pad_unpad_roundtrip(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
-    padding_x, padding_y = 4, 4
     
-    padded = encoder._pad(img, padding_x, padding_y, unpad=False)
-    unpadded = encoder._pad(padded, padding_x, padding_y, unpad=True)
-    
-    assert unpadded.shape == img.shape
-
+    for padding_x, padding_y in [(0, 0), (2, 2), (3, 5), (4, 4), (7, 1)]:
+        padded = encoder._pad(img, padding_x, padding_y, unpad=False)
+        unpadded = encoder._pad(padded, padding_x, padding_y, unpad=True)
+        
+        assert unpadded.shape == img.shape
 
 def test_forward_output_shape(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
     batch_size = 2
