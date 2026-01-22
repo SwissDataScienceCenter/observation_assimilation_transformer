@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from abc import abstractmethod, ABC
+from typing import Dict, Any
 
 class BaseOutputHead(nn.Module, ABC):
     
@@ -12,7 +13,7 @@ class BaseOutputHead(nn.Module, ABC):
     def __init__(self, *, 
                  in_features: int, 
                  target_features: int, 
-                 **kwargs) -> None:
+                 **kwargs: Dict[str, Any]) -> None:
         """
         Args:
             in_features: Channels of input features.
@@ -23,7 +24,7 @@ class BaseOutputHead(nn.Module, ABC):
         self.target_features = target_features
         
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor | dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Get the predictions given input features.
         
@@ -95,18 +96,18 @@ class LinearOutputHead(BaseOutputHead):
         else:
             raise ValueError(f"Unknown loss fn: {loss_fn}")
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """ Generate predictions.
 
         Args:
             x: input [B, S, in_features]
 
         Returns:
-            Predictions [B, S, target_features]
+            Predictions {"val_pred": [B, S, target_features]}
         """
         output = self.net(x)
         assert isinstance(output, torch.Tensor)
-        return output  # [B, S, target_features]
+        return {"val_pred": output}  # [B, S, target_features]
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """ Compute innovation (residuals).
@@ -118,7 +119,8 @@ class LinearOutputHead(BaseOutputHead):
         Returns:
             Innovation (residuals) [B, S, target_features]
         """
-        pred = self.forward(x)
+        out = self.forward(x)
+        pred = out['val_pred']
         innovation = target - pred  # [B, S, target_features]
         return mask * innovation
     
@@ -133,7 +135,8 @@ class LinearOutputHead(BaseOutputHead):
         Returns:
             Loss value (scalar tensor)
         """
-        pred = self.forward(x)
+        out = self.forward(x)
+        pred = out['val_pred']
         loss = self.loss_fn(pred[mask], target[mask])
         return loss
     
@@ -182,7 +185,7 @@ class GaussianOutputHead(BaseOutputHead):
             std = torch.clamp(std, min=self.min_val)
         assert isinstance(mean, torch.Tensor)
         assert isinstance(std, torch.Tensor)
-        return {"mean": mean, "std": std}  # [B, S, target_features]
+        return {"mu_pred": mean, "std_pred": std}  # [B, S, target_features]
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """ Compute innovation (residuals).
@@ -195,8 +198,8 @@ class GaussianOutputHead(BaseOutputHead):
             Innovation (residuals) [..., target_features]
         """
         preds = self.forward(x)
-        mean = preds["mean"]
-        std = preds["std"]
+        mean = preds["mu_pred"]
+        std = preds["std_pred"]
         innovation = (target - mean) / std  # [..., target_features]
         return mask * innovation
     
@@ -211,8 +214,8 @@ class GaussianOutputHead(BaseOutputHead):
             Loss value (scalar tensor)
         """
         preds = self.forward(x)
-        mean = preds["mean"]
-        std = preds["std"]
+        mean = preds["mu_pred"]
+        std = preds["std_pred"]
         var = std ** 2
         nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
         loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
@@ -222,7 +225,7 @@ class GaussianOutputHead(BaseOutputHead):
 class QuantileOutputHead(BaseOutputHead):
     """
     Quantile decoder using Bernstein polynomial parameterization.
-    Produces monotone quantile functions.
+    Produces monotone quantile functions via cumulative sum of positive coefficients.
     """
 
     def __init__(
@@ -237,173 +240,221 @@ class QuantileOutputHead(BaseOutputHead):
     ):
         """
         Args:
-            in_features: dimensions of input features
-            target_features: target dimension
-            degree: Number of basis functions for quantile function. Defaults to 20.
-            non_linearity: Non-linearity to ensure positive coefficients. Defaults to None.
-            min_val: Minimum quantile value. Defaults to None.
-            train_taus: Training quantile levels. Defaults to None.
+            in_features: Input feature dimensions
+            target_features: Target dimension
+            degree: Number of Bernstein basis functions (default: 20)
+            non_linearity: Activation for positive coefficients (default: Softplus)
+            min_val: Fixed minimum quantile value (optional)
+            train_taus: Training quantile levels (default: linspace(0, 1, 10))
         """
         super().__init__(in_features=in_features, target_features=target_features)
-        self.in_features = in_features
-        self.target_features = target_features
         self.degree = degree
 
-        # Nonlinearity for coefficient network
+        # Coefficient network with non-linearity for positivity
         self.non_linearity = non_linearity or nn.Softplus()
-
-        # Coeff network (degree+1 Bernstein coefficients)
         self.coeff_net = nn.Sequential(
             nn.Linear(in_features, (degree + 1) * target_features),
             self.non_linearity,
         )
 
-        # Minimum quantile value handling
+        # Minimum value: either fixed or learned
         if min_val is not None:
             self.register_buffer("min_val", torch.tensor(float(min_val)))
             self.min_val_net = None
         else:
             self.min_val_net = nn.Linear(in_features, target_features)
-            self.min_val = None
+            self.register_buffer("min_val", None)
 
-        # Quantile grid
+        # Default training quantile grid
         if train_taus is None:
             train_taus = torch.linspace(0.0, 1.0, 10)
         self.register_buffer("taus", train_taus)
-        dtau = torch.diff(torch.cat([torch.zeros(1, device=train_taus.device), train_taus]))
+        
+        # Precompute quantile spacings for integration
+        dtau = torch.diff(
+            torch.cat([torch.zeros(1, device=train_taus.device), train_taus])
+        )
         self.register_buffer("dtau", dtau)
 
-        # Precompute binomial coefficients
-        combs = torch.tensor(
-            [math.comb(degree, i) for i in range(degree + 1)], dtype=torch.float32
+        # Precompute binomial coefficients: C(n, i)
+        binom = torch.tensor(
+            [math.comb(degree, i) for i in range(degree + 1)], 
+            dtype=torch.float32
         )
-        self.register_buffer("binom", combs)
+        self.register_buffer("binom", binom)
 
     def _bernstein_basis(self, tau: torch.Tensor) -> torch.Tensor:
         """
-        Vectorized Bernstein basis:
-            B_{i,n}(tau) = C(n,i) * tau^i * (1 - tau)^(n-i)
-        tau: [B, Q]
-        Returns: [B, Q, degree+1]
+        Compute Bernstein basis polynomials:
+            B_{i,n}(tau) = C(n,i) * tau^i * (1-tau)^(n-i)
+        
+        Args:
+            tau: Quantile levels [..., Q]
+        
+        Returns:
+            Basis matrix [..., Q, degree+1]
         """
-        tau = tau.unsqueeze(-1)                   # [B, Q, 1]
-        # use the same dtype as tau for proper broadcasting with powers
-        i = torch.arange(self.degree + 1, device=tau.device, dtype=tau.dtype)  # [degree+1]
-
-        # ensure binom is a tensor on the same device and dtype (handles static/type-checker issues)
-        binom = self.binom
-        if not isinstance(binom, torch.Tensor):
-            binom = torch.tensor(binom, device=tau.device, dtype=tau.dtype)
-        else:
-            binom = binom.to(device=tau.device, dtype=tau.dtype)
-
+        tau = tau.unsqueeze(-1)  # [..., Q, 1]
+        i = torch.arange(
+            self.degree + 1, 
+            device=tau.device, 
+            dtype=tau.dtype
+        )  # [degree+1]
+        
+        # B_{i,n}(tau) = C(n,i) * tau^i * (1-tau)^(n-i)
+        binom = self.binom.to(device=tau.device, dtype=tau.dtype)
         basis = binom * (tau ** i) * ((1 - tau) ** (self.degree - i))
+        
         return basis  # [..., Q, degree+1]
 
-    def forward(self, x: torch.Tensor, tau: torch.Tensor | None = None) -> torch.Tensor:
-        """ Compute quantiles values for given input and quantile values.
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        tau: torch.Tensor | None = None
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute quantile values for given inputs and quantile levels.
 
         Args:
-            x: Input tensor. [..., in_features]
-            tau: Quantile levels. Defaults to None.
+            x: Input features [..., in_features]
+            tau: Quantile levels [..., Q] (if None, uses self.taus)
 
         Returns:
-            Quantile values. [..., Q, target_features]
+            Quantile predictions [..., Q, target_features]
         """
         leading_shape = x.shape[:-1]
         
-        if not isinstance(self.taus, torch.Tensor):
-            taus = torch.tensor(self.taus, device=x.device)
-        else:
-            taus = self.taus.to(device=x.device)
+        # Use provided tau or default training taus
+        if tau is None:
+            tau = self.taus.to(device=x.device, dtype=x.dtype)
+            tau = tau.view(*([1] * len(leading_shape)), -1)
+            tau = tau.expand(*leading_shape, -1)
         
-        tau = taus.view(*([1] * len(leading_shape)), -1).expand(*leading_shape, -1)
-        
-        assert 0.0 <= tau.min() and tau.max() <= 1.0, "taus must be in [0, 1]"
+        # Validate tau range
+        assert tau.min() >= 0.0 and tau.max() <= 1.0, "tau must be in [0, 1]"
 
-        # Bernstein basis
+        # Compute Bernstein basis
         Bmat = self._bernstein_basis(tau)  # [..., Q, degree+1]
-
-        # Positive increments via softplus + cumsum ensures monotonicity
-        raw_coeffs = self.coeff_net(x)                          # [..., (degree+1)*target_features]
-        raw_coeffs = raw_coeffs.view(*leading_shape, self.degree + 1, self.target_features)  # [..., degree+1, target_features]
-        coeffs = torch.cumsum(raw_coeffs, dim=-2)
+        # Get positive incremental coefficients and cumsum for monotonicity
+        raw_coeffs = self.coeff_net(x)  # [..., (degree+1)*target_features]
+        raw_coeffs = raw_coeffs.view(
+            *leading_shape, 
+            self.degree + 1, 
+            self.target_features
+        )  # [..., degree+1, target_features]
+        coeffs = torch.cumsum(raw_coeffs, dim=-2)  # Monotonicity constraint
         
-        # Min value
+        # Compute minimum value
         if self.min_val is not None:
-            min_vals = self.min_val.view(*([1] * (len(leading_shape) + 1)), self.target_features)
+            # Fixed minimum
+            min_vals = self.min_val.view(
+                *([1] * (len(leading_shape) + 1)), 
+                self.target_features
+            )
             min_vals = min_vals.expand(*leading_shape, 1, self.target_features)
         else:
-            assert self.min_val_net is not None
-            min_vals = self.min_val_net(x)                      # [..., target_features]
-            min_vals = min_vals.unsqueeze(-2)                    # [..., 1, target_features]
+            # Learned minimum
+            min_vals = self.min_val_net(x)  # [..., target_features]
+            min_vals = min_vals.unsqueeze(-2)  # [..., 1, target_features]
 
-        out = min_vals + torch.einsum("...qk,...kn->...qn", Bmat, coeffs)  # [..., Q, target_features]
-        assert isinstance(out, torch.Tensor)
-        return out  # [..., Q, target_features]
-    
-    def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # Quantile function: Q(tau) = min_val + sum_i(c_i * B_i(tau))
+        quantiles = min_vals + torch.einsum(
+            "...qk,...kn->...qn", 
+            Bmat, 
+            coeffs
+        )  # [..., Q, target_features]
+        
+        return {"qval_pred": quantiles, "tau": tau}  # [..., Q, target_features]
+
+    def compute_innovation(
+        self, 
+        x: torch.Tensor, 
+        target: torch.Tensor, 
+        mask: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Integrated quantile regression innovation.
+        Compute standardized innovation per equation (11):
+            δy = (y - Q_50) / (Q_75 - Q_25)
         
         Args:
-            x: input [..., in_features]
-            target: target values [..., target_features]
-            mask: boolean mask [..., target_features]
+            x: Input features [..., in_features]
+            target: Observed values [..., target_features]
+            mask: Observation mask [..., target_features]
+        
+        Returns:
+            Masked innovation [..., target_features]
         """
         leading_shape = x.shape[:-1]
-        # tau is [.25, .5, .75]
-        taus = torch.tensor([0.25, 0.5, 0.75], device=x.device, dtype=x.dtype)
-        tau = taus.view(*([1] * len(leading_shape)), -1).expand(*leading_shape, -1)
         
-        preds = self.forward(x, tau)
-        pred25 = preds[..., 0, :]  # [..., 1, target_features]
-        mean_pred = preds[..., 1, :]  # [..., 1, target_features]
-        pred75 = preds[..., 2, :]  # [..., 1, target_features]
+        # Quantile levels: 25%, 50%, 75%
+        taus = torch.tensor(
+            [0.25, 0.5, 0.75], 
+            device=x.device, 
+            dtype=x.dtype
+        )
+        tau = taus.view(*([1] * len(leading_shape)), -1)
+        tau = tau.expand(*leading_shape, -1)
         
-        innovation = (target - mean_pred) / (pred75 - pred25 + 1e-6)  # [B, S, target_features]
+        # Get quantile predictions
+        out = self.forward(x, tau)  # [..., 3, target_features]
+        preds = out["qval_pred"]  # [..., 3, target_features]
+        q25 = preds[..., 0, :]   # [..., target_features]
+        q50 = preds[..., 1, :]   # [..., target_features]
+        q75 = preds[..., 2, :]   # [..., target_features]
+        
+        # Standardized innovation: (y - median) / IQR
+        iqr = q75 - q25
+        innovation = (target - q50) / (iqr + 1e-6)
+        
         return mask * innovation
 
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(
+        self, 
+        x: torch.Tensor, 
+        target: torch.Tensor, 
+        mask: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Integrated quantile regression loss.
+        Integrated quantile regression loss (pinball loss).
         
         Args:
-            x: input [..., in_features]
-            target: target values [..., target_features]
-            mask: boolean mask [..., target_features]
+            x: Input features [..., in_features]
+            target: Observed values [..., target_features]
+            mask: Observation mask [..., target_features]
             
         Returns:
-            Loss value (scalar tensor)
+            Scalar loss value
         """
         leading_shape = x.shape[:-1]
         
-        if not isinstance(self.taus, torch.Tensor):
-            taus = torch.tensor(self.taus, device=x.device, dtype=x.dtype)
-        else:
-            taus = self.taus.to(device=x.device, dtype=x.dtype)
+        # Get training quantiles and spacings
+        taus = self.taus.to(device=x.device, dtype=x.dtype)
+        dtau = self.dtau.to(device=x.device, dtype=x.dtype)
         
-        if not isinstance(self.dtau, torch.Tensor):
-            dtau = torch.tensor(self.dtau, device=x.device, dtype=x.dtype)
-        else:
-            dtau = self.dtau.to(device=x.device, dtype=x.dtype)
+        # Expand to match batch dimensions
+        tau = taus.view(*([1] * len(leading_shape)), -1)
+        tau = tau.expand(*leading_shape, -1)
         
-        # Expand taus and dtau to match leading dimensions
-        tau = taus.view(*([1] * len(leading_shape)), -1).expand(*leading_shape, -1)
-        dtau_expanded = dtau.view(*([1] * len(leading_shape)), -1).expand(*leading_shape, -1)
+        dtau_expanded = dtau.view(*([1] * len(leading_shape)), -1)
+        dtau_expanded = dtau_expanded.expand(*leading_shape, -1)
         
-        preds = self.forward(x, tau)  # [..., Q, target_features]
-        
+        # Predict quantiles
+        out = self.forward(x, tau)  # [..., Q, target_features]
+        preds = out["qval_pred"]  # [..., Q, target_features]
+        # Expand target and mask
         target = target.unsqueeze(-2)  # [..., 1, target_features]
-        mask = mask.unsqueeze(-2)  # [..., 1, target_features]
+        mask = mask.unsqueeze(-2)      # [..., 1, target_features]
         
+        # Quantile loss: rho_tau(e) = e * (1{e>=0} - tau)
         errors = preds - target  # [..., Q, target_features]
-        weight = (errors >= 0).float() - tau.unsqueeze(-1)  # [..., Q, target_features]
+        weight = (errors >= 0).float() - tau.unsqueeze(-1)
         
-        # Apply mask and compute loss
+        # Integrate over quantiles with dtau weights
         dtau_expanded = dtau_expanded.unsqueeze(-1)  # [..., Q, 1]
-        loss_per_sample = weight * errors * dtau_expanded  # [..., Q, target_features]
-        loss_per_sample = loss_per_sample * mask  # Apply mask
+        loss_per_element = weight * errors * dtau_expanded
         
-        loss = 2 * loss_per_sample.sum() / mask.sum().clamp(min=1.0)
-        return loss
+        # Apply mask and normalize
+        loss_per_element = loss_per_element * mask
+        total_loss = 2 * loss_per_element.sum() / mask.sum().clamp(min=1.0)
+        
+        return total_loss

@@ -17,7 +17,8 @@ def test_linear_output_head() -> None:
     )
 
     out = linear_output_head(input_tensor)  # Forward pass
-    assert out.shape == (batch_dim, n_stations, target_dim)  # Check output
+    preds = out['val_pred']
+    assert preds.shape == (batch_dim, n_stations, target_dim)  # Check output
 
     inno = linear_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
     assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
@@ -40,8 +41,8 @@ def test_gaussian_output_head() -> None:
     )
 
     out = gaussian_output_head(input_tensor)  # Forward pass
-    assert out["mean"].shape == (batch_dim, n_stations, target_dim)  # Check mean output shape
-    assert out["std"].shape == (batch_dim, n_stations, target_dim)  # Check std output shape
+    assert out["mu_pred"].shape == (batch_dim, n_stations, target_dim)  # Check mean output shape
+    assert out["std_pred"].shape == (batch_dim, n_stations, target_dim)  # Check std output shape
 
     inno = gaussian_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
     assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
@@ -64,7 +65,8 @@ def test_quantile_output_head() -> None:
     )
 
     out = quantile_output_head(input_tensor)  # Forward pass
-    assert out.shape == (batch_dim, n_stations, len(quantile_output_head.taus), target_dim)  # Check output
+    qvals = out["qval_pred"]
+    assert qvals.shape == (batch_dim, n_stations, len(quantile_output_head.taus), target_dim)  # Check output
 
     inno = quantile_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
     assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
