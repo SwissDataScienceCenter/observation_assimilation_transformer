@@ -64,6 +64,23 @@ class BaseOutputHead(nn.Module, ABC):
             Loss value (scalar tensor)
         """
         raise NotImplementedError()
+    
+    def loss_normalization_per_sample(self, loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Compute normalization factor for loss per sample based on mask.
+        
+        Args:
+            loss: loss tensor [B, S, target_features]
+            mask: boolean mask indicating valid entries [B, S, target_features]
+            
+        Returns:
+            Normalization factor per sample [B]
+        """
+        loss_per_sample = torch.sum(loss * mask, dim=[-2, -1])  # [B]
+        valid_counts = torch.sum(mask, dim=[-2, -1])  # [B]
+        normalization = torch.clamp(valid_counts, min=1.0)  # Avoid division by zero
+        norm_loss = torch.mean(loss_per_sample / normalization)  # [B]
+        return norm_loss
 
 class LinearOutputHead(BaseOutputHead):
     """
@@ -105,7 +122,6 @@ class LinearOutputHead(BaseOutputHead):
             Predictions {"val_pred": [B, S, target_features]}
         """
         output = self.net(x)
-        assert isinstance(output, torch.Tensor)
         return {"val_pred": output}  # [B, S, target_features]
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -137,7 +153,8 @@ class LinearOutputHead(BaseOutputHead):
         """
         out = self.forward(x)
         pred = out['val_pred']
-        loss = self.loss_fn(pred[mask], target[mask])
+        loss = self.loss_fn(pred, target, reduction='none')  # [num_valid]
+        loss = self.loss_normalization_per_sample(loss, mask)
         return loss
     
 class GaussianOutputHead(BaseOutputHead):
@@ -154,7 +171,7 @@ class GaussianOutputHead(BaseOutputHead):
             in_features: Channels of input features.
             target_features: Channels of output features.
             std_fn: Function used to transform the raw standard deviation (e.g. "softplus", "exp"). Defaults to "softplus".
-            min_val: Minimum standard deviation value used to clamp the output. If None, no clamping is applied. Defaults to 0.
+            min_std_val: Minimum standard deviation value used to clamp the output. If None, no clamping is applied. Defaults to 0.
 
         Raises:
             ValueError: If an unknown std_fn is specified.
@@ -184,8 +201,6 @@ class GaussianOutputHead(BaseOutputHead):
         std = self.std_fn(raw_std)
         if self.min_std_val is not None:
             std = torch.clamp(std, min=self.min_std_val)
-        assert isinstance(mean, torch.Tensor)
-        assert isinstance(std, torch.Tensor)
         return {"mu_pred": mean, "std_pred": std}  # [B, S, target_features]
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -220,7 +235,8 @@ class GaussianOutputHead(BaseOutputHead):
         std = preds["std_pred"]
         var = std ** 2
         nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
-        loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
+        #loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
+        loss = self.loss_normalization_per_sample(nll, mask)
         return loss
     
     
@@ -333,7 +349,10 @@ class QuantileOutputHead(BaseOutputHead):
             tau = tau.expand(*leading_shape, -1)
         
         # Validate tau range
-        assert tau.min() >= 0.0 and tau.max() <= 1.0, "tau must be in [0, 1]"
+        tau_min = tau.min().item()
+        tau_max = tau.max().item()
+        if tau_min < 0.0 or tau_max > 1.0:
+            raise ValueError("tau must be in [0, 1]")
 
         # Compute Bernstein basis
         Bmat = self._bernstein_basis(tau)  # [..., Q, degree+1]
@@ -459,6 +478,6 @@ class QuantileOutputHead(BaseOutputHead):
         integrated_loss = torch.trapezoid(check_loss, taus, dim=-2)  # [..., target_features]
         
         # Normalize by number of valid observations
-        total_loss = integrated_loss.sum() / mask.sum().clamp(min=1.0)
-        
-        return total_loss
+        #total_loss = integrated_loss.sum() / mask.sum().clamp(min=1.0)
+        loss = self.loss_normalization_per_sample(integrated_loss, mask.squeeze(-2))
+        return loss
