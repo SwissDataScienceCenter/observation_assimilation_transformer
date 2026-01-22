@@ -107,11 +107,11 @@ class CNNTopographyEncoder(TopographyEncoder):
         # TODO simple linear projection is fine?
         final_hw = target_hw[-1]
         flat_dim = curr_c * final_hw[0] * final_hw[1]
-        self.output_head = nn.Linear(flat_dim, out_channels)
+        self.embedding_head = nn.Linear(flat_dim, out_channels)
 
     def forward(self, topography_patch: torch.Tensor) -> torch.Tensor:
         """ Forward pass of the topography encoder.
-        
+
         Args:
             topography_patch: The input topography patch of shape [..., C, H, W].
 
@@ -127,5 +127,5 @@ class CNNTopographyEncoder(TopographyEncoder):
         else:
             # Preserve a batch dimension for 3D inputs [C, H, W] -> [1, out_channels]
             out_flat = out.reshape(1, -1)
-        out_flat = self.output_head(out_flat)
+        out_flat = self.embedding_head(out_flat)
         return out_flat
