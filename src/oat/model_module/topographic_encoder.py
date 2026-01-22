@@ -1,16 +1,14 @@
 from oat.model_module.activations import get_activation
 
-from abc import ABC, abstractmethod
 from typing import Any
 
 import math
 import torch
 import torch.nn as nn
-from einops import rearrange
 
 
 
-class TopographyEncoder(nn.Module, ABC):
+class TopographyEncoder(nn.Module):
     def __init__(self, *, in_channels: int, out_channels: int):
         super().__init__()
 
