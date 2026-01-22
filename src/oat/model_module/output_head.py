@@ -8,7 +8,7 @@ from typing import Dict, Any
 class BaseOutputHead(nn.Module, ABC):
     
     """
-    Base class for decoders.
+    Base class for output heads.
     """
     def __init__(self, *, 
                  in_features: int, 
@@ -43,6 +43,7 @@ class BaseOutputHead(nn.Module, ABC):
         Args:
             x: input features [..., in_features]
             target: target values [..., target_features]
+            mask: boolean mask indicating valid entries [..., target_features]
             
         Returns:
             Innovation (residuals) [..., target_features]
@@ -115,6 +116,7 @@ class LinearOutputHead(BaseOutputHead):
         Args:
             x: input [B, S, in_features]
             target: target values [B, S, target_features]
+            mask: boolean mask [B, S, target_features]
 
         Returns:
             Innovation (residuals) [B, S, target_features]
@@ -147,7 +149,7 @@ class GaussianOutputHead(BaseOutputHead):
                 in_features: int, 
                 target_features: int,
                 std_fn: str | None = "softplus",
-                min_val: float | None = 0
+                min_std_val: float | None = 1e-3
                 ) -> None:
         """
         Args:
@@ -167,9 +169,9 @@ class GaussianOutputHead(BaseOutputHead):
             self.std_fn = torch.exp
         else:
             raise ValueError(f"Unknown std fn: {std_fn}")
-        self.min_val = min_val
+        self.min_std_val = min_std_val
         
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """ Generate predictions.
 
         Args:
@@ -181,8 +183,8 @@ class GaussianOutputHead(BaseOutputHead):
         output = self.net(x)
         mean, raw_std = torch.chunk(output, 2, dim=-1)
         std = self.std_fn(raw_std)
-        if self.min_val is not None:
-            std = torch.clamp(std, min=self.min_val)
+        if self.min_std_val is not None:
+            std = torch.clamp(std, min=self.min_std_val)
         assert isinstance(mean, torch.Tensor)
         assert isinstance(std, torch.Tensor)
         return {"mu_pred": mean, "std_pred": std}  # [B, S, target_features]
@@ -193,6 +195,7 @@ class GaussianOutputHead(BaseOutputHead):
         Args:
             x: input [..., in_features]
             target: target values [..., target_features]
+            mask: boolean mask [..., target_features]
 
         Returns:
             Innovation (residuals) [..., target_features]
@@ -224,7 +227,7 @@ class GaussianOutputHead(BaseOutputHead):
     
 class QuantileOutputHead(BaseOutputHead):
     """
-    Quantile decoder using Bernstein polynomial parameterization.
+    Quantile output head using Bernstein polynomial parameterization.
     Produces monotone quantile functions via cumulative sum of positive coefficients.
     """
 
@@ -415,7 +418,11 @@ class QuantileOutputHead(BaseOutputHead):
         mask: torch.Tensor
     ) -> torch.Tensor:
         """
-        Integrated quantile regression loss (pinball loss).
+        Integrated quantile regression loss using trapezoidal integration.
+        
+        Approximates: ∫_0^1 ρ_τ(Y - Q_τ(X)) dτ
+        
+        where ρ_τ(u) = u(τ - 1{u < 0}) is the check function (pinball loss).
         
         Args:
             x: Input features [..., in_features]
@@ -427,34 +434,32 @@ class QuantileOutputHead(BaseOutputHead):
         """
         leading_shape = x.shape[:-1]
         
-        # Get training quantiles and spacings
+        # Get training quantiles
         taus = self.taus.to(device=x.device, dtype=x.dtype)
-        dtau = self.dtau.to(device=x.device, dtype=x.dtype)
-        
-        # Expand to match batch dimensions
-        tau = taus.view(*([1] * len(leading_shape)), -1)
-        tau = tau.expand(*leading_shape, -1)
-        
-        dtau_expanded = dtau.view(*([1] * len(leading_shape)), -1)
-        dtau_expanded = dtau_expanded.expand(*leading_shape, -1)
+        tau = taus.view(*([1] * len(leading_shape)), -1).expand(*leading_shape, -1)
         
         # Predict quantiles
         out = self.forward(x, tau)  # [..., Q, target_features]
-        preds = out["qval_pred"]  # [..., Q, target_features]
+        preds = out["qval_pred"]
         # Expand target and mask
         target = target.unsqueeze(-2)  # [..., 1, target_features]
         mask = mask.unsqueeze(-2)      # [..., 1, target_features]
         
-        # Quantile loss: rho_tau(e) = e * (1{e>=0} - tau)
+        # Compute errors
         errors = preds - target  # [..., Q, target_features]
-        weight = (errors >= 0).float() - tau.unsqueeze(-1)
         
-        # Integrate over quantiles with dtau weights
-        dtau_expanded = dtau_expanded.unsqueeze(-1)  # [..., Q, 1]
-        loss_per_element = weight * errors * dtau_expanded
+        # Check function: ρ_τ(e) = e * (τ - 1{e < 0})
+        tau_expanded = tau.unsqueeze(-1)  # [..., Q, 1]
+        check_loss = errors * (tau_expanded - (errors < 0).float())
         
-        # Apply mask and normalize
-        loss_per_element = loss_per_element * mask
-        total_loss = 2 * loss_per_element.sum() / mask.sum().clamp(min=1.0)
+        # Apply mask
+        check_loss = check_loss * mask  # [..., Q, target_features]
+        
+        # Integrate over quantile dimension using trapezoidal rule
+        # torch.trapezoid integrates along the specified dimension
+        integrated_loss = torch.trapezoid(check_loss, taus, dim=-2)  # [..., target_features]
+        
+        # Normalize by number of valid observations
+        total_loss = integrated_loss.sum() / mask.sum().clamp(min=1.0)
         
         return total_loss
