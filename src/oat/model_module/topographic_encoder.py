@@ -118,7 +118,7 @@ class CNNTopographyEncoder(TopographyEncoder):
             topography_patch: The input topography patch of shape [..., C, H, W].
 
         Returns:
-            The encoded topography features as a tensor.
+            The encoded topography features as a tensor. [..., out_channels]
         """
 
         leading_dims = topography_patch.shape[:-3]
