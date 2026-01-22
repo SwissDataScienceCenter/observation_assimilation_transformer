@@ -109,49 +109,21 @@ class CNNTopographyEncoder(TopographyEncoder):
         # TODO simple linear projection is fine?
         final_hw = target_hw[-1]
         flat_dim = curr_c * final_hw[0] * final_hw[1]
-        self.flatten = nn.Flatten()
         self.output_head = nn.Linear(flat_dim, out_channels)
 
-    def _prepare_input_shapes(self, x: torch.Tensor) -> tuple[torch.Tensor, tuple | None]:
-        """Prepares the input x such that 
-        it becomes of shape [B,C,H,W].
-
-        Cases:
-            - [B,S,C,H,W] -> [(B*S),C,H,W]
-            - [B,C,H,W] -> [B,C,H,W]
-            - [C,H,W] -> [1,C,H,W]
-
+    def forward(self, topography_patch: torch.Tensor) -> torch.Tensor:
+        """ Forward pass of the topography encoder.
+        
         Args:
-            x : the input tensor.
+            topography_patch: The input topography patch of shape [..., C, H, W].
 
         Returns:
-            the reshaped tensor. If batch and station dimensons were 
-            merged, it additionally returns the shape tuple that allows to
-            reshape the tensor back.
+            The encoded topography features as a tensor.
         """
 
-        if x.ndim == 5:
-            output_shape = (*x.shape[:2], self.out_channels)
-            # Merge station and batch dim (needed for conv2d)
-            x = rearrange(x, 'b s ... -> (b s) ...')
-            return x, output_shape
-        if x.ndim == 4:
-            return x, None
-        if x.ndim == 3:
-            # if the tensor is [C,H,W], add a dummy batch size
-            # This is needed for batch norm 2d to work.
-            return x.unsqueeze(0), None
-
-    def forward(self, topography_patch: torch.Tensor) -> torch.Tensor:
-
-        topography_patch, out_shape = self._prepare_input_shapes(topography_patch)
-
-        out = self.conv_blocks(topography_patch)
-        out_flat = self.flatten(out)
-
+        leading_dims = topography_patch.shape[:-3]
+        C, H, W = topography_patch.shape[-3:]
+        out = self.conv_blocks(topography_patch.reshape(-1, C, H, W))
+        out_flat = out.reshape(*leading_dims, -1)
         out_flat = self.output_head(out_flat)
-
-        if out_shape is not None:
-            out_flat = out_flat.reshape(*out_shape)
-
         return out_flat
