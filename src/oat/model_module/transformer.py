@@ -776,6 +776,11 @@ class GeometryAwareMHA(nn.Module):
         k_max = int(k_counts.max().long().item())
         
         if k_max == 0:
+            # No valid neighbors for any query: return zeros.
+            # Note: this early return bypasses dropout used in the normal path.
+            #       Dropout on an all-zero tensor is a no-op, so skipping it here
+            #       does not change the output or gradients; this behavior is
+            #       intentional and documents the edge case explicitly.
             return torch.zeros(B, H, N_q, d_k, device=Q.device), None
         
         # Use topk to extract the indices of valid neighbors
