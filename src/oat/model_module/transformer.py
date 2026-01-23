@@ -733,6 +733,8 @@ class GeometryAwareMHA(nn.Module):
         
         # Equation 22: Compute attention weights
         attn_weights = F.softmax(attn_logits, dim=-1)  # (B, H, N_q, N_kv)
+        # Replace any NaNs (e.g., from fully masked rows) with zeros to avoid propagating NaNs
+        attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
         attn_weights = self.dropout(attn_weights)
         
         # Equation 23: Apply attention to values
