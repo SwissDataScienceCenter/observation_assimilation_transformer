@@ -31,6 +31,27 @@ class ObservationAssimilationTransformer(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """
+        Initialize a Geometry-Aware Transformer model.
+        
+        Args:
+            d_model: The number of expected features in the encoder/decoder inputs. Defaults to 512.
+            nhead: The number of heads in the multiheadattention models. Defaults to 8.
+            num_encoder_layers: The number of sub-encoder-layers in the encoder. Defaults to 6.
+            num_decoder_layers: The number of sub-decoder-layers in the decoder. Defaults to 6.
+            dim_feedforward: The dimension of the feedforward network model. Defaults to 2048.
+            dropout: The dropout value. Defaults to 0.1.
+            activation: The activation function of intermediate layer. Defaults to "GELU".
+            layer_norm_eps: The eps value in layer normalization components. Defaults to 1e-5.
+            d_geo_bias: The dimension of the geometry bias. Defaults to None.
+            dim_geo_bias_feedforward: The dimension of the feedforward network for geometry bias. Defaults to 64.
+            norm_first: If True, layer norm is done prior to attention and feedforward operations. Defaults to False.
+            bias: If True, adds bias to linear layers. Defaults to True.
+            sparse_attn: If True, uses sparse attention mechanism. Defaults to False.
+            device: The device to place the model on. Defaults to None.
+            dtype: The desired data type of the model parameters. Defaults to None.
+        """
+        
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
         
@@ -80,7 +101,6 @@ class ObservationAssimilationTransformer(nn.Module):
         
         self.d_model = d_model
         self.nhead = nhead
-        
         self._reset_parameters()
     
     def forward(
@@ -94,6 +114,26 @@ class ObservationAssimilationTransformer(nn.Module):
         dist_tgt: Optional[torch.Tensor] = None,
         dist_memory: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Forward pass of the transformer model.
+        Args:
+            src (torch.Tensor): Source sequence tensor to be encoded.
+            tgt (torch.Tensor): Target sequence tensor to be decoded.
+            src_mask (Optional[torch.Tensor], optional): Mask for the source sequence to prevent 
+                attention to certain positions. Defaults to None.
+            tgt_mask (Optional[torch.Tensor], optional): Mask for the target sequence to prevent 
+                attention to certain positions (e.g., for causal masking). Defaults to None.
+            memory_mask (Optional[torch.Tensor], optional): Mask for the encoder output (memory) 
+                in the decoder's cross-attention. Defaults to None.
+            dist_src (Optional[torch.Tensor], optional): Distance information for the source sequence, 
+                used for positional encoding or attention biasing. Defaults to None.
+            dist_tgt (Optional[torch.Tensor], optional): Distance information for the target sequence, 
+                used for positional encoding or attention biasing. Defaults to None.
+            dist_memory (Optional[torch.Tensor], optional): Distance information for cross-attention 
+                between target and encoder memory. Defaults to None.
+        Returns:
+            torch.Tensor: The output tensor from the decoder, representing the transformed target sequence.
+        """
         memory = self.encoder(
             src,
             src_mask=src_mask,
@@ -125,6 +165,20 @@ class GeometryAwareEncoder(nn.Module):
         num_layers: int,
         norm: Optional[nn.Module] = None,
     ):
+        """
+        Initialize the Geometry-Aware Transformer Encoder.
+        Args:
+            encoder_layer (GeometryAwareEncoderLayer): A single encoder layer instance that will be cloned
+                to create the stack of encoder layers.
+            num_layers (int): The number of encoder layers to stack.
+            norm (Optional[nn.Module], optional): An optional normalization layer to apply after the
+                final encoder layer. Defaults to None.
+        Attributes:
+            layers: A ModuleList containing cloned instances of the encoder layer.
+            num_layers: The total number of encoder layers in the stack.
+            norm: The normalization layer applied after all encoder layers, if provided.
+        """
+        
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
@@ -136,7 +190,21 @@ class GeometryAwareEncoder(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         dist_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        
+        """
+        Forward pass through the transformer encoder.
+        Args:
+            src (torch.Tensor): The input tensor to the transformer encoder.
+                Shape: (batch_size, sequence_length, d_model)
+            src_mask (Optional[torch.Tensor], optional): An optional mask tensor to prevent attention
+                to certain positions. Shape: (batch_size, sequence_length, sequence_length) or
+                broadcastable. Defaults to None.
+            dist_src (Optional[torch.Tensor], optional): An optional distance tensor that can be used
+                by the transformer layers for distance-aware attention or other mechanisms.
+                Defaults to None.
+        Returns:
+            torch.Tensor: The output tensor after processing through all transformer layers.
+                Shape: (batch_size, sequence_length, d_model)
+        """
         output = src
         
         for mod in self.layers:
@@ -156,6 +224,18 @@ class GeometryAwareDecoder(nn.Module):
         num_layers: int,
         norm: Optional[nn.Module] = None,
     ):
+        """
+        Initialize the Transformer decoder.
+        Args:
+            decoder_layer: An instance of the decoder layer to be cloned.
+            num_layers: Number of decoder layers to stack.
+            norm: Normalization layer to apply after all decoder layers. 
+                Defaults to None.
+        Attributes:
+            layers: List of cloned decoder layers.
+            num_layers: Number of decoder layers.
+            norm: Normalization layer.
+        """
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
@@ -170,7 +250,19 @@ class GeometryAwareDecoder(nn.Module):
         dist_tgt: Optional[torch.Tensor] = None,
         dist_memory: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Forward pass through the transformer decoder.
         
+        Args:
+            tgt: Target sequence tensor
+            memory: Memory tensor from the encoder
+            tgt_mask: Optional mask for target sequence
+            memory_mask: Optional mask for memory tensor
+            dist_tgt: Optional distance information for target sequence
+            dist_memory: Optional distance information for memory
+        Returns:
+            Transformed output tensor after passing through all decoder layers and optional normalization
+        """
         output = tgt
         
         for mod in self.layers:
@@ -190,16 +282,6 @@ class GeometryAwareDecoder(nn.Module):
                  
 
 class GeometryAwareEncoderLayer(nn.Module):
-    """
-    Geometry-aware Multi-Head Attention for neural downscaling.
-    
-    Implements equations (15)-(25) from the paper.
-    
-    Automatically handles inputs with arbitrary leading dimensions:
-    - Single instance: (N_q, D)
-    - Batched: (B, N_q, D)
-    - Multi-dimensional: (B1, B2, ..., N_q, D)
-    """
     
     def __init__(
         self,
@@ -219,14 +301,21 @@ class GeometryAwareEncoderLayer(nn.Module):
         dtype: Optional[torch.dtype] = None,
     ):
         """
+        Initialize a Transformer Encoder Layer with geometry-aware multi-head attention.
         Args:
-            d_model: Dimension of query embeddings (D_emb)
-            d_kv: Dimension of station tokens (D_kv)
-            num_heads: Number of attention heads (H)
-            d_geo_bias: Dimension of geometric features for bias (D_r)
-            dropout: Dropout probability
-            geo_bias_hidden_dim: Hidden dimension for geometry bias MLP (default: 64)
-            ffn_expansion: Expansion ratio for FFN hidden layer (default: 4, standard in transformers)
+            d_model: The number of expected features in the input.
+            nhead: The number of heads in the multihead attention models.
+            d_geo_bias: The dimension of geometric bias features. If None, no geometric bias is used.
+            dim_feedforward: The dimension of the feedforward network model.
+            dropout: The dropout value.
+            activation: The activation function to use in the feedforward network.
+            layer_norm_eps: The epsilon value in layer normalization components.
+            norm_first: If True, layer norm is done prior to attention and feedforward operations (pre-norm). Otherwise it's done after (post-norm).
+            dim_geo_bias_feedforward: The hidden dimension for the geometric bias feedforward network.
+            sparse: Whether to use sparse attention.
+            bias: Whether to use bias in linear layers and layer normalization.
+            device: The device to place the parameters on.
+            dtype: The data type for the parameters.
         """
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
@@ -261,19 +350,15 @@ class GeometryAwareEncoderLayer(nn.Module):
         dist_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Forward pass of geometry-aware multi-head attention.
-        
-        Automatically handles arbitrary leading dimensions.
-        
+        Perform a forward pass through the transformer encoder layer.
+
         Args:
-            Z_q: Query embeddings, shape (..., N_q, D_emb)
-            S_kv: Station tokens, shape (..., N_kv, D_kv)
-            R_qkv: Relative geometric features, shape (..., N_q, N_kv, D_r)
-            M_dist: Distance mask, shape (..., N_q, N_kv), optional
-                   True/1 = keep, False/0 = mask out
-        
+            src: The input tensor to the encoder layer.
+            src_mask: An optional mask tensor for the source sequence to prevent attention to certain positions.
+            dist_src: An optional distance tensor for the source sequence.
+
         Returns:
-            Z_tilde_q: Updated query embeddings, shape (..., N_q, D_emb)
+            The output tensor after applying self-attention and feed-forward operations.
         """
         x = src
         if self.norm_first:
@@ -323,7 +408,23 @@ class GeometryAwareDecoderLayer(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
-    
+        """
+        Initialize a Transformer decoder layer with geometry-aware multi-head attention.
+        Args:
+            d_model: The number of expected features in the input.
+            nhead: The number of heads in the multiheadattention models.
+            d_geo_bias: Dimension of geometric bias features. If None, no geometric bias is used.
+            dim_feedforward: The dimension of the feedforward network model.
+            dropout: The dropout value.
+            activation: The activation function of the intermediate layer.
+            layer_norm_eps: The eps value in layer normalization components.
+            norm_first: If True, layer norm is done prior to self attention, multihead attention and feedforward operations.
+            dim_geo_bias_feedforward: Hidden dimension for geometric bias feedforward network.
+            sparse: Whether to use sparse attention.
+            bias: Whether to use bias in linear layers and layer normalization.
+            device: The device to place the parameters on.
+            dtype: The dtype of the parameters.
+        """
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
         
@@ -371,7 +472,20 @@ class GeometryAwareDecoderLayer(nn.Module):
         dist_tgt: Optional[torch.Tensor] = None,
         dist_memory: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Perform a forward pass through the transformer decoder layer.
 
+        Args:
+            tgt: The target sequence tensor
+            memory: The memory sequence tensor from the encoder
+            tgt_mask: Optional mask for the target sequence
+            memory_mask: Optional mask for the memory sequence
+            dist_tgt: Optional distance information for the target sequence
+            dist_memory: Optional distance information for the memory sequence
+
+        Returns:
+            The output tensor after applying self-attention, cross-attention, and feedforward blocks
+        """
         x = tgt
         if self.norm_first:
             x = x + self._sa_block(self.norm1(x), tgt_mask, dist_tgt)
@@ -435,23 +549,19 @@ class GeometryAwareMHA(nn.Module):
         dtype: Optional[torch.dtype] = None,
     ):
         """
-        Geometry-aware Multi-Head Attention for neural downscaling.
-        
-        Implements equations (15)-(25) from the paper.
-        
-        Automatically handles inputs with arbitrary leading dimensions:
-        - Single instance: (N_q, D)
-        - Batched: (B, N_q, D)
-        - Multi-dimensional: (B1, B2, ..., N_q, D)
-        
+        Initialize the Transformer attention module.
         Args:
-            d_model: Dimension of query embeddings (D_emb)
-            d_kv: Dimension of station tokens (D_kv)
-            num_heads: Number of attention heads (H)
-            d_geo_bias: Dimension of geometric features for bias (D_r)
-            dropout: Dropout probability
-            geo_bias_hidden_dim: Hidden dimension for geometry bias MLP (default: 64)
-            ffn_expansion: Expansion ratio for FFN hidden layer (default: 4, standard in transformers)
+            embed_dim: The embedding dimension for the transformer.
+            num_heads: The number of attention heads.
+            dropout: Dropout probability for attention weights. Defaults to 0.0.
+            d_geo_bias: Dimension of geometric bias features. If None, no geometric bias is used.
+            geo_bias_hidden_dim: Hidden dimension for the geometric bias network. Defaults to 64.
+            sparse: Whether to use sparse attention. Defaults to False.
+            device: Device to place tensors on.
+            dtype: Data type for tensors.
+        Raises:
+            ValueError: If embed_dim or num_heads are not greater than 0.
+            AssertionError: If embed_dim is not divisible by num_heads.
         """
         if embed_dim <= 0 or num_heads <= 0:
             raise ValueError(
@@ -507,20 +617,25 @@ class GeometryAwareMHA(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Forward pass of geometry-aware multi-head attention.
-        
-        Automatically handles arbitrary leading dimensions.
-        
+        Compute multi-head attention with optional geometric bias and sparse attention.
+        This method implements the forward pass of the attention mechanism, supporting:
+        - Multi-head attention with learnable projections
+        - Optional geometric/distance-based bias
+        - Optional sparse attention for efficiency
+        - Arbitrary leading batch dimensions
         Args:
-            query: Query embeddings, shape (..., N_q, D_emb)
-            key: Key embeddings, shape (..., N_kv, D_kv)
-            value: Value embeddings, shape (..., N_kv, D_kv)
-            dist_kv: Relative geometric features, shape (..., N_q, N_kv, D_r)
-            attn_mask: Attention mask, shape (..., N_q, N_kv), optional
-                       True/1 = keep, False/0 = mask out
+            query: Query tensor of shape (..., N_q, D_emb) where ... represents arbitrary leading dimensions
+            key: Key tensor of shape (..., N_k, D_emb)
+            value: Value tensor of shape (..., N_k, D_emb)
+            dist_qk: Optional distance/geometric features between queries and keys of shape (..., N_q, N_k, D_r)
+            need_weights: Whether to return attention weights. If False and sparse attention is enabled, 
+                          weights may not be computed for efficiency
+            attn_mask: Optional attention mask of shape (..., N_q, N_k) where True/1 indicates positions 
+                       to attend to
         Returns:
-            attn_output: Updated query embeddings, shape (..., N_q, D_emb)
-            attn_weights: Attention weights, shape (..., H, N_q, N_kv)
+            A tuple containing:
+                - attn_output: Attention output tensor of shape (..., N_q, D_emb), same leading dimensions as query
+                - attn_weights: Attention weights of shape (B, H, N_q, N_k) if computed, otherwise None
         """
         
         # Get original shape
@@ -581,6 +696,25 @@ class GeometryAwareMHA(nn.Module):
         dist_qk: Optional[torch.Tensor] = None,
         need_weights: bool = False
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Compute dense (full) attention between query, key, and value tensors.
+        This method implements the standard scaled dot-product attention mechanism with optional
+        geometry-aware bias and masking. It follows equations 15, 21, 22, and 23 from the paper.
+        Args:
+            Q: Query tensor of shape (B, H, N_q, d_k) where B is batch size, H is number of heads,
+                N_q is number of queries, and d_k is head dimension
+            K: Key tensor of shape (B, H, N_kv, d_k)
+            V: Value tensor of shape (B, H, N_kv, d_k)
+            attn_mask: Optional boolean/binary mask of shape (B, N_q, N_kv) where 0 indicates
+                positions to mask out. Defaults to None
+            dist_qk: Optional distance tensor of shape (B, N_q, N_kv, ...) for computing
+                geometry-aware attention bias. Defaults to None
+            need_weights: Whether to return attention weights. Defaults to False
+        Returns:
+            A tuple containing:
+                - Output tensor of shape (B, H, N_q, d_k) with attended values
+                - Attention weights of shape (B, H, N_q, N_kv) if need_weights is True, else None
+        """
         attn_logits = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, H, N_q, N_kv)
         
         # Equation 15: Compute geometry-aware attention bias
@@ -617,20 +751,23 @@ class GeometryAwareMHA(nn.Module):
         dist_qk: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Sparse attention computation that only processes valid neighbor pairs.
-        
-        Fully vectorized implementation - no loops!
-        More memory and compute efficient when the number of neighbors k << N_kv.
-        
+        Compute sparse attention by only considering valid neighbors specified by attention mask.
+        This method implements an efficient sparse attention mechanism that:
+        1. Identifies valid neighbors for each query using the attention mask
+        2. Extracts only the relevant key-value pairs for computation
+        3. Applies scaled dot-product attention with optional geometric bias
+        4. Returns the attention output for valid neighbors only
         Args:
-            Q: Query tensor, shape (B, H, N_q, d_k)
-            K: Key tensor, shape (B, H, N_kv, d_k)
-            V: Value tensor, shape (B, H, N_kv, d_k)
-            R_qkv: Geometric features, shape (B, N_q, N_kv, d_r)
-            M_dist: Binary distance mask, shape (B, N_q, N_kv), 1=keep, 0=mask
-        
+            Q: Query tensor of shape (batch_size, num_heads, num_queries, head_dim)
+            K: Key tensor of shape (batch_size, num_heads, num_keys, head_dim)
+            V: Value tensor of shape (batch_size, num_heads, num_values, head_dim)
+            attn_mask: Binary attention mask of shape (batch_size, num_queries, num_keys) 
+                indicating valid connections (1 for valid, 0 for invalid)
+            dist_qk: Optional distance tensor for geometric bias computation
         Returns:
-            Output tensor, shape (B, H, N_q, d_k)
+            A tuple containing:
+                - output: Attention output tensor of shape (batch_size, num_heads, num_queries, head_dim)
+                - None: Placeholder for attention weights (not returned in sparse implementation)
         """
         B, H, N_q, d_k = Q.shape
         _, _, N_kv, _ = K.shape
