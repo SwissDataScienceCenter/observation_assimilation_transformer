@@ -692,7 +692,7 @@ class GeometryAwareMHA(nn.Module):
         Q: torch.Tensor,
         K: torch.Tensor,
         V: torch.Tensor,
-        attn_mask: torch.Tensor | None = None,
+        attn_mask: Optional[torch.Tensor] = None,
         dist_qk: Optional[torch.Tensor] = None,
         need_weights: bool = False
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
