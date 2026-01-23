@@ -627,7 +627,7 @@ class GeometryAwareMHA(nn.Module):
             query: Query tensor of shape (..., N_q, D_emb) where ... represents arbitrary leading dimensions
             key: Key tensor of shape (..., N_k, D_emb)
             value: Value tensor of shape (..., N_k, D_emb)
-            dist_qk: Optional distance/geometric features between queries and keys of shape (..., N_q, N_k, D_r)
+            dist_qk: Optional distance/geometric features between queries and keys of shape (..., N_q, N_k, d_geo_bias)
             need_weights: Whether to return attention weights. If False and sparse attention is enabled, 
                           weights may not be computed for efficiency
             attn_mask: Optional attention mask of shape (..., N_q, N_k) where True/1 indicates positions 
