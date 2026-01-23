@@ -825,7 +825,6 @@ class GeometryAwareMHA(nn.Module):
         else:
             b_attn_neighbors = 0
         attn_logits = attn_logits + b_attn_neighbors
-        attn_logits = attn_logits
         
         # Mask out invalid neighbors (those beyond actual k for each query)
         neighbor_mask_expanded = neighbor_mask.unsqueeze(1).expand(B, H, N_q, k_max)
