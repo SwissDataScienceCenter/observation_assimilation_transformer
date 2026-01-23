@@ -600,11 +600,11 @@ class GeometryAwareMHA(nn.Module):
             self.f_geo = None
         
         self.dropout = nn.Dropout(dropout)
-        # Output projection (equation 24)
+        # Output projection layer for combining attention heads
         self.W_O = nn.Linear(embed_dim, embed_dim)
         
-        # Feed-forward network (equation 25)
-        # Standard transformer FFN with configurable expansion ratio
+        # Feed-forward network (FFN) with configurable expansion ratio
+        # Standard transformer FFN
         
         
     def forward(
