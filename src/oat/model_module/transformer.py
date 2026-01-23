@@ -592,9 +592,9 @@ class GeometryAwareMHA(nn.Module):
         # Maps geometric features to per-head attention biases
         if d_geo_bias:
             self.f_geo = nn.Sequential(
-                nn.Linear(d_geo_bias, num_heads * geo_bias_hidden_dim),
+                nn.Linear(d_geo_bias, num_heads * geo_bias_hidden_dim, **factory_kwargs),
                 nn.ReLU(),
-                nn.Linear(num_heads * geo_bias_hidden_dim, num_heads)
+                nn.Linear(num_heads * geo_bias_hidden_dim, num_heads, **factory_kwargs)
             )
         else:
             self.f_geo = None
