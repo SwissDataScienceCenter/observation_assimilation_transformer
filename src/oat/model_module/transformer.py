@@ -707,7 +707,7 @@ class GeometryAwareMHA(nn.Module):
             V: Value tensor of shape (B, H, N_kv, d_k)
             attn_mask: Optional boolean/binary mask of shape (B, N_q, N_kv) where 0 indicates
                 positions to mask out. Defaults to None
-            dist_qk: Optional distance tensor of shape (B, N_q, N_kv, ...) for computing
+            dist_qk: Optional distance tensor of shape (B, N_q, N_kv, d_geo_bias) for computing
                 geometry-aware attention bias. Defaults to None
             need_weights: Whether to return attention weights. Defaults to False
         Returns:
