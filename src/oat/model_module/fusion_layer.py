@@ -37,7 +37,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
                 nn.GLU(dim=-1)
             ]
             if dropout_p > 0.0:
-                blocks.append(nn.Dropout(p=dropout_p))
+                block.append(nn.Dropout(p=dropout_p))
 
             blocks.append(nn.Sequential(*block))
             in_dim = hidden_channels
