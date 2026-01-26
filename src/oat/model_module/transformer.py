@@ -783,7 +783,7 @@ class GeometryAwareMHA(nn.Module):
             #       Dropout on an all-zero tensor is a no-op, so skipping it here
             #       does not change the output or gradients; this behavior is
             #       intentional and documents the edge case explicitly.
-            return torch.zeros(B, H, N_q, d_k, device=Q.device), None
+            return torch.zeros(B, H, N_q, d_k, device=Q.device, dtype=Q.dtype), None
         
         # Use topk to extract the indices of valid neighbors
         # Since attn_mask is binary, topk will get all the 1s (valid neighbors)
