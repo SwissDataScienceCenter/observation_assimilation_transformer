@@ -171,7 +171,6 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
         assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-6)
     
 def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
-    B = setup_data["B"]
     N_q = setup_data["N_q"]
     D = setup_data["D"]
     num_heads = setup_data["num_heads"]
