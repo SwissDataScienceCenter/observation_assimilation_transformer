@@ -821,8 +821,9 @@ class GeometryAwareMHA(nn.Module):
                 dist_qk,
                 2,
                 idx_bias_expanded
-            )  # (B, H, N_q, k_max, D_r)
-            b_attn_neighbors = self.f_geo(dist_qk_neighbors)  # (B, H, N_q, k_max)
+            )  # (B, N_q, k_max, D_r)
+            # self.f_geo maps per-query, per-neighbor distances to per-head bias
+            b_attn_neighbors = self.f_geo(dist_qk_neighbors)  # (B, N_q, k_max, H)
             b_attn_neighbors = b_attn_neighbors.permute(0, 3, 1, 2)  # (B, H, N_q, k_max)
         else:
             b_attn_neighbors = 0
