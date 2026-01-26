@@ -412,7 +412,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         Initialize a Transformer decoder layer with geometry-aware multi-head attention.
         Args:
             d_model: The number of expected features in the input.
-            nhead: The number of heads in the multiheadattention models.
+            nhead: The number of heads in the multi-head attention models.
             d_geo_bias: Dimension of geometric bias features. If None, no geometric bias is used.
             dim_feedforward: The dimension of the feedforward network model.
             dropout: The dropout value.
