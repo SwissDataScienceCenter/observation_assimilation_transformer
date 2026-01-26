@@ -839,4 +839,3 @@ class GeometryAwareMHA(nn.Module):
         # Apply attention to values: (B, H, N_q, k_max) x (B, H, N_q, k_max, d_k) -> (B, H, N_q, d_k)
         output = torch.matmul(attn_weights.unsqueeze(3), V_neighbors).squeeze(3)
         return output, None
-    
