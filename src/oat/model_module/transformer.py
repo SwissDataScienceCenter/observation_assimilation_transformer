@@ -603,9 +603,6 @@ class GeometryAwareMHA(nn.Module):
         # Output projection layer for combining attention heads
         self.W_O = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
         
-        # Feed-forward network (FFN) with configurable expansion ratio
-        # Standard transformer FFN
-        
         
     def forward(
         self,
@@ -771,6 +768,7 @@ class GeometryAwareMHA(nn.Module):
                 - output: Attention output tensor of shape (batch_size, num_heads, num_queries, head_dim)
                 - None: Placeholder for attention weights (not returned in sparse implementation)
         """
+        assert attn_mask is not None, "Attention mask must be provided for sparse attention."
         B, H, N_q, d_k = Q.shape
         _, _, N_kv, _ = K.shape
         # Get maximum number of neighbors (k_max)
@@ -794,19 +792,18 @@ class GeometryAwareMHA(nn.Module):
         # Gather the mask values at selected indices to see which are actually valid
         neighbor_mask = torch.gather(attn_mask, 2, neighbor_indices) > 0  # (B, N_q, k_max)
         
-        # Gather K and V for neighbors using advanced indexing
-        # Expand indices for gathering: (B, H, N_q, k_max, d_k)
-        idx_expanded = neighbor_indices.unsqueeze(1).unsqueeze(-1).expand(B, H, N_q, k_max, d_k)
-        
-        # Gather K and V: (B, H, N_kv, d_k) -> (B, H, N_q, k_max, d_k)
-        K_expanded = K.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
-        V_expanded = V.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
-        K_neighbors = torch.gather(K_expanded, 3, idx_expanded)
-        V_neighbors = torch.gather(V_expanded, 3, idx_expanded)
-        
+        # Gather K and V for neighbors using advanced indexing without expanding over N_kv
+        # neighbor_indices: (B, N_q, k_max) indexing the N_kv dimension
+        # Build broadcastable index tensors for batch, head, feature dims
+        b_idx = torch.arange(B, device=K.device).view(B, 1, 1, 1, 1)
+        h_idx = torch.arange(H, device=K.device).view(1, H, 1, 1, 1)
+        f_idx = torch.arange(d_k, device=K.device).view(1, 1, 1, 1, d_k)
+        # Expand neighbor indices to match (B, H, N_q, k_max, d_k) for advanced indexing
+        kv_idx = neighbor_indices.unsqueeze(1).unsqueeze(-1).expand(B, H, N_q, k_max, d_k)
+        # Directly index into K, V: K, V have shape (B, H, N_kv, d_k)
+        K_neighbors = K[b_idx, h_idx, kv_idx, f_idx]  # (B, H, N_q, k_max, d_k)
+        V_neighbors = V[b_idx, h_idx, kv_idx, f_idx]  # (B, H, N_q, k_max, d_k)
         # Gather geometric bias: (B, H, N_q, N_kv) -> (B, H, N_q, k_max)
-        # idx_bias = neighbor_indices.unsqueeze(1).expand(B, H, N_q, k_max)
-        # bias_neighbors = torch.gather(b_attn, 3, idx_bias)
         
         # Compute attention scores: (B, H, N_q, k_max)
         # Q: (B, H, N_q, d_k) -> (B, H, N_q, 1, d_k)
@@ -835,6 +832,7 @@ class GeometryAwareMHA(nn.Module):
         # Softmax over valid neighbors
         attn_weights = F.softmax(attn_logits, dim=-1)  # (B, H, N_q, k_max)
         attn_weights = attn_weights.masked_fill(~neighbor_mask_expanded, 0.0)  # Zero out invalid
+        attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
         attn_weights = self.dropout(attn_weights)
         
         # Apply attention to values: (B, H, N_q, k_max) x (B, H, N_q, k_max, d_k) -> (B, H, N_q, d_k)
