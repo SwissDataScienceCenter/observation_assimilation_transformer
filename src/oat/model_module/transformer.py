@@ -648,7 +648,7 @@ class GeometryAwareMHA(nn.Module):
         query_flat = query.reshape(-1, N_q, self.embed_dim)  # (B, N_q, D_emb)
         key_flat = key.reshape(-1, N_k, self.embed_dim)  # (B, N_k, D_emb)
         value_flat = value.reshape(-1, N_k, self.embed_dim)  # (B, N_k, D_emb)
-        if self.f_geo and dist_qk is not None:
+        if self.f_geo is not None and dist_qk is not None:
             dist_qk_flat = dist_qk.reshape(-1, N_q, N_k, dist_qk.shape[-1])  # (B, N_q, N_k, D_r)
         else:
             dist_qk_flat = None
@@ -806,17 +806,16 @@ class GeometryAwareMHA(nn.Module):
         # Gather the mask values at selected indices to see which are actually valid
         neighbor_mask = torch.gather(attn_mask, 2, neighbor_indices) > 0  # (B, N_q, k_max)
         
-        # Gather K and V for neighbors using advanced indexing without expanding over N_kv
+        # Gather K and V for neighbors using torch.gather along the N_kv dimension
         # neighbor_indices: (B, N_q, k_max) indexing the N_kv dimension
-        # Build broadcastable index tensors for batch, head, feature dims
-        b_idx = torch.arange(B, device=K.device).view(B, 1, 1, 1, 1)
-        h_idx = torch.arange(H, device=K.device).view(1, H, 1, 1, 1)
-        f_idx = torch.arange(d_k, device=K.device).view(1, 1, 1, 1, d_k)
-        # Expand neighbor indices to match (B, H, N_q, k_max, d_k) for advanced indexing
-        kv_idx = neighbor_indices.unsqueeze(1).unsqueeze(-1).expand(B, H, N_q, k_max, d_k)
-        # Directly index into K, V: K, V have shape (B, H, N_kv, d_k)
-        K_neighbors = K[b_idx, h_idx, kv_idx, f_idx]  # (B, H, N_q, k_max, d_k)
-        V_neighbors = V[b_idx, h_idx, kv_idx, f_idx]  # (B, H, N_q, k_max, d_k)
+        N_kv = K.size(2)
+        # Build gather index tensor over N_kv, expanded to (B, H, N_q, k_max, d_k)
+        kv_idx_gather = neighbor_indices.unsqueeze(1).unsqueeze(-1).expand(B, H, N_q, k_max, d_k)
+        # Expand K, V to include the query dimension before gathering
+        K_expanded = K.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
+        V_expanded = V.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
+        K_neighbors = torch.gather(K_expanded, 3, kv_idx_gather)  # (B, H, N_q, k_max, d_k)
+        V_neighbors = torch.gather(V_expanded, 3, kv_idx_gather)  # (B, H, N_q, k_max, d_k)
         # Gather geometric bias: (B, H, N_q, N_kv) -> (B, H, N_q, k_max)
         
         # Compute attention scores: (B, H, N_q, k_max)
