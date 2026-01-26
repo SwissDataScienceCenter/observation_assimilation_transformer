@@ -1,1 +1,2 @@
 from .topographic_encoder import CNNTopographyEncoder
+from .transformer import ObservationAssimilationTransformer
