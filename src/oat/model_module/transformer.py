@@ -790,9 +790,16 @@ class GeometryAwareMHA(nn.Module):
             #       callers should account for this difference.
             return torch.zeros(B, H, N_q, d_k, device=Q.device, dtype=Q.dtype), None
         
-        # Use topk to extract the indices of valid neighbors
-        # Since attn_mask is binary, topk will get all the 1s (valid neighbors)
-        _, neighbor_indices = torch.topk(attn_mask.float(), k=min(k_max, N_kv), dim=-1, largest=True)
+        # Use topk to extract the indices of valid neighbors.
+        # To ensure deterministic behavior when multiple positions share the same
+        # mask value (binary 0/1), build a score tensor that:
+        #   - ranks all valid positions (mask==1) above all invalid ones (mask==0)
+        #   - breaks ties among valid positions by favoring lower key indices.
+        idx = torch.arange(N_kv, device=attn_mask.device).view(1, 1, N_kv)
+        idx = idx.expand_as(attn_mask)
+        # Valid positions get scores in (0, N_kv+1], invalid positions get <= 0.
+        scores = attn_mask * (N_kv + 1) - idx
+        _, neighbor_indices = torch.topk(scores, k=min(k_max, N_kv), dim=-1, largest=True)
         # neighbor_indices: (B, N_q, k_max)
         
         # Create mask for actually valid neighbors (since some queries may have < k_max neighbors)
