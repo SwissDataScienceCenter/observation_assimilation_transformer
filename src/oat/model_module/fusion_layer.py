@@ -3,19 +3,16 @@ import torch.nn as nn
 
 
 class BaseFusionLayer(nn.Module):
-    def __init__(self, in_channels: int | tuple[int], out_channels: int):
+    def __init__(self, in_channels: list[int], out_channels: int):
         super().__init__()
 
-        if isinstance(in_channels, int):
-            in_channels = (in_channels, in_channels)
-
-        self.in_channels = in_channels
+        self.in_channels = torch.Tensor(in_channels)
         self.out_channels = out_channels
 
 
 class GatedLinearUnitFusionLayer(BaseFusionLayer):
 
-    def __init__(self, in_channels: int,
+    def __init__(self, in_channels: list[int],
                  out_channels: int,
                  hidden_channels: int,
                  n_blocks: int = 1,
@@ -26,7 +23,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
 
         self.residual_learning = residual_learning
 
-        in_dim = self.in_channels[0] + self.in_channels[1]
+        in_dim = int(torch.tensor(self.in_channels).sum().item())
 
 
         blocks = []
@@ -50,8 +47,8 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
 
         self.readout = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, a: torch.Tensor, b: torch.Tensor):
-        x = torch.cat((a,b), dim=-1)
+    def forward(self, *inputs: torch.Tensor):
+        x = torch.cat(inputs, dim=-1)
 
         if self.residual_learning:
             x = self.blocks[0](x)
