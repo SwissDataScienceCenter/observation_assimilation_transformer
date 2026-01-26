@@ -17,9 +17,9 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
     Z_kv = torch.randn(B, N_kv, D)
     Z_q = torch.randn(B, N_q, D)
 
-    mask_src = torch.rand(B, N_kv, N_kv) > 0.2
-    mask_tgt = torch.rand(B, N_q, N_q) > 0.2
-    mask_memory = torch.rand(B, N_q, N_kv) < 0.1  # 10% density
+    mask_src = torch.rand(B, N_kv, N_kv) < 0.2
+    mask_tgt = torch.rand(B, N_q, N_q) < 0.2
+    mask_memory = torch.rand(B, N_q, N_kv) < 0.6  # 60% density
 
     dist_src = torch.abs(torch.randn(B, N_kv, N_kv, d_geo_bias))
     dist_tgt = torch.abs(torch.randn(B, N_q, N_q, d_geo_bias))
@@ -203,7 +203,14 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
         assert param.grad.shape == param.shape
         assert not torch.all(param.grad == 0)
         
+    # reset gradients
+    Z_q.grad.zero_()
+    Z_kv.grad.zero_()
+    for param in attn_module.parameters():
+        param.grad.zero_()
+    # sparse attention
     attn_module.sparse = True
+    
     
     Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, dist_memory, attn_mask=mask_memory)
     loss_sparse = Z_q_tilde_sparse.sum()

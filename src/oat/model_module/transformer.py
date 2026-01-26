@@ -556,7 +556,7 @@ class GeometryAwareMHA(nn.Module):
             dropout: Dropout probability for attention weights. Defaults to 0.0.
             d_geo_bias: Dimension of geometric bias features. If None, no geometric bias is used.
             geo_bias_hidden_dim: Hidden dimension for the geometric bias network. Defaults to 64.
-            sparse: Whether to use sparse attention. Defaults to False.
+            sparse: Whether to use sparse attention. Checks also if mask is defined. Defaults to False.
             device: Device to place tensors on.
             dtype: Data type for tensors.
         Raises:
