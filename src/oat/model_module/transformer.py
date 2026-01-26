@@ -781,6 +781,13 @@ class GeometryAwareMHA(nn.Module):
             #       Dropout on an all-zero tensor is a no-op, so skipping it here
             #       does not change the output or gradients; this behavior is
             #       intentional and documents the edge case explicitly.
+            #       However, because dropout normally consumes random numbers from
+            #       the global RNG, this shortcut does not advance the RNG state
+            #       in the same way as the full path. As a result, subsequent
+            #       stochastic operations that rely on the global RNG may differ
+            #       between runs with and without valid neighbors. If strict,
+            #       bitwise reproducibility of RNG-dependent behavior is required,
+            #       callers should account for this difference.
             return torch.zeros(B, H, N_q, d_k, device=Q.device, dtype=Q.dtype), None
         
         # Use topk to extract the indices of valid neighbors
