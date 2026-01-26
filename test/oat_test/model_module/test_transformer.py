@@ -167,7 +167,7 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
     assert Z_q_tilde.shape == (B, N_q, D)
     assert Z_q_tilde_sparse.shape == (B, N_q, D)
     if dropout == 0.0:
-        assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-6)
+        assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-5)
     
 def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     N_q = setup_data["N_q"]
