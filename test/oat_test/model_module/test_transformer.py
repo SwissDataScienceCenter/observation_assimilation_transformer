@@ -1,7 +1,7 @@
 from oat.model_module import transformer
 import torch
 import pytest
-from typing import Tuple, Optional, Dict, Any
+from typing import Dict, Any
 
 @pytest.fixture(params=[(0.0, True), (0.0, False), (0.1, False),])
 def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
