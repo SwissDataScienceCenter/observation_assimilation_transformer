@@ -264,7 +264,8 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
                                       cond_channels=cond_dim,
                                       norm_first=norm_first,
                                       norm_layer=norm_layer,
-                                      dropout_p=dropout_p))
+                                      dropout_p=dropout_p,
+                                      residual_learning=residual_learning))
         self.blocks = nn.ModuleList(blocks)
         self.readout = nn.Linear(hidden_channels, out_channels)
 
