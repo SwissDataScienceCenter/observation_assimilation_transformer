@@ -781,7 +781,7 @@ class GeometryAwareMHA(nn.Module):
             #       Dropout on an all-zero tensor is a no-op, so skipping it here
             #       does not change the output or gradients; this behavior is
             #       intentional and documents the edge case explicitly.
-            return torch.zeros(B, H, N_q, d_k, device=Q.device), None
+            return torch.zeros(B, H, N_q, d_k, device=Q.device, dtype=Q.dtype), None
         
         # Use topk to extract the indices of valid neighbors
         # Since attn_mask is binary, topk will get all the 1s (valid neighbors)
@@ -818,8 +818,9 @@ class GeometryAwareMHA(nn.Module):
                 dist_qk,
                 2,
                 idx_bias_expanded
-            )  # (B, H, N_q, k_max, D_r)
-            b_attn_neighbors = self.f_geo(dist_qk_neighbors)  # (B, H, N_q, k_max)
+            )  # (B, N_q, k_max, D_r)
+            # self.f_geo maps per-query, per-neighbor distances to per-head bias
+            b_attn_neighbors = self.f_geo(dist_qk_neighbors)  # (B, N_q, k_max, H)
             b_attn_neighbors = b_attn_neighbors.permute(0, 3, 1, 2)  # (B, H, N_q, k_max)
         else:
             b_attn_neighbors = 0
