@@ -152,7 +152,6 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
     mask_memory = setup_data["mask_memory"]
     dist_memory = setup_data["dist_memory"]
     dropout = setup_data["dropout"]
-    norm_first = setup_data["norm_first"]
 
     attn_module = transformer.GeometryAwareMHA(
         embed_dim=D,
