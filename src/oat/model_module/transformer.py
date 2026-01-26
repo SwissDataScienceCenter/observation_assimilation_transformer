@@ -36,7 +36,7 @@ class ObservationAssimilationTransformer(nn.Module):
         
         Args:
             d_model: The number of expected features in the encoder/decoder inputs. Defaults to 512.
-            nhead: The number of heads in the multiheadattention models. Defaults to 8.
+            nhead: The number of heads in the multi-head attention layers. Defaults to 8.
             num_encoder_layers: The number of sub-encoder-layers in the encoder. Defaults to 6.
             num_decoder_layers: The number of sub-decoder-layers in the decoder. Defaults to 6.
             dim_feedforward: The dimension of the feedforward network model. Defaults to 2048.
