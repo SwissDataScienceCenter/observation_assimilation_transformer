@@ -1,7 +1,7 @@
 from oat.model_module import transformer
 import torch
 import pytest
-from typing import Tuple, Optional, Dict, Any
+from typing import Dict, Any
 
 @pytest.fixture(params=[(0.0, True), (0.0, False), (0.1, False),])
 def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
@@ -152,7 +152,6 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
     mask_memory = setup_data["mask_memory"]
     dist_memory = setup_data["dist_memory"]
     dropout = setup_data["dropout"]
-    norm_first = setup_data["norm_first"]
 
     attn_module = transformer.GeometryAwareMHA(
         embed_dim=D,
@@ -171,7 +170,6 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
         assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-6)
     
 def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
-    B = setup_data["B"]
     N_q = setup_data["N_q"]
     D = setup_data["D"]
     num_heads = setup_data["num_heads"]
