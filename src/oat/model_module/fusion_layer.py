@@ -12,7 +12,7 @@ class FiLMLayer(nn.Module):
     Args:
         num_features: Feature dimension C
         cond_dim: Conditioning dimension (e.g., time features)
-        hidden_dim: MLP hidden size (default: num_features)
+        hidden_dim: MLP hidden size (default: 32)
     """
 
     def __init__(self, 
@@ -20,8 +20,7 @@ class FiLMLayer(nn.Module):
                  num_features: int, 
                  cond_dim: int, 
                  hidden_dim: int = 32,
-                 activation: str = "SiLU",
-                 **kwargs: dict):
+                 activation: str = "SiLU"):
         super().__init__()
 
         act_fn = get_activation(activation)
@@ -105,7 +104,7 @@ class BaseFusionLayer(nn.Module):
     def __init__(self, in_channels: list[int], out_channels: int):
         super().__init__()
 
-        self.in_channels = torch.Tensor(in_channels)
+        self.in_channels = in_channels
         self.out_channels = out_channels
 
     @abstractmethod
@@ -152,6 +151,11 @@ class GLUFusionBlock(nn.Module):
 
         super().__init__()
         self.norm_first = norm_first
+        if in_channels != out_channels and residual_learning:
+            Warning("Residual learning requires in_channels to equal out_channels. "
+                          "Will ignore residual_learning.")
+            residual_learning = False
+            
         self.residual_learning = residual_learning
 
         ln_in_dim = in_channels if norm_first else out_channels
@@ -177,14 +181,14 @@ class GLUFusionBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         if self.norm_first:
-            if isinstance(self.norm, FiLMLayer | AdaLNLayer):
+            if isinstance(self.norm, (FiLMLayer , AdaLNLayer)):
                 y = self.norm(x, cond)
             else:
                 y = self.norm(x)
             y = self.mixing_layer(y)
         else:
             y = self.mixing_layer(x)
-            if isinstance(self.norm, FiLMLayer | AdaLNLayer):
+            if isinstance(self.norm, (FiLMLayer , AdaLNLayer)):
                 y = self.norm(y, cond)
             else:
                 y = self.norm(y)
@@ -212,7 +216,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         out_channels: Number of output channels after the final readout layer
         cond_dim: Dimension of conditioning vector for adaptive normalization layers
         dropout_p: Dropout probability applied after each GLU operation
-        residual_learning: Whether to use residual connections in FusionBlocks
+        residual_learning: Whether to use residual connections in FusionBlocks. First block won't use it due to dimension mismatch.
         norm_first: If True, apply normalization before the mixing layer; 
                    if False, apply after
         norm_layer: Type of normalization to use. Options are:
@@ -237,8 +241,6 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
 
         super().__init__(in_channels, out_channels)
 
-        self.norm_first = norm_first
-
         blocks = [GLUFusionBlock(in_channels=sum(in_channels),
                               out_channels=hidden_channels,
                               cond_channels=cond_dim,
@@ -246,8 +248,6 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
                               norm_layer=norm_layer,
                               dropout_p=dropout_p)
                   ]
-
-
 
         for _ in range(n_blocks-1):
             blocks.append(GLUFusionBlock(in_channels=hidden_channels,
