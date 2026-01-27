@@ -16,15 +16,15 @@ class FiLMLayer(nn.Module):
     """
     
     def __init__(self, 
+                 *,
                  num_features: int, 
                  cond_dim: int, 
-                 hidden_dim: int | None = None,
-                 activation: str = "SiLU"):
+                 hidden_dim: int = 32,
+                 activation: str = "SiLU",
+                 **kwargs: dict):
         super().__init__()
         
         act_fn = get_activation(activation)
-        if hidden_dim is None:
-            hidden_dim = 2 * num_features
         self.mlp = nn.Sequential(
             nn.Linear(cond_dim, hidden_dim),
             act_fn,
@@ -52,7 +52,7 @@ class FiLMLayer(nn.Module):
         return gamma * x + beta
     
     
-class AdaLNLayer(nn.Module):
+class AdaLNLayer(FiLMLayer):
     """
     Adaptive LayerNorm for tabular data [..., C].
     
@@ -67,22 +67,16 @@ class AdaLNLayer(nn.Module):
     def __init__(self, 
                  num_features: int, 
                  cond_dim: int, 
+                 hidden_dim: int = 32,
                  activation: str = "SiLU",
                  eps: float = 1e-5):
-        super().__init__()
+        super().__init__(num_features=num_features, 
+                         cond_dim=cond_dim, 
+                         hidden_dim=hidden_dim,
+                         activation=activation)
         
         self.eps = eps
         self.ln = nn.LayerNorm(num_features, eps=eps, elementwise_affine=False)
-        
-        act_fn = get_activation(activation)
-        self.mlp = nn.Sequential(
-            act_fn,
-            nn.Linear(cond_dim, 2 * num_features)
-        )
-        # Identity initialization
-        nn.init.zeros_(self.mlp[-1].weight)
-        nn.init.zeros_(self.mlp[-1].bias)
-        self.mlp[-1].bias.data[:num_features] = 1.0
     
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """
@@ -96,11 +90,7 @@ class AdaLNLayer(nn.Module):
         # Normalize
         x_norm = self.ln(x)
         
-        # Compute modulation
-        params = self.mlp(cond)
-        gamma, beta = params.chunk(2, dim=-1)
-        
-        return gamma * x_norm + beta
+        return super().forward(x_norm, cond)
 
 
 class BaseFusionLayer(nn.Module):

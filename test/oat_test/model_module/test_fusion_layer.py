@@ -29,17 +29,21 @@ def test_glu_fusion_layer(dropout: float, residual_learning: bool, layer_norm: s
 @pytest.mark.parametrize("layer_norm", ["FiLM", "AdaLN", "LayerNorm"])
 @pytest.mark.parametrize("residual_learning", [False, True])
 @pytest.mark.parametrize("num_blocks", [1, 2])
+@pytest.mark.parametrize("norm_first", [False, True])
 def test_glu_fusion_layer_variable_num_inputs(num_channels: list[int], 
                                               layer_norm: str, 
                                               residual_learning: bool,
-                                              num_blocks: int) -> None:
+                                              num_blocks: int,
+                                              norm_first: bool) -> None:
 
     cond_dim = 10
     fusion_layer = GatedLinearUnitFusionLayer(in_channels=num_channels,
+                                            n_blocks=num_blocks,
                                             out_channels=16,
                                             cond_dim=cond_dim,
                                             norm_layer=layer_norm,
-                                            residual_learning=residual_learning)
+                                            residual_learning=residual_learning,
+                                            norm_first=norm_first)
     inputs = [torch.randn(32,12,c) for c in num_channels]
     cond = torch.randn(32, 12, cond_dim)
     out = fusion_layer(*inputs, cond=cond)
