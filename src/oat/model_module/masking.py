@@ -15,7 +15,8 @@ class SpatialNeighborSearch(nn.Module):
     """
     Efficient spatial neighbor search using torch_cluster.
     
-    Returns neighbor indices directly (no SparseTensor).
+    Computes and returns a dense boolean neighbor mask (no SparseTensor),
+    using neighbor indices from torch_cluster internally.
     """
     
     def __init__(
