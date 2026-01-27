@@ -68,32 +68,59 @@ class SpatialNeighborSearch(nn.Module):
         
         if coords_2 is None:
             coords_2 = coords_1
-            
+
+        B, N1, _ = coords_1.shape
+        _, N2, _ = coords_2.shape
+
+        # Flatten coordinates across batch dimension for batched neighbor search
+        coords_1_flat = coords_1.reshape(B * N1, -1)
+        coords_2_flat = coords_2.reshape(B * N2, -1)
+
+        # Batch indices for each point in the flattened tensors
+        batch_x = torch.arange(B, device=coords_1.device).repeat_interleave(N1)
+        batch_y = torch.arange(B, device=coords_1.device).repeat_interleave(N2)
+
+        # Perform neighbor search in a single batched call
+        if self.mode == 'radius':
+            edge_index = radius(
+                x=coords_1_flat,
+                y=coords_2_flat,
+                r=self.radius,
+                batch_x=batch_x,
+                batch_y=batch_y,
+                max_num_neighbors=self.max_num_neighbors,
+            )
+        elif self.mode == 'knn':
+            edge_index = knn(
+                x=coords_1_flat,
+                y=coords_2_flat,
+                k=self.k,
+                batch_x=batch_x,
+                batch_y=batch_y,
+            )
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+        # Initialize dense mask [B, N1, N2]
         mask = torch.zeros(
-            (coords_1.shape[0], coords_1.shape[1], coords_2.shape[1]),
+            (B, N1, N2),
             dtype=torch.bool,
             device=coords_1.device,
         )
-        for b in range(coords_1.shape[0]):
-            
-            if self.mode == 'radius':
-                edge_index = radius(
-                    x=coords_1[b],
-                    y=coords_2[b],
-                    r=self.radius,
-                    max_num_neighbors=self.max_num_neighbors,
-                )
-            elif self.mode == 'knn':
-                edge_index = knn(
-                    x=coords_1[b],
-                    y=coords_2[b],
-                    k=self.k,
-                )
-            else:
-                raise ValueError(f"Invalid mode: {self.mode}")
-            
-            mask[b][edge_index[1], edge_index[0]] = True
-        
+
+        # edge_index[1] indexes coords_1_flat (source), edge_index[0] indexes coords_2_flat (target)
+        src_flat = edge_index[1]
+        tgt_flat = edge_index[0]
+
+        # Recover batch indices from flattened indices
+        b_idx = batch_x[src_flat]
+
+        # Convert flattened indices to per-batch indices
+        i1 = src_flat - b_idx * N1  # indices in coords_1 within each batch
+        i2 = tgt_flat - b_idx * N2  # indices in coords_2 within each batch
+
+        # Fill mask in a vectorized way
+        mask[b_idx, i1, i2] = True
         return mask  # [B, N_1, N_2]
         
         
