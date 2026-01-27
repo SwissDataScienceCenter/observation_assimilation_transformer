@@ -24,7 +24,7 @@ class SpatialNeighborSearch(nn.Module):
         radius: Optional[float] = None,
         k: Optional[int] = None,
         max_num_neighbors: int = 32,
-    ):
+    ) -> None:
         """
         Args:
             mode: 'radius' or 'knn'
