@@ -49,4 +49,3 @@ def test_glu_fusion_layer_variable_num_inputs(num_channels: list[int],
     out = fusion_layer(*inputs, cond=cond)
 
     assert out.shape[-1] == 16
-

@@ -6,15 +6,15 @@ from abc import abstractmethod
 class FiLMLayer(nn.Module):
     """
     FiLM for tabular data [..., C].
-    
+
     Applies: γ * x + β
-    
+
     Args:
         num_features: Feature dimension C
         cond_dim: Conditioning dimension (e.g., time features)
         hidden_dim: MLP hidden size (default: num_features)
     """
-    
+
     def __init__(self, 
                  *,
                  num_features: int, 
@@ -23,47 +23,47 @@ class FiLMLayer(nn.Module):
                  activation: str = "SiLU",
                  **kwargs: dict):
         super().__init__()
-        
+
         act_fn = get_activation(activation)
         self.mlp = nn.Sequential(
             nn.Linear(cond_dim, hidden_dim),
             act_fn,
             nn.Linear(hidden_dim, 2 * num_features)
         )
-        
+
         # Identity initialization
         nn.init.zeros_(self.mlp[-1].weight)
         nn.init.zeros_(self.mlp[-1].bias)
         self.mlp[-1].bias.data[:num_features] = 1.0  # gamma = 1
-    
+
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: [..., C] - features
             cond: [..., cond_dim] or [cond_dim] - conditioning (broadcasted if needed)
-        
+
         Returns:
             [..., C] - modulated features
         """
         # Compute gamma and beta
         params = self.mlp(cond)  # [..., 2*C]
         gamma, beta = params.chunk(2, dim=-1)  # [..., C] each
-        
+
         return gamma * x + beta
     
     
 class AdaLNLayer(FiLMLayer):
     """
     Adaptive LayerNorm for tabular data [..., C].
-    
+
     Applies: γ * normalize(x) + β
-    
+
     Args:
         num_features: Feature dimension C
         cond_dim: Conditioning dimension
         eps: Numerical stability constant
     """
-    
+
     def __init__(self, 
                  num_features: int, 
                  cond_dim: int, 
@@ -78,12 +78,13 @@ class AdaLNLayer(FiLMLayer):
         self.eps = eps
         self.ln = nn.LayerNorm(num_features, eps=eps, elementwise_affine=False)
     
+
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: [..., C] - features
             cond: [..., cond_dim] or [cond_dim] - conditioning
-        
+
         Returns:
             [..., C] - normalized and modulated features
         """
@@ -100,19 +101,19 @@ class BaseFusionLayer(nn.Module):
         in_channels: List of input channel counts for each input tensor.
         out_channels: Number of output channels for the fused tensor.
     """
-    
+
     def __init__(self, in_channels: list[int], out_channels: int):
         super().__init__()
 
         self.in_channels = torch.Tensor(in_channels)
         self.out_channels = out_channels
-        
+
     @abstractmethod
     def forward(self, *inputs: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         pass
-    
-    
-class FusionBlock(nn.Module):
+
+
+class GLUFusionBlock(nn.Module):
     """
     FusionBlock: A modular fusion layer for conditional feature processing.
     This block combines normalization and feature mixing with optional residual learning.
@@ -137,9 +138,9 @@ class FusionBlock(nn.Module):
     Raises:
         ValueError: If norm_layer is not one of the supported types
     """
-    
+
     norm: nn.Module
-    
+
     def __init__(self,
                 in_channels: int,
                 out_channels: int,
@@ -148,13 +149,13 @@ class FusionBlock(nn.Module):
                 norm_layer: str = "AdaLN",
                 dropout_p: float = 0.0,
                 residual_learning: bool = False):
-        
+
         super().__init__()
         self.norm_first = norm_first
         self.residual_learning = residual_learning
-        
+
         ln_in_dim = in_channels if norm_first else out_channels
-    
+
         if norm_layer == "FiLM":
             self.norm = FiLMLayer(num_features=ln_in_dim,
                                 cond_dim=cond_channels,
@@ -173,17 +174,17 @@ class FusionBlock(nn.Module):
             nn.GLU(dim=-1),
             nn.Dropout(p=dropout_p) if dropout_p > 0.0 else nn.Identity()
         )
-        
+
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         if self.norm_first:
-            if isinstance(self.norm, (FiLMLayer, AdaLNLayer)):
+            if isinstance(self.norm, FiLMLayer | AdaLNLayer):
                 y = self.norm(x, cond)
             else:
                 y = self.norm(x)
             y = self.mixing_layer(y)
         else:
             y = self.mixing_layer(x)
-            if isinstance(self.norm, (FiLMLayer, AdaLNLayer)):
+            if isinstance(self.norm, FiLMLayer | AdaLNLayer):
                 y = self.norm(y, cond)
             else:
                 y = self.norm(y)
@@ -196,16 +197,16 @@ class FusionBlock(nn.Module):
 class GatedLinearUnitFusionLayer(BaseFusionLayer):
     """
     Gated Linear Unit (GLU) based fusion layer that combines multiple input channels.
-    
+
     This layer concatenates multiple input tensors and processes them through multiple
     FusionBlocks containing gated linear unit mechanisms. It supports optional 
     normalization (LayerNorm, AdaLN, or FiLM) that can be applied either before or 
     after the mixing layer.
-    
+
     The GLU mechanism uses a linear layer that projects to 2x the output channels,
     then applies a gating function along the last dimension, effectively learning
     which features to pass through.
-    
+
     Args:
         in_channels: List of input channel dimensions to be concatenated
         out_channels: Number of output channels after the final readout layer
@@ -233,23 +234,23 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
                  n_blocks: int = 1,
                  hidden_channels: int = 128
                  ):
-        
+
         super().__init__(in_channels, out_channels)
 
         self.norm_first = norm_first
-        
-        blocks = [FusionBlock(in_channels=sum(in_channels),
+
+        blocks = [GLUFusionBlock(in_channels=sum(in_channels),
                               out_channels=hidden_channels,
                               cond_channels=cond_dim,
                               norm_first=norm_first,
                               norm_layer=norm_layer,
                               dropout_p=dropout_p)
                   ]
-        
-        
-        
+
+
+
         for _ in range(n_blocks-1):
-            blocks.append(FusionBlock(in_channels=hidden_channels,
+            blocks.append(GLUFusionBlock(in_channels=hidden_channels,
                                       out_channels=hidden_channels,
                                       cond_channels=cond_dim,
                                       norm_first=norm_first,
@@ -275,7 +276,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
             Processed tensor after normalization and mixing operations
         """
         x = torch.cat(inputs, dim=-1)
-        
+
         for block in self.blocks:
             x = block(x, cond)
         return self.readout(x)
