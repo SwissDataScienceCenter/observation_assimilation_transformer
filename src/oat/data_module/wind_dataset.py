@@ -139,7 +139,6 @@ class WindDataset(Dataset[OATBatch]):
                 dtype: torch.dtype = torch.float32,
                 use_time_embedding: bool = False,
                 clear_cache: bool = False,
-                station_split_mode: str = 'random',
                 seed: int = 42
                 ):
         self.dtype = dtype
@@ -167,7 +166,6 @@ class WindDataset(Dataset[OATBatch]):
                                            'sin_day_of_year', 
                                            'cos_day_of_year']
         self.seed = seed
-        self.station_split_mode = station_split_mode
         
     def __len__(self) -> int:
         return len(self.times)
@@ -235,68 +233,24 @@ class WindDataset(Dataset[OATBatch]):
             if key not in self.constant_input:
                 data = dataset.sel(time=time).load()
                 data_tensor = torch.tensor(data.to_array().values, dtype=self.dtype)
-                topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
+                # topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
             else:
                 data_tensor = torch.from_numpy(self.constant_data_cache[key][self.constant_var_indices[key]]).to(self.dtype)
                 topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
-                      
+                 
+        if query_obs is not None:
+            mask_obs = ~torch.isnan(query_obs)
+            query_obs = torch.nan_to_num(query_obs, nan=0.0)
+        else:
+            mask_obs = None
         query: QueryBatch = {
             'coords': query_coords,
             'topo': torch.cat(topo_q, dim=1),
             'geo': query_coords, # TODO: add elevation later
             'obs': query_obs,
-            'mask_obs': ~torch.isnan(query_obs) if query_obs is not None else None
+            'mask_obs': mask_obs
         }
         return query
-    
-    
-    # def get_input_data(self, 
-    #             idx: torch.Tensor,
-    #             # time: torch.Tensor, 
-    #             #query_coords: torch.Tensor,
-    #             input_data: dict[str, xr.Dataset], 
-    #             # query_obs: torch.Tensor | None = None,
-    #             obs_coords: torch.Tensor | None = None,
-    #             obs_value_y: torch.Tensor | None = None) -> OATBatch:
-        
-    #     topo_obs = []
-    #     U_global_list = []
-    #     for key, dataset in input_data.items():
-    #         if key not in self.constant_input:
-    #             data = dataset.sel(time=time).load()
-    #             data_tensor = torch.tensor(data.to_array().values, dtype=self.dtype)
-    #             U_global_list.append(data_tensor)
-    #         else:
-    #             data_tensor = torch.from_numpy(self.constant_data_cache[key][self.constant_var_indices[key]]).to(self.dtype)
-    #             # topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
-    #             if obs_coords is not None:
-    #                 topo_obs.append(get_context_data(obs_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
-                      
-    #     U_global = torch.cat(U_global_list + [self.constant_ref], dim=0)
-    #     global_data = {'global_field': U_global}
-    #     if self.use_time_embedding:
-    #         global_data['time_emb'] = torch.tensor(get_time_embedding(np.array([time])), dtype=self.dtype).squeeze(0)
-            
-    #     # query: QueryBatch = {
-    #     #     'coords': query_coords,
-    #     #     'topo': torch.cat(topo_q, dim=1),
-    #     #     'geo': query_coords, # TODO: add elevation later
-    #     #     'obs': query_obs,
-    #     #     'mask_obs': ~torch.isnan(query_obs) if query_obs is not None else None
-    #     # }
-    #     observation_data: ObservationBatch = {
-    #         'coords': obs_coords,
-    #         'topo': torch.cat(topo_obs, dim=1),
-    #         'geo': obs_coords, # TODO: add elevation later
-    #         'obs': obs_value_y,
-    #         'mask_obs': ~torch.isnan(obs_value_y)
-    #     }
-    #     out: OATBatch = {
-    #         'time': time,
-    #         'observation_data': observation_data,
-    #         'global_data': global_data
-    #     }
-    #     return out
     
     def _load_data_lazily(self) -> dict[str, xr.Dataset | dict[str, Any]]:
         """Load input datasets lazily."""
@@ -361,19 +315,14 @@ class WindDataset(Dataset[OATBatch]):
         if self.use_time_embedding:
             global_data['time_emb'] = torch.tensor(get_time_embedding(np.array([time])), dtype=self.dtype).squeeze(0)
             
-        # query: QueryBatch = {
-        #     'coords': query_coords,
-        #     'topo': torch.cat(topo_q, dim=1),
-        #     'geo': query_coords, # TODO: add elevation later
-        #     'obs': query_obs,
-        #     'mask_obs': ~torch.isnan(query_obs) if query_obs is not None else None
-        # }
+        mask = ~torch.isnan(Y)
+        Y = torch.nan_to_num(Y, nan=0.0)
         observation_data: ObservationBatch = {
             'coords': station_pos,
             'topo': torch.cat(topo_obs, dim=1),
             'geo': station_pos, # TODO: add elevation later
             'obs': Y,
-            'mask_obs': ~torch.isnan(Y)
+            'mask_obs': mask
         }
         out: OATBatch = {
             'index': idx,
@@ -381,40 +330,3 @@ class WindDataset(Dataset[OATBatch]):
             'global_data': global_data
         }
         return out
-        # station_pos = torch.tensor(np.asarray([obs_dat.x.values, obs_dat.y.values]), dtype=self.dtype).T
-        # Y = torch.tensor(obs_dat.to_array().values, dtype=self.dtype).T
-        # # q_idx, kv_idx = self._split_station_indices(station_pos.shape[0], idx)
-        # # query_coords = station_pos[q_idx]
-        # # key_value_coords = station_pos[kv_idx]
-        # # query_y = Y[q_idx]
-        # # key_value_y = Y[kv_idx]
-        # X = self.get_input_data(time, 
-        #                         #query_coords, 
-        #                         datasets['X'], 
-        #                         # query_obs=query_y, 
-        #                         obs_coords=station_pos, 
-        #                         obs_value_y=Y)
-        # return X
-    
-    
-    # def get_region_query(self,
-    #                  time: np.datetime64,
-    #                  center_pos: torch.Tensor,
-    #                  region_extent: torch.Tensor,
-    #                  resolution: float) -> dict[str, torch.Tensor | Tuple[int, int]]:
-    #     """
-    #     Query a rectangular region around center_pos at given time.
-        
-    #     center_pos: (2,) tensor with (x, y) coordinates
-    #     region_size: (2,) tensor with size of region in each dimension
-    #     """
-    #     datasets = self._open_per_worker()
-    #     if datasets is None:
-    #         datasets = self._load_data_lazily()
-    #     num_points_x = int(region_extent[0] / resolution)
-    #     num_points_y = int(region_extent[1] / resolution)
-    #     grid = setup_grid(torch.tensor([num_points_x, num_points_y]), {'query_pos': resolution})['query_pos']
-    #     pos = center_pos.unsqueeze(0)  # (1, 2)
-    #     query_coord = (grid + pos.unsqueeze(1).unsqueeze(1)).reshape(-1, 2)  # (num_points_x * num_points_y, 2)
-    #     query = self.get_input_data(time, query_coord, datasets['X'])
-    #     return query | {'pos': query_coord, 'shape': (num_points_x, num_points_y)}
