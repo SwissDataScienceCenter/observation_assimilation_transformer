@@ -5,7 +5,7 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
-class OATPreictor(pl.LightningModule):
+class OATPredictor(pl.LightningModule):
 
     def __init__(self,
                  oat_model: nn.Module,
