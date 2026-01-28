@@ -25,6 +25,8 @@ class OATPredictor(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_params = scheduler_params or {}
 
+        self.model = oat_model
+
     def _normalize_batch(self, batch):
         # TODO implement
         pass
