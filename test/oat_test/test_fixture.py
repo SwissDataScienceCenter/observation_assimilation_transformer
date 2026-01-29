@@ -16,8 +16,11 @@ def test_batch_fixture_structure(batch_fixture):
             shape = row['shape']
             dtype = row['dtype']
 
-            assert batch_fixture[group_name][key].shape == shape
-            assert batch_fixture[group_name][key].dtype == dtype
+            elem = batch_fixture[group_name][key] if group_name != key else \
+                batch_fixture[group_name]
+
+            assert elem.shape == shape
+            assert elem.dtype == dtype
             #assert that if the tensor is non-float, it's full of 0s
-            if not getattr(dtype, "is_floating_point", False):
-                assert (batch_fixture[group_name][key] == 0).all()
+            if not getattr(dtype, "is_floating_point", False) and key != 'index':
+                assert (elem == 0).all()

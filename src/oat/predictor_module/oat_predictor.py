@@ -10,15 +10,21 @@ class OATPredictor(pl.LightningModule):
     def __init__(self,
                  oat_model: nn.Module,
                  lr: float = 1e-3,
+                 training_stations_split: float = 0.2,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
                  scheduler_class: Type[LRScheduler] | None = None,
                  scheduler_params: Optional[dict] = None
                  ):
         super().__init__()
-
+        # TODO here if we pass the model, we have to ignore it from the hyperparams
+        # (otherwise it's just serialized weights). However it would be nice to save 
+        # the architecture of the model.
+        # - Can we save the cfg that generated the model? 
+        # - Should we pass the cfg, and the model is initialized in here?
         self.save_hyperparameters(ignore=['oat_model'])
 
+        self.training_stations_split = training_stations_split
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
 
@@ -35,9 +41,42 @@ class OATPredictor(pl.LightningModule):
         # TODO implement
         pass
 
-    def forward(self, x, return_loss = False):
+    def _subset_batch(self, batch, indices, station_dim, tot_stations):
+        if isinstance(batch, dict):
+            return {
+                k: self._subset_batch(v, indices, station_dim, tot_stations)
+                for k, v in batch.items()
+            }
+
+        if torch.is_tensor(batch):
+            if batch.ndim > 1 and batch.shape[1]  == tot_stations:
+                return batch.index_select(station_dim, indices)
+        return batch
+
+    def _split_queries_key_values(self, batch):
+        assert batch['observation_data']['obs'] is not None
+
+        n_stations = batch['observation_data']['coords'].shape[1]
+        n_select = int(self.training_stations_split * n_stations)
+
+        q_station_idx = torch.randperm(n_stations)[:n_select]
+        kv_station_idx = torch.randperm(n_stations)[n_select:]
+
+        return {
+            'queries': self._subset_batch(batch=batch, station_dim=1,
+                                          indices=q_station_idx,
+                                          tot_stations=n_stations),
+            'key_values': self._subset_batch(batch=batch, station_dim=1,
+                                             indices=kv_station_idx, 
+                                             tot_stations=n_stations),
+        }
+
+    def forward(self, batch, return_loss = False):
         # TODO implement
-        pass
+
+        batches = self._split_queries_key_values(batch=batch)
+        queries_batch = batches['queries']
+        key_values_batch = batches['key_values']
 
     def training_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)

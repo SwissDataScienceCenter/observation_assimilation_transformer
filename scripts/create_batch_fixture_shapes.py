@@ -1,14 +1,16 @@
 from pathlib import Path
 
 import torch
+from torch.utils.data import DataLoader
 import pandas as pd
 from omegaconf import OmegaConf
 from src.oat.data_module import factory
 
 def main():
     data_config = OmegaConf.load('/scratch/mch/cdonner/observation_assimilation_transformer/configs/data/wind_data.yaml')
-    train_dataloader, val_dataloader, test_dataloader = factory.create_dataset(data_config)
-    batch = next(iter(train_dataloader))
+    dataset = factory.create_dataset(data_config)
+    loader = DataLoader(dataset, batch_size=16, shuffle=False)
+    batch = next(iter(loader))
 
     df = create_batch_fixture_table(batch=batch)
 
@@ -31,13 +33,21 @@ def create_batch_fixture_table(batch: dict[str, dict[str, torch.Tensor]]) -> pd.
 
     rows = []
     for k, v in batch.items():
-        for kk, vv in v.items():
+        if isinstance(v, dict):
+            for kk, vv in v.items():
+                rows.append({
+                    "group": k,
+                    "key": kk,
+                    "shape": tuple(vv.shape),
+                    "dtype": vv.dtype if hasattr(vv, "dtype") else None,
+                })
+        else:
             rows.append({
-                "group": k,
-                "key": kk,
-                "shape": tuple(vv.shape),
-                "dtype": vv.dtype if hasattr(vv, "dtype") else None,
-            })
+                    "group": k,
+                    "key": k,
+                    "shape": tuple(v.shape),
+                    "dtype": v.dtype if hasattr(v, "dtype") else None,
+                })
 
     return pd.DataFrame(rows)
 

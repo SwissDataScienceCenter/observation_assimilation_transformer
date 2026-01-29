@@ -41,11 +41,16 @@ def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
 
             if getattr(dtype, "is_floating_point", False):
                 tensor = torch.randn(shape, dtype=dtype)
+            elif row['key'] == 'index':
+                tensor = torch.randperm(shape[0])
             else:
                 # Fallback for non-floating dtypes: use zeros to avoid torch.randn errors.
                 tensor = torch.zeros(shape, dtype=dtype)
 
-            batch[group_name][row['key']] = tensor
+            if group_name != row['key']:
+                batch[group_name][row['key']] = tensor
+            else:
+                batch[group_name] = tensor
     return batch
 
 @pytest.fixture
