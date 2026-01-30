@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from abc import abstractmethod, ABC
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 class BaseOutputHead(nn.Module, ABC):
     
@@ -51,7 +51,7 @@ class BaseOutputHead(nn.Module, ABC):
         raise NotImplementedError()
     
     @abstractmethod
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Compute the loss between predictions and target, applying the mask.
         
@@ -61,7 +61,7 @@ class BaseOutputHead(nn.Module, ABC):
             mask: boolean mask indicating valid entries [..., target_features]
             
         Returns:
-            Loss value (scalar tensor)
+            Predictions dictionary and loss value (scalar tensor)
         """
         raise NotImplementedError()
     
@@ -140,7 +140,7 @@ class LinearOutputHead(BaseOutputHead):
         innovation = target - pred  # [B, S, target_features]
         return mask * innovation
     
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """ Compute loss.
 
         Args:
@@ -155,7 +155,7 @@ class LinearOutputHead(BaseOutputHead):
         pred = out['val_pred']
         loss = self.loss_fn(pred, target, reduction='none')  # [num_valid]
         loss = self.loss_normalization_per_sample(loss, mask)
-        return loss
+        return out, loss
     
 class GaussianOutputHead(BaseOutputHead):
     
@@ -220,7 +220,7 @@ class GaussianOutputHead(BaseOutputHead):
         innovation = (target - mean) / std  # [..., target_features]
         return mask * innovation
     
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """ Compute negative log-likelihood loss.
 
         Args:
@@ -237,7 +237,7 @@ class GaussianOutputHead(BaseOutputHead):
         nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
         #loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
         loss = self.loss_normalization_per_sample(nll, mask)
-        return loss
+        return preds, loss
     
     
 class QuantileOutputHead(BaseOutputHead):
@@ -434,7 +434,7 @@ class QuantileOutputHead(BaseOutputHead):
         x: torch.Tensor, 
         target: torch.Tensor, 
         mask: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Integrated quantile regression loss using trapezoidal integration.
         
@@ -480,4 +480,4 @@ class QuantileOutputHead(BaseOutputHead):
         # Normalize by number of valid observations
         #total_loss = integrated_loss.sum() / mask.sum().clamp(min=1.0)
         loss = self.loss_normalization_per_sample(integrated_loss, mask.squeeze(-2))
-        return loss
+        return out, loss

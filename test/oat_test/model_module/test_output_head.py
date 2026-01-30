@@ -20,7 +20,7 @@ def test_linear_output_head() -> None:
         assert preds.shape == (batch_dim, n_stations, target_dim)  # Check output
         inno = linear_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
         assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-        loss = linear_output_head.loss(input_tensor, target, mask)  # Loss computation
+        _, loss = linear_output_head.loss(input_tensor, target, mask)  # Loss computation
         assert loss.dim() == 0  # Check that loss is a scalar
         assert loss >= 0.0  # Loss should be non-negative
     
@@ -42,7 +42,7 @@ def test_gaussian_output_head() -> None:
         assert out["std_pred"].shape == (batch_dim, n_stations, target_dim)  # Check std output shape
         inno = gaussian_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
         assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-        loss = gaussian_output_head.loss(input_tensor, target, mask)  # Loss computation
+        _, loss = gaussian_output_head.loss(input_tensor, target, mask)  # Loss computation
         assert loss.dim() == 0  # Check that loss is a scalar
     
 def test_quantile_output_head() -> None:
@@ -63,14 +63,14 @@ def test_quantile_output_head() -> None:
     assert torch.diff(quantile_output_head.taus).min() > 0  # Check taus are increasing
     inno = quantile_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
     assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-    loss = quantile_output_head.loss(input_tensor, target, mask)  # Loss computation
+    _, loss = quantile_output_head.loss(input_tensor, target, mask)  # Loss computation
     assert loss.dim() == 0  # Check that loss is a scalar
     assert loss >= 0.0  # Loss should be non-negative
     mask0 = torch.zeros(batch_dim, n_stations, target_dim).bool()  # All masked
-    loss_all_masked = quantile_output_head.loss(input_tensor, target, mask0)  # Loss computation
+    _, loss_all_masked = quantile_output_head.loss(input_tensor, target, mask0)  # Loss computation
     assert loss_all_masked.dim() == 0  # Check that loss is a scalar
     assert loss_all_masked == 0.0  # Loss should be zero when all values are masked
     mask1 = torch.ones(batch_dim, n_stations, target_dim).bool()  # None masked
-    loss_none_masked = quantile_output_head.loss(input_tensor, target, mask1)  # Loss computation
+    _, loss_none_masked = quantile_output_head.loss(input_tensor, target, mask1)  # Loss computation
     assert loss_none_masked.dim() == 0  # Check that loss is a scalar
     assert loss_none_masked >= 0.0  # Loss should be non-negative
