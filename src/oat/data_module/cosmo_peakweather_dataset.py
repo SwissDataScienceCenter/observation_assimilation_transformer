@@ -234,7 +234,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         topo_interp = np.nan_to_num(topo_interp, nan=0.0)
         self.topo_on_nwp_grid = torch.from_numpy(topo_interp).to(self.config.dtype)
         
-    def _load_observations(self):
+    def _load_observations(self) -> None:
         """Load station observations for entire time period"""
         self.obs_df = self.obs_ds.get_observations(
             first_date=self.times[0],
@@ -309,7 +309,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Get observations for this time
         df_time = self.obs_df.xs(time)
         df_unstacked = df_time.unstack()
-        df_final = df_unstacked.reindex(columns=self.config.obs_vars)
+        df_final = df_unstacked.reindex(
+            columns=self.config.obs_vars,
+            index=self.stations
+        )
         obs_values = df_final.values  # (N_stations, C_obs)
         
         # Extract topographic patches at station locations
@@ -371,7 +374,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         """Transform positions to [-1, 1] for grid_sample"""
         return 2 * (pos - min_val) / (max_val - min_val) - 1
         
-    def _get_time_embedding(self, datetime) -> torch.Tensor:
+    def _get_time_embedding(self, datetime: pd.Timestamp) -> torch.Tensor:
         """
         Sin/cos encoding of diurnal and annual cycles.
         Returns: (4,) tensor [sin_day, cos_day, sin_year, cos_year]
@@ -408,7 +411,7 @@ if __name__ == "__main__":
     )
     
     dataset = CosmoPeakWeatherDataset(config)
-    batch = dataset[0]
+    batch = dataset[10]
     
     print("Global field:", batch['global_data']['global_field'].shape)
     print("Station coords:", batch['observation_data']['coords'].shape)
