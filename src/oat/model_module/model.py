@@ -263,23 +263,25 @@ class OAT(nn.Module):
         self,
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
-        query_data: Dict[str, torch.Tensor]
+        query_data: Dict[str, torch.Tensor],
+        target_obs: torch.Tensor,
+        target_mask_obs: torch.Tensor
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
-        
+
         Args:
             Same as forward(), but query_data must also contain:
                 'obs': (B, N_q, C_y) - ground truth observations
                 'mask_obs': (B, N_q, C_y) - observation mask
-        
+
         Returns:
             predictions: Dict with model outputs
             loss: Scalar loss tensor
         """
         out = self._forward(global_data, observation_data, query_data)
-        return self.output_head.loss(out, query_data['obs'], query_data['mask_obs'])
-    
+        return self.output_head.loss(out, target_obs, target_mask_obs)
+
     def _forward(
         self,
         global_data: Dict[str, torch.Tensor],

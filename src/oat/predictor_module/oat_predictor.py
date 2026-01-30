@@ -68,10 +68,30 @@ class OATPredictor(pl.LightningModule):
 
         return batch, target_obs, target_mask_obs
 
-    def forward(self, batch, return_loss = False):
-        # TODO implement
+    def forward(self, batch, query_locations = None, return_loss = False):
 
-        batch, target_obs, target_mask_obs = self._split_queries_key_values(batch=batch)
+        if query_locations is None:
+            # If no query locations are given, a subset of the batch is used as query
+            batch, target_obs, target_mask_obs = self._split_queries_key_values(batch=batch)
+        else:
+            # TODO implement
+            pass
+
+        if not return_loss:
+            out = self.model.forward(global_data=batch['global_data'],
+                               observation_data=batch['observation_data'],
+                               query_data=batch['query_data'])
+
+            return out
+        else:
+            assert query_locations is None, "Can not compute loss for unlabelled queries."
+            out, loss = self.model.forward_with_loss(global_data=batch['global_data'],
+                                                     observation_data=batch['observation_data'],
+                                                     query_data=batch['query_data'],
+                                                     target_obs=target_mask_obs,
+                                                     target_mask_obs=target_mask_obs)
+
+            return out, loss
 
     def training_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)
