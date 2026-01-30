@@ -17,12 +17,10 @@ class OATPredictor(pl.LightningModule):
                  scheduler_params: Optional[dict] = None
                  ):
         super().__init__()
-        # TODO here if we pass the model, we have to ignore it from the hyperparams
-        # (otherwise it's just serialized weights). However it would be nice to save 
-        # the architecture of the model.
-        # - Can we save the cfg that generated the model? 
-        # - Should we pass the cfg, and the model is initialized in here?
+
+        # Ignore the model itself in hparams but update manually with its cfg
         self.save_hyperparameters(ignore=['oat_model'])
+        self.hparams.update({'model_cfg': oat_model.config})
 
         self.training_stations_split = training_stations_split
         self.optimizer_class = optimizer_class
