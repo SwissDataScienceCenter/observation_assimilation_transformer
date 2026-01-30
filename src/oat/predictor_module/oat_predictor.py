@@ -41,17 +41,6 @@ class OATPredictor(pl.LightningModule):
         # TODO implement
         pass
 
-    def _subset_batch(self, batch, indices, station_dim, tot_stations):
-        if isinstance(batch, dict):
-            return {
-                k: self._subset_batch(v, indices, station_dim, tot_stations)
-                for k, v in batch.items()
-            }
-
-        if torch.is_tensor(batch):
-            if batch.ndim > 1 and batch.shape[1]  == tot_stations:
-                return batch.index_select(station_dim, indices)
-        return batch
 
     def _split_queries_key_values(self, batch):
         assert batch['observation_data']['obs'] is not None
@@ -62,21 +51,27 @@ class OATPredictor(pl.LightningModule):
         q_station_idx = torch.randperm(n_stations)[:n_select]
         kv_station_idx = torch.randperm(n_stations)[n_select:]
 
-        return {
-            'queries': self._subset_batch(batch=batch, station_dim=1,
-                                          indices=q_station_idx,
-                                          tot_stations=n_stations),
-            'key_values': self._subset_batch(batch=batch, station_dim=1,
-                                             indices=kv_station_idx, 
-                                             tot_stations=n_stations),
+        all_data = batch['observation_data']
+        # select key-value stations
+        batch['observation_data'] = {
+                k: v.index_select(1, kv_station_idx) if v.shape[1]  == n_stations else v
+                for k,v in all_data.items()
         }
+        # select query stations and drop observational keys (which will be targets)
+        batch['query_data'] = {
+                k: v.index_select(1, q_station_idx) if v.shape[1]  == n_stations else v
+                for k,v in all_data.items() 
+        }
+
+        target_obs = batch['query_data'].pop('obs', None)
+        target_mask_obs = batch['query_data'].pop('mask_obs', None)
+
+        return batch, target_obs, target_mask_obs
 
     def forward(self, batch, return_loss = False):
         # TODO implement
 
-        batches = self._split_queries_key_values(batch=batch)
-        queries_batch = batches['queries']
-        key_values_batch = batches['key_values']
+        batch, target_obs, target_mask_obs = self._split_queries_key_values(batch=batch)
 
     def training_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)
