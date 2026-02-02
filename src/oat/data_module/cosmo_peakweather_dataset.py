@@ -86,6 +86,17 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # NWP fields (time-varying)
         self.nwp_ds = open_dataset(self.config.nwp_path)
+        # Validate requested NWP variables exist in the dataset
+        missing_vars = [
+            v for v in self.config.nwp_vars
+            if v not in self.nwp_ds.name_to_index
+        ]
+        if missing_vars:
+            available_vars = list(self.nwp_ds.name_to_index.keys())
+            raise KeyError(
+                f"The following NWP variables are not present in the dataset: "
+                f"{missing_vars}. Available variables are: {available_vars}"
+            )
         self.nwp_var_idx = [
             self.nwp_ds.name_to_index[v] for v in self.config.nwp_vars
         ]
