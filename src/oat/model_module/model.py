@@ -66,6 +66,7 @@ class TransformerConfig:
     sparse_attn: bool = True
     d_geo_bias: int = 2   # data dependent
     dim_geo_bias_feedforward: int = 16
+    activation_geo_bias: str = "ReLU"
 
 
 @dataclass
@@ -226,6 +227,7 @@ class OAT(nn.Module):
             sparse_attn=config.transformer.sparse_attn,
             d_geo_bias=config.transformer.d_geo_bias,
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
+            activation_geo_bias=config.transformer.activation_geo_bias
         )
     
     def forward(
