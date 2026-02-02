@@ -24,6 +24,10 @@ scikit-learn = "^1.8.0"
 monai = "^1.5.1"
 einops = "^0.8.1"
 torch-cluster = {version = "1.6.3", source = "torch-wheels"}
+torch-scatter = {version = "2.1.2", source = "torch-wheels"}
+torch-sparse = {version = "0.6.18", source = "torch-wheels"}
+pyg-lib = {version = "0.4.0", source = "torch-wheels"}
+torch-geometric = ">=2.7.0"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=24.0"

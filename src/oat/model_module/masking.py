@@ -55,14 +55,14 @@ class SpatialNeighborSearch(nn.Module):
         coords_2: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Compute binary mask based on spatial neighbors.
+        Compute edges of flattened batch point clouds and return edges
         
         Args:
             coords_1: [B, N_1, D] first set of coordinates
             coords_2: [B, N_2, D] second set of coordinates
         
         Returns:
-            mask: [B, N_1, N_2] binary mask indicating neighbors
+            edge_index: [2, E] edge indices in flattened batch space
         """
         
         
@@ -102,26 +102,27 @@ class SpatialNeighborSearch(nn.Module):
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
 
-        # Initialize dense mask [B, N1, N2]
-        mask = torch.zeros(
-            (B, N1, N2),
-            dtype=torch.bool,
-            device=coords_1.device,
-        )
+        return edge_index  # [2, E] edge indices in flattened batch space
+        # # Initialize dense mask [B, N1, N2]
+        # mask = torch.zeros(
+        #     (B, N1, N2),
+        #     dtype=torch.bool,
+        #     device=coords_1.device,
+        # )
 
-        # edge_index[1] indexes coords_1_flat (source), edge_index[0] indexes coords_2_flat (target)
-        src_flat = edge_index[1]
-        tgt_flat = edge_index[0]
+        # # edge_index[1] indexes coords_1_flat (source), edge_index[0] indexes coords_2_flat (target)
+        # src_flat = edge_index[1]
+        # tgt_flat = edge_index[0]
 
-        # Recover batch indices from flattened indices
-        b_idx = batch_x[src_flat]
+        # # Recover batch indices from flattened indices
+        # b_idx = batch_x[src_flat]
 
-        # Convert flattened indices to per-batch indices
-        i1 = src_flat - b_idx * N1  # indices in coords_1 within each batch
-        i2 = tgt_flat - b_idx * N2  # indices in coords_2 within each batch
+        # # Convert flattened indices to per-batch indices
+        # i1 = src_flat - b_idx * N1  # indices in coords_1 within each batch
+        # i2 = tgt_flat - b_idx * N2  # indices in coords_2 within each batch
 
-        # Fill mask in a vectorized way
-        mask[b_idx, i1, i2] = True
-        return mask  # [B, N_1, N_2]
+        # # Fill mask in a vectorized way
+        # mask[b_idx, i1, i2] = True
+        # return mask  # [B, N_1, N_2]
         
         
