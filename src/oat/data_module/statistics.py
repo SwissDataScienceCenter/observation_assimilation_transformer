@@ -1,6 +1,13 @@
+from typing import Callable
+
 import torch
 
-from typing import Callable
+from oat.data_module.transform import (
+    MinMaxTransform,
+    StandardNormalizeTransform,
+    Transform,
+)
+
 
 class RunningFeatureStats:
 
@@ -74,38 +81,15 @@ class RunningFeatureStats:
     def std(self):
         return self.variance.sqrt()
 
-    def get_standard_normalizer_closures(self) -> dict[str, Callable]:
+    def get_standard_transform(self) -> Transform:
+        return StandardNormalizeTransform(mean=self.mean.clone(),
+                                          std=self.std.clone(),
+                                          channel_dim=self.feature_dim)
 
-        f_dim = self.feature_dim
-        n_feat = self.num_features
-        std = self.std.clone()
-        mean = self.mean.clone()
-
-        def standard_normalizer(x, eps=1e-8):
-
-            assert x.shape[f_dim] == n_feat
-            expands = [1] * x.ndim
-            expands[f_dim] = n_feat
-
-            mean_view = mean.view(*expands).to(x.device)
-            std_view = std.view(*expands).to(x.device)
-
-            return (x - mean_view) / (std_view + eps)
-
-        def standard_denormalizer(x):
-            assert x.shape[f_dim] == n_feat
-            expands = [1] * x.ndim
-            expands[f_dim] = n_feat
-
-            mean_view = mean.view(*expands).to(x.device)
-            std_view = std.view(*expands).to(x.device)
-
-            return x * std_view + mean_view
-
-        return {
-            'normalizer': standard_normalizer,
-            'denormalizer': standard_denormalizer
-        }
+    def get_minmax_transform(self) -> Transform:
+        return MinMaxTransform(data_min=self.min,
+                               data_max=self.max,
+                               channel_dim=self.feature_dim)
 
 
     def reset(self):

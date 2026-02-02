@@ -66,15 +66,25 @@ def test_statistics():
     assert torch.allclose(stats.std, torch.Tensor(std_ref), atol=1e-5)
     assert (stats.min == min_ref).all()
     assert (stats.max == max_ref).all()
+    
 
-
-def test_closures():
+def test_get_transforms():
 
     stats = RunningFeatureStats(num_features=4, feature_dim=1)
 
     data = torch.randn(128, 4, 10,12)
-    data += 100
-    data *= 5
+
+    data[:,0] += 10
+    data[:,0] *= 5
+
+    data[:,1] += -13
+    data[:,1] *= 3
+
+    data[:,2] += 1000
+    data[:,2] *= 150
+
+    data[:,3] += -200
+    data[:,3] *= 42
 
     stride = 8
     for i in range(0,128, stride):
@@ -83,42 +93,21 @@ def test_closures():
 
         stats.update(x=x)
 
-    normalizers = stats.get_standard_normalizer_closures()
-    normalizer = normalizers['normalizer']
-    denormalizer = normalizers['denormalizer']
+    standard_t = stats.get_standard_transform()
 
+    # assert normalization works
+    assert torch.isclose(standard_t(data).mean(), torch.tensor(0.0), atol=1e-2)
+    # assert inverse normalization works
+    assert torch.allclose(standard_t.inverse(standard_t(data)), data)
+    
+    
+    minmax_t = stats.get_minmax_transform()
+    
+    minmaxed_data = minmax_t(data)
+    # assert each feature is in [0.0,1.0]
+    for f_i in range(data.shape[1]):
+        assert minmaxed_data[:,f_i].min() == 0.0
+        assert minmaxed_data[:,f_i].max() == 1.0
 
-    sample_data = torch.randn(32, 4, 10,12)
-    sample_data += 100
-    sample_data *= 5
-
-    normalized_sample = normalizer(sample_data)
-
-    # Assert normalization works
-    torch.isclose(normalized_sample.mean(), torch.tensor(0.0), atol=1e-2)
-
-    # Assert denormalization works
-    assert torch.allclose(denormalizer(normalized_sample), sample_data, atol=1e-6)
-
-    # Assert that changing the statistics, does not affect the closure's memory
-    # ie that there are no side-effects
-
-    # new data with new stats
-    new_data = torch.randn(128, 4, 10,12)
-    new_data += 150
-    new_data *= 7
-
-    # update running stats
-    for i in range(0,128, stride):
-
-        x = new_data[i:i+stride]
-        stats.update(x=x)
-
-    # normalizer comes from stats,
-    # but stats changed. This makes sure that there are
-    # no side effects due to values saved by reference
-    new_normalized_sample = normalizer(sample_data)
-
-    assert (new_normalized_sample == normalized_sample).all()
 
 
