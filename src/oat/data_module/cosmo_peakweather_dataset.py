@@ -383,7 +383,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             field.unsqueeze(0).expand(positions.shape[0], -1, -1, -1),
             grid_scaled,
             align_corners=True,
-            mode='bilinear'
+            mode='bilinear',
+            padding_mode='border',
         )
         
         return patches
