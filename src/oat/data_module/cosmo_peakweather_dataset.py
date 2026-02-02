@@ -129,6 +129,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             end = pd.to_datetime(self.config.end_date).tz_localize('UTC') if self.config.end_date else all_times.max()
             mask = (all_times >= start) & (all_times <= end)
             self.times = all_times[mask]
+            if len(self.times) == 0:
+                raise ValueError(
+                    f"No NWP times found within the requested date range "
+                    f"({start} to {end}). Available time range is "
+                    f"{all_times.min()} to {all_times.max()}."
+                )
             self.time_indices = np.where(mask)[0]
         else:
             self.times = all_times
