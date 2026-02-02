@@ -306,8 +306,13 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             global_data['time_emb'] = self._get_time_embedding(nwp_time)
             
         # === Observation data ===
-        # Get observations for this time
-        df_time = self.obs_df.xs(time)
+        # Get observations for this time, with explicit error handling
+        try:
+            df_time = self.obs_df.xs(time)
+        except KeyError as exc:
+            raise KeyError(
+                f"Observations for time {time!r} not found in obs_df index."
+            ) from exc
         df_unstacked = df_time.unstack()
         df_final = df_unstacked.reindex(
             columns=self.config.obs_vars,
