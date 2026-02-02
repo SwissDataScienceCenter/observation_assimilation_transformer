@@ -43,7 +43,9 @@ start_date: null  # Format: 'YYYY-MM-DD'
 end_date: null    # Format: 'YYYY-MM-DD'
 
 # Topographic patch settings
-patch_size: !!python/tuple [32, 32]
+patch_size: 
+  - 32
+  - 32
 
 # Time embedding
 use_time_embedding: true

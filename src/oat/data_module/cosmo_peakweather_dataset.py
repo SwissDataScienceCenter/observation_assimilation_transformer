@@ -256,7 +256,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
     def _load_observations(self) -> None:
         """Load station observations for entire time period"""
         # Defensive check: ensure there is at least one valid time before indexing
-        if not self.times:
+        if self.times is None or len(self.times) == 0:
             raise ValueError(
                 "CosmoPeakWeatherDataset._load_observations called with no valid "
                 "times available (self.times is empty). Ensure times are set "
