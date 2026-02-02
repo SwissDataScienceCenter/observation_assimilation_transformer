@@ -245,12 +245,14 @@ class OAT(nn.Module):
             observation_data: {
                 'coords': (B, N_kv, 2) - station coordinates
                 'topo': (B, N_kv, C_topo, H_hr, W_hr) - topographic patches
+                'geo': (B, N_kv, D) - station coordinates
                 'obs': (B, N_kv, C_y) - observations
                 'mask_obs': (B, N_kv, C_y) - observation mask
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
                 'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'geo': (B, N_q, D) - query coordinates
             }
         
         Returns:
@@ -273,6 +275,7 @@ class OAT(nn.Module):
         Args:
             Same as forward(), but query_data must also contain:
                 'obs': (B, N_q, C_y) - ground truth observations
+                'geo': (B, N_q, D) - query coordinates
                 'mask_obs': (B, N_q, C_y) - observation mask
 
         Returns:
@@ -346,18 +349,53 @@ class OAT(nn.Module):
         # - Encoder: Self-attention across stations refines station tokens (Eq. 16)
         # - Decoder: Cross-attention from queries to refined stations (Eq. 17-25)
         # Q = W_Q Z_q, K = W_K S_kv, V = W_V S_kv
+        
+        dist_src = self._compute_pairwise_distance(
+            observation_data['geo'],
+            observation_data['geo']
+        )
+        dist_tgt = self._compute_pairwise_distance(
+            query_data['geo'],
+            query_data['geo']
+        )
+        dist_memory = self._compute_pairwise_distance(
+            query_data['geo'],
+            observation_data['geo']
+        )
+        
         updated_query_token = self.oat_block(
             src=station_token,  # K, V from station tokens (Eq. 18-19)
             tgt=query_token,    # Q from query tokens (Eq. 17)
             src_mask=mask_kv,
             tgt_mask=mask_q,
             memory_mask=mask_q_kv,
-            dist_src=None,  # TODO: add geometric features here
-            dist_tgt=None,
-            dist_memory=None
+            dist_src=dist_src,
+            dist_tgt=dist_tgt,
+            dist_memory=dist_memory
         )
         
         return updated_query_token
+    
+    @staticmethod
+    def _compute_pairwise_distance(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        """
+        Compute pairwise Euclidean distance between two sets of coordinates.
+        
+        Args:
+            x1: [B, N1, D] first set of coordinates
+            x2: [B, N2, D] second set of coordinates
+        
+        Returns:
+            dist: [B, N1, N2, D] pairwise distances
+        """
+        B, N1, D = x1.shape
+        _, N2, _ = x2.shape
+        
+        x1_expanded = x1.unsqueeze(2).expand(B, N1, N2, D)
+        x2_expanded = x2.unsqueeze(1).expand(B, N1, N2, D)
+        
+        dist = torch.abs(x1_expanded - x2_expanded)
+        return dist
     
     def _create_uninformed_tokens(
         self,
