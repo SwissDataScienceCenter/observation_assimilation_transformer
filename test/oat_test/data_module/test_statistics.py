@@ -106,8 +106,8 @@ def test_get_transforms():
     minmaxed_data = minmax_t(data)
     # assert each feature is in [0.0,1.0]
     for f_i in range(data.shape[1]):
-        assert minmaxed_data[:,f_i].min() == 0.0
-        assert minmaxed_data[:,f_i].max() == 1.0
+        assert torch.isclose(minmaxed_data[:,f_i].min(), torch.tensor(0.0))
+        assert torch.isclose(minmaxed_data[:,f_i].max(), torch.tensor(1.0))
 
 
 

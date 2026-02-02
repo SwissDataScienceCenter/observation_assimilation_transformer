@@ -87,8 +87,8 @@ class RunningFeatureStats:
                                           channel_dim=self.feature_dim)
 
     def get_minmax_transform(self) -> Transform:
-        return MinMaxTransform(data_min=self.min,
-                               data_max=self.max,
+        return MinMaxTransform(data_min=self.min.clone(),
+                               data_max=self.max.clone(),
                                channel_dim=self.feature_dim)
 
 
