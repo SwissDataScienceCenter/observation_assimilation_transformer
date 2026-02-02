@@ -53,8 +53,7 @@ def get_time_embedding(datetimes: np.ndarray) -> np.ndarray:
     seconds = (
         dt.hour * 3600 +
         dt.minute * 60 +
-        dt.second +
-        dt.microsecond * 1e-6
+        dt.second
     )
     day_angle = 2 * np.pi * seconds / seconds_in_day
     
