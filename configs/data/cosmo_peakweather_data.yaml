@@ -55,4 +55,4 @@ cache_dir: ".cache_constant_inputs"
 clear_cache: false
 
 # Data type (use float32 for training, float16 for inference)
-# dtype: "float32"  # Options: float32, float16, float64
+# Note: dtype is configured in code (expects a torch.dtype like torch.float32); do not set it here as a string.
