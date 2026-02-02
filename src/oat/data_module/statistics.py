@@ -20,7 +20,7 @@ class RunningFeatureStats:
         Args:
             num_features: the number of features in the data
             feature_dim: the dimension where the features are stored
-            device: the device on which running statustics and input data are stored
+            device: the device on which running statistics and input data are stored
         """
         self.num_features = num_features
         self.feature_dim = feature_dim
