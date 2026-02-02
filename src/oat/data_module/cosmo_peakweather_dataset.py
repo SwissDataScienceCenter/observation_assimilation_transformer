@@ -416,7 +416,7 @@ if __name__ == "__main__":
         topo_path="/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr",
         obs_path="/scratch/mch/cdonner/data/peakweather",
         ref_nwp_path="/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr",
-        nwp_vars=['T_G', 'U_10M', 'V_10M'],
+        nwp_vars=['T_2M', 'U_10M', 'V_10M'],
         topo_vars=["DEM", "TPI_500M", "TPI_2000M", "WE_DERIVATIVE_2000M_SIGRATIO1", "SN_DERIVATIVE_2000M_SIGRATIO1"],
         obs_vars=['temperature', 'wind_gust', 'wind_u', 'wind_v'],
         stations=['ABO', 'AEG', 'WYN', 'ZER', 'KLO'],
