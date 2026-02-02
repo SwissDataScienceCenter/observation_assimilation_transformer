@@ -28,6 +28,9 @@ class RunningFeatureStats:
 
     def update(self, x: torch.Tensor):
 
+        # Ensure input is on the same device as the running statistics
+        if x.device != self.count.device:
+            x = x.to(self.count.device)
         # Move feature dimension to first axis and flatten remaining dims
         dims = list(range(x.dim()))
         permute_order = [self.feature_dim] + [i for i in dims if i != self.feature_dim]
