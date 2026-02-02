@@ -229,10 +229,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.save(cache_file, arr)
             self.topo_data = np.load(cache_file, mmap_mode='r')
             
-        # Get indices of variables we want
+        # Get indices of variables we want, preserving config.topo_vars order
+        topo_data_vars = list(self.topo_ds.data_vars)
         self.topo_var_idx = [
-            idx for idx, var in enumerate(self.topo_ds.data_vars)
-            if var in self.config.topo_vars
+            topo_data_vars.index(var)
+            for var in self.config.topo_vars
+            if var in topo_data_vars
         ]
         
         # Project topo onto reference NWP grid for global field
