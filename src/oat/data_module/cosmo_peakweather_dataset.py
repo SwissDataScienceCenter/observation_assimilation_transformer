@@ -414,12 +414,14 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         dt = pd.to_datetime(datetime)
         
         # Time of day
+        seconds_in_day = 86400
         seconds = dt.hour * 3600 + dt.minute * 60 + dt.second
-        day_angle = 2 * np.pi * seconds / 86400
+        day_angle = 2 * np.pi * seconds / seconds_in_day
         
         # Time of year
-        doy = dt.dayofyear + seconds / 86400
-        year_angle = 2 * np.pi * doy / 365.2425
+        year_length = 365.2425  # Average year length accounting for leap years
+        doy = dt.dayofyear + seconds / seconds_in_day
+        year_angle = 2 * np.pi * doy / year_length
         
         return torch.tensor([
             np.sin(day_angle),
