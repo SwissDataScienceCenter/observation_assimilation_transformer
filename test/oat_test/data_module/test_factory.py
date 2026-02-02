@@ -62,8 +62,7 @@ def test_with_local_data() -> None:
                 
             
     idx = 0    
-    query = dataset.get_query(sample_batch['index'][idx].item(),
-                              query_coords=sample_batch['observation_data']['coords'][idx])
+    query = dataset.get_query(query_coords=sample_batch['observation_data']['coords'][idx])
     print(query['topo'].shape, sample_batch['observation_data']['topo'][idx].shape)
     assert 'coords' in query
     assert 'topo' in query
