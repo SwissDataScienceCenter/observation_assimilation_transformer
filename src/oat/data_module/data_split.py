@@ -1,12 +1,14 @@
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 from typing import Any, Dict
 
 def create_splits(dataset: Dataset[Dict[str, Any]],
                   val_fraction: float = 0.2,
                   test_fraction: float = 0.2,
-                  train_split_fraction: float = 0.8,
-                  seed: int = 42) -> tuple[Dataset, Dataset, Dataset]:
+                  train_split_fraction: float = 0.8) -> tuple[Dataset[Dict[str, Any]], 
+                                                              Dataset[Dict[str, Any]], 
+                                                              Dataset[Dict[str, Any]]]:
     """
     Create train, validation, and test splits from a dataset.
     Splits the dataset by stations into training, validation, and test sets.
@@ -16,14 +18,12 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
         train_split_fraction: Fraction of time series data to use for training within the training set (default: 0.8).
-        seed: Random seed for reproducibility (default: 42).
     Returns:
         A tuple containing the train, validation, and test datasets.
     """
     num_stations = len(dataset.stations)
-    indices = np.arange(num_stations)
-    rng = np.random.default_rng(seed)
-    rng.shuffle(indices)
+    indices = np.arange(num_stations, dtype=int)
+    indices = indices[torch.randperm(num_stations)]
     
     test_size = int(num_stations * test_fraction)
     val_size = int(num_stations * val_fraction)
@@ -32,7 +32,7 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     val_indices = indices[num_stations - (val_size + test_size):num_stations - test_size]
     test_indices = indices[num_stations - test_size:]
     
-    train_dataset = TrainDataset(dataset, train_indices, split_fraction=train_split_fraction, seed=seed)
+    train_dataset = TrainDataset(dataset, train_indices, split_fraction=train_split_fraction)
     val_dataset = EvalDataset(dataset, val_indices, train_indices)
     test_dataset = EvalDataset(dataset, test_indices, np.concatenate((train_indices, val_indices)))
     
@@ -67,13 +67,12 @@ class TrainDataset(Dataset[Dict[str, Any]]):
     def __init__(self,
                  dataset: Dataset[Dict[str, Any]],
                  train_indices: np.ndarray,
-                 split_fraction: float = 0.8,
-                 seed: int = 42):
+                 split_fraction: float = 0.8):
         self.dataset = dataset
         self.train_indices = train_indices
         self.stations = dataset.stations[self.train_indices]
         self.split_fraction = split_fraction
-        self.rng = np.random.default_rng(seed)
+        self.rng = torch.Generator()
         
     def __len__(self) -> int:
         return len(self.dataset)
@@ -93,7 +92,7 @@ class TrainDataset(Dataset[Dict[str, Any]]):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         data = self.dataset[idx]
         
-        permuted_indices = self.rng.permutation(self.train_indices)
+        permuted_indices = self.train_indices[torch.randperm(len(self.train_indices), generator=self.rng)]
         split_point = self.num_observed_stations
         key_indices = permuted_indices[:split_point]
         query_indices = permuted_indices[split_point:]
@@ -110,7 +109,9 @@ class TrainDataset(Dataset[Dict[str, Any]]):
             'index': idx,
             'observation_data': key_data,
             'query_data': query_data,
-            'global_data': data['global_data']
+            'global_data': data['global_data'],
+            'key_indices': key_indices,
+            'query_indices': query_indices
         }
         return split_data
     
