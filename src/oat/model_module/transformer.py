@@ -68,7 +68,7 @@ class ObservationAssimilationTransformer(nn.Module):
             norm_first=norm_first,
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
-            sparse=sparse_attn,
+            sparse_attn=sparse_attn,
             bias=bias,
             device=device,
             dtype=dtype,
@@ -91,7 +91,7 @@ class ObservationAssimilationTransformer(nn.Module):
             norm_first=norm_first,
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
-            sparse=sparse_attn,
+            sparse_attn=sparse_attn,
             bias=bias,
             device=device,
             dtype=dtype,
@@ -111,45 +111,42 @@ class ObservationAssimilationTransformer(nn.Module):
         self,
         src: torch.Tensor,
         tgt: torch.Tensor,
-        src_mask: Optional[torch.Tensor] = None,
-        tgt_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None,
-        dist_src: Optional[torch.Tensor] = None,
-        dist_tgt: Optional[torch.Tensor] = None,
-        dist_memory: Optional[torch.Tensor] = None,
+        src_mask_edges: Optional[torch.Tensor] = None,
+        tgt_mask_edges: Optional[torch.Tensor] = None,
+        memory_mask_edges: Optional[torch.Tensor] = None,
+        g_src: Optional[torch.Tensor] = None,
+        g_tgt: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass of the transformer model.
         Args:
             src (torch.Tensor): Source sequence tensor to be encoded.
             tgt (torch.Tensor): Target sequence tensor to be decoded.
-            src_mask (Optional[torch.Tensor], optional): Mask for the source sequence to prevent 
+            src_mask_edges (Optional[torch.Tensor], optional): Edges for the source sequence to prevent 
                 attention to certain positions. Defaults to None.
-            tgt_mask (Optional[torch.Tensor], optional): Mask for the target sequence to prevent 
+            tgt_mask_edges (Optional[torch.Tensor], optional): Edges for the target sequence to prevent 
                 attention to certain positions (e.g., for causal masking). Defaults to None.
-            memory_mask (Optional[torch.Tensor], optional): Mask for the encoder output (memory) 
+            memory_mask_edges (Optional[torch.Tensor], optional): Edges for the encoder output (memory) 
                 in the decoder's cross-attention. Defaults to None.
-            dist_src (Optional[torch.Tensor], optional): Distance information for the source sequence, 
+            g_src (Optional[torch.Tensor], optional): Geometry information for the source sequence, 
                 used for positional encoding or attention biasing. Defaults to None.
-            dist_tgt (Optional[torch.Tensor], optional): Distance information for the target sequence, 
+            g_tgt (Optional[torch.Tensor], optional): Geometry information for the target sequence, 
                 used for positional encoding or attention biasing. Defaults to None.
-            dist_memory (Optional[torch.Tensor], optional): Distance information for cross-attention 
-                between target and encoder memory. Defaults to None.
         Returns:
             torch.Tensor: The output tensor from the decoder, representing the transformed target sequence.
         """
         memory = self.encoder(
             src,
-            src_mask=src_mask,
-            dist_src=dist_src,
+            src_mask_edges=src_mask_edges,
+            g_src=g_src,
         )
         output = self.decoder(
             tgt,
             memory,
-            tgt_mask=tgt_mask,
-            memory_mask=memory_mask,
-            dist_tgt=dist_tgt,
-            dist_memory=dist_memory,
+            tgt_mask_edges=tgt_mask_edges,
+            memory_mask_edges=memory_mask_edges,
+            g_tgt=g_tgt,
+            g_src=g_src,
         )
         return output
         
@@ -191,19 +188,19 @@ class GeometryAwareEncoder(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        src_mask: Optional[torch.Tensor] = None,
-        dist_src: Optional[torch.Tensor] = None,
+        src_mask_edges: Optional[torch.Tensor] = None,
+        g_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass through the transformer encoder.
         Args:
             src (torch.Tensor): The input tensor to the transformer encoder.
                 Shape: (batch_size, sequence_length, d_model)
-            src_mask (Optional[torch.Tensor], optional): An optional mask tensor to prevent attention
+            src_mask_edges (Optional[torch.Tensor], optional): An optional mask edges tensor to prevent attention
                 to certain positions. Shape: (batch_size, sequence_length, sequence_length) or
                 broadcastable. Defaults to None.
-            dist_src (Optional[torch.Tensor], optional): An optional distance tensor that can be used
-                by the transformer layers for distance-aware attention or other mechanisms.
+            g_src (Optional[torch.Tensor], optional): An optional geometry tensor that can be used
+                by the transformer layers for geometry-aware attention or other mechanisms.
                 Defaults to None.
         Returns:
             torch.Tensor: The output tensor after processing through all transformer layers.
@@ -212,7 +209,7 @@ class GeometryAwareEncoder(nn.Module):
         output = src
         
         for mod in self.layers:
-            output = mod(output, src_mask=src_mask, dist_src=dist_src)
+            output = mod(output, src_mask_edges=src_mask_edges, g_src=g_src)
         
         if self.norm is not None:
             output = self.norm(output)
@@ -249,10 +246,10 @@ class GeometryAwareDecoder(nn.Module):
         self,
         tgt: torch.Tensor,
         memory: torch.Tensor,
-        tgt_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None,
-        dist_tgt: Optional[torch.Tensor] = None,
-        dist_memory: Optional[torch.Tensor] = None,
+        tgt_mask_edges: Optional[torch.Tensor] = None,
+        memory_mask_edges: Optional[torch.Tensor] = None,
+        g_tgt: Optional[torch.Tensor] = None,
+        g_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass through the transformer decoder.
@@ -260,10 +257,10 @@ class GeometryAwareDecoder(nn.Module):
         Args:
             tgt: Target sequence tensor
             memory: Memory tensor from the encoder
-            tgt_mask: Optional mask for target sequence
-            memory_mask: Optional mask for memory tensor
-            dist_tgt: Optional distance information for target sequence
-            dist_memory: Optional distance information for memory
+            tgt_mask_edges: Optional mask edges for target sequence
+            memory_mask_edges: Optional mask edges for memory tensor
+            g_tgt: Optional geometry information for target sequence
+            g_src: Optional geometry information for memory
         Returns:
             Transformed output tensor after passing through all decoder layers and optional normalization
         """
@@ -273,10 +270,10 @@ class GeometryAwareDecoder(nn.Module):
             output = mod(
                 output,
                 memory,
-                tgt_mask=tgt_mask,
-                memory_mask=memory_mask,
-                dist_tgt=dist_tgt,
-                dist_memory=dist_memory,
+                tgt_mask_edges=tgt_mask_edges,
+                memory_mask_edges=memory_mask_edges,
+                g_tgt=g_tgt,
+                g_src=g_src,
             )
         
         if self.norm is not None:
@@ -300,7 +297,7 @@ class GeometryAwareEncoderLayer(nn.Module):
         norm_first: bool = False,
         dim_geo_bias_feedforward: int = 64,
         activation_geo_bias: str = "ReLU",
-        sparse: bool = False,
+        sparse_attn: bool = False,
         bias: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
@@ -318,7 +315,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             norm_first: If True, layer norm is done prior to attention and feedforward operations (pre-norm). Otherwise it's done after (post-norm).
             dim_geo_bias_feedforward: The hidden dimension for the geometric bias feedforward network.
             activation_geo_bias: The activation function for the geometry bias feedforward network.
-            sparse: Whether to use sparse attention.
+            sparse_attn: Whether to use sparse attention.
             bias: Whether to use bias in linear layers and layer normalization.
             device: The device to place the parameters on.
             dtype: The data type for the parameters.
@@ -333,7 +330,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
-            sparse=sparse,
+            sparse_attn=sparse_attn,
             device=device,
             dtype=dtype,
         )
@@ -353,41 +350,42 @@ class GeometryAwareEncoderLayer(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        src_mask: Optional[torch.Tensor] = None,
-        dist_src: Optional[torch.Tensor] = None,
+        src_mask_edges: Optional[torch.Tensor] = None,
+        g_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Perform a forward pass through the transformer encoder layer.
 
         Args:
             src: The input tensor to the encoder layer.
-            src_mask: An optional mask tensor for the source sequence to prevent attention to certain positions.
-            dist_src: An optional distance tensor for the source sequence.
+            src_mask_edges: An optional mask tensor for the source sequence to prevent attention to certain positions.
+            g_src: An optional geometry tensor for the source sequence.
 
         Returns:
             The output tensor after applying self-attention and feed-forward operations.
         """
         x = src
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), src_mask, dist_src)
+            x = x + self._sa_block(self.norm1(x), src_mask_edges, g_src)
             x = x + self._ffn_block(self.norm2(x))
         else:
-            x = self.norm1(x + self._sa_block(x, src_mask, dist_src))
+            x = self.norm1(x + self._sa_block(x, src_mask_edges, g_src))
             x = self.norm2(x + self._ffn_block(x))
         return x
         
     def _sa_block(
         self,
         x: torch.Tensor,
-        src_mask: Optional[torch.Tensor],
-        dist_src: Optional[torch.Tensor],
+        src_mask_edges: Optional[torch.Tensor],
+        g_src: Optional[torch.Tensor],
     ) -> torch.Tensor:
         attn_output, _ = self.self_attn(
             x,
             x,
             x,
-            dist_qk=dist_src,
-            attn_mask=src_mask,
+            geo_q=g_src,
+            geo_k=g_src,
+            attn_edges=src_mask_edges,
         )
         return self.dropout1(attn_output)
     
@@ -411,7 +409,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         norm_first: bool = False,
         dim_geo_bias_feedforward: int = 64,
         activation_geo_bias: str = "ReLU",
-        sparse: bool = False,
+        sparse_attn: bool = False,
         bias: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
@@ -429,7 +427,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             norm_first: If True, layer norm is done prior to self attention, multihead attention and feedforward operations.
             dim_geo_bias_feedforward: Hidden dimension for geometric bias feedforward network.
             activation_geo_bias: The activation function for the geometry bias feedforward network.
-            sparse: Whether to use sparse attention.
+            sparse_attn: Whether to use sparse attention.
             bias: Whether to use bias in linear layers and layer normalization.
             device: The device to place the parameters on.
             dtype: The dtype of the parameters.
@@ -444,7 +442,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
-            sparse=sparse,
+            sparse_attn=sparse_attn,
             device=device,
             dtype=dtype,
         )
@@ -455,7 +453,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             d_geo_bias=d_geo_bias,
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
-            sparse=sparse,
+            sparse_attn=sparse_attn,
             device=device,
             dtype=dtype,
         )
@@ -478,10 +476,10 @@ class GeometryAwareDecoderLayer(nn.Module):
         self,
         tgt: torch.Tensor,
         memory: torch.Tensor,
-        tgt_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None,
-        dist_tgt: Optional[torch.Tensor] = None,
-        dist_memory: Optional[torch.Tensor] = None,
+        tgt_mask_edges: Optional[torch.Tensor] = None,
+        memory_mask_edges: Optional[torch.Tensor] = None,
+        g_tgt: Optional[torch.Tensor] = None,
+        g_src: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Perform a forward pass through the transformer decoder layer.
@@ -489,22 +487,22 @@ class GeometryAwareDecoderLayer(nn.Module):
         Args:
             tgt: The target sequence tensor
             memory: The memory sequence tensor from the encoder
-            tgt_mask: Optional mask for the target sequence
-            memory_mask: Optional mask for the memory sequence
-            dist_tgt: Optional distance information for the target sequence
-            dist_memory: Optional distance information for the memory sequence
+            tgt_mask_edges: Optional mask for the target sequence
+            memory_mask_edges: Optional mask for the memory sequence
+            g_tgt: Optional geometry information for the target sequence
+            g_src: Optional geometry information for the memory sequence
 
         Returns:
             The output tensor after applying self-attention, cross-attention, and feedforward blocks
         """
         x = tgt
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), tgt_mask, dist_tgt)
-            x = x + self._mha_block(self.norm2(x), memory, memory_mask, dist_memory)
+            x = x + self._sa_block(self.norm1(x), tgt_mask_edges, g_tgt)
+            x = x + self._mha_block(self.norm2(x), memory, memory_mask_edges, g_src, g_tgt)
             x = x + self._ffn_block(self.norm3(x))
         else:
-            x = self.norm1(x + self._sa_block(x, tgt_mask, dist_tgt))
-            x = self.norm2(x + self._mha_block(x, memory, memory_mask, dist_memory))
+            x = self.norm1(x + self._sa_block(x, tgt_mask_edges, g_tgt))
+            x = self.norm2(x + self._mha_block(x, memory, memory_mask_edges, g_src, g_tgt))
             x = self.norm3(x + self._ffn_block(x))
         return x
     
@@ -512,15 +510,16 @@ class GeometryAwareDecoderLayer(nn.Module):
     def _sa_block(
         self,
         x: torch.Tensor,
-        tgt_mask: Optional[torch.Tensor],
-        dist_tgt: Optional[torch.Tensor],
+        tgt_edges: Optional[torch.Tensor],
+        g_tgt: Optional[torch.Tensor],
     ) -> torch.Tensor:
         attn_output, _ = self.self_attn(
             x,
             x,
             x,
-            dist_qk=dist_tgt,
-            attn_mask=tgt_mask,
+            geo_q=g_tgt,
+            geo_k=g_tgt,
+            attn_edges=tgt_edges,
         )
         return self.dropout1(attn_output)
     
@@ -528,15 +527,17 @@ class GeometryAwareDecoderLayer(nn.Module):
         self,
         x: torch.Tensor,
         memory: torch.Tensor,
-        memory_mask: Optional[torch.Tensor],
-        dist_memory: Optional[torch.Tensor],
+        memory_edges: Optional[torch.Tensor],
+        g_src: Optional[torch.Tensor],
+        g_tgt: Optional[torch.Tensor],
     ) -> torch.Tensor:
         attn_output, _ = self.multihead_attn(
             x,
             memory,
             memory,
-            dist_qk=dist_memory,
-            attn_mask=memory_mask,
+            geo_q=g_tgt,
+            geo_k=g_src,
+            attn_edges=memory_edges,
         )
         return self.dropout2(attn_output)
     

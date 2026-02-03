@@ -17,7 +17,7 @@ class GeometryAwareMHA(nn.Module):
         d_geo_bias: Optional[int] = None,
         geo_bias_hidden_dim: int = 64,
         activation_geo_bias: str = "ReLU",
-        sparse: bool = False,
+        sparse_attn: bool = False,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -30,7 +30,7 @@ class GeometryAwareMHA(nn.Module):
             d_geo_bias: Dimension of the input geometric feature vector used to compute per-head attention bias. If None, no geometric bias is used.
             geo_bias_hidden_dim: Hidden dimension for the geometric bias network. Defaults to 64.
             activation_geo_bias: Activation function for the geometric bias network. Defaults to "ReLU".
-            sparse: Whether to use sparse attention. Checks also if mask is defined. Defaults to False.
+            sparse_attn: Whether to use sparse attention. Checks also if mask is defined. Defaults to False.
             device: Device to place tensors on.
             dtype: Data type for tensors.
         Raises:
@@ -56,7 +56,7 @@ class GeometryAwareMHA(nn.Module):
         )
         
         self.d_geo_bias = d_geo_bias
-        self.sparse = sparse
+        self.sparse_attn = sparse_attn
         # Attention projections (equations 17-19)
         self.W_Q = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
         self.W_K = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
@@ -128,7 +128,7 @@ class GeometryAwareMHA(nn.Module):
         K_heads = K.view(B, N_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N_k, d_k)
         V_heads = V.view(B, N_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N_k, d_k)
 
-        if not self.sparse or attn_edges is None:
+        if not self.sparse_attn or attn_edges is None:
             # Dense attention path
             
             out, attn_weights_out = self._dense_attention(

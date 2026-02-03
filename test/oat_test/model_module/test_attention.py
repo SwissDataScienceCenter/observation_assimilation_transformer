@@ -78,7 +78,7 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
     )
 
     Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
-    attn_module.sparse = True
+    attn_module.sparse_attn = True
     Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
 
     assert Z_q_tilde.shape == (B, N_q, D)
@@ -127,7 +127,7 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     for param in attn_module.parameters():
         param.grad.zero_()
     # sparse attention
-    attn_module.sparse = True
+    attn_module.sparse_attn = True
     
     Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
     loss_sparse = Z_q_tilde_sparse.sum()
