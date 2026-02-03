@@ -20,12 +20,20 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
     mask_src = torch.rand(B, N_kv, N_kv) < 0.2
     mask_tgt = torch.rand(B, N_q, N_q) < 0.2
     mask_memory = torch.rand(B, N_q, N_kv) < 0.6  # 60% density
-    edges_src = torch.nonzero(~mask_src, as_tuple=False)
-    edges_tgt = torch.nonzero(~mask_tgt, as_tuple=False)
-    edges_memory = torch.nonzero(~mask_memory, as_tuple=False)
-    dist_src = torch.abs(torch.randn(B, N_kv, N_kv, d_geo_bias))
-    dist_tgt = torch.abs(torch.randn(B, N_q, N_q, d_geo_bias))
-    dist_memory = torch.abs(torch.randn(B, N_q, N_kv, d_geo_bias))
+    edges_list_src, edges_list_tgt, edges_list_memory = [], [], []
+    for b in range(B):
+        # For memory edges
+        q_flat_mem, k_flat_mem = torch.nonzero(~mask_memory[b], as_tuple=True)
+        edges_list_memory.append(torch.stack([q_flat_mem + b * N_q, k_flat_mem + b * N_kv], dim=0))
+        # For target and source self-attention edges
+        q_flat_tgt, k_flat_tgt = torch.nonzero(~mask_tgt[b], as_tuple=True)
+        edges_list_tgt.append(torch.stack([q_flat_tgt + b * N_q, k_flat_tgt + b * N_q], dim=0))
+        q_flat_src, k_flat_src = torch.nonzero(~mask_src[b], as_tuple=True)
+        edges_list_src.append(torch.stack([k_flat_src + b * N_kv, q_flat_src + b * N_kv], dim=0))
+    edges_src = torch.cat(edges_list_src, dim=1)  # [2, E]
+    edges_tgt = torch.cat(edges_list_tgt, dim=1)  # [2, E]
+    edges_memory = torch.cat(edges_list_memory, dim=1)  # [2, E]
+    
     g_src = torch.randn(B, N_kv, d_geo_bias)
     g_tgt = torch.randn(B, N_q, d_geo_bias)
 
@@ -42,9 +50,6 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
         "Z_q": Z_q,
         "g_src": g_src,
         "g_tgt": g_tgt,
-        "mask_src": mask_src,
-        "mask_tgt": mask_tgt,
-        "mask_memory": mask_memory,
         "edges_src": edges_src,
         "edges_tgt": edges_tgt,
         "edges_memory": edges_memory,
@@ -62,7 +67,6 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
     Z_q = setup_data["Z_q"]
     g_src = setup_data["g_src"]
     g_tgt = setup_data["g_tgt"]
-    mask_memory = setup_data["mask_memory"]
     edges_memory = setup_data["edges_memory"]
     dropout = setup_data["dropout"]
 
@@ -73,14 +77,14 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
         dropout=dropout,
     )
 
-    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edge_index=None, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
     attn_module.sparse = True
-    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edge_index=edges_memory, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
 
     assert Z_q_tilde.shape == (B, N_q, D)
     assert Z_q_tilde_sparse.shape == (B, N_q, D)   
-    # if dropout == 0.0:
-    #     assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-5)
+    if dropout == 0.0:
+        assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-5)
     
 def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     N_q = setup_data["N_q"]
@@ -89,7 +93,6 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     d_geo_bias = setup_data["d_geo_bias"]
     Z_kv = setup_data["Z_kv"].clone().requires_grad_(True)
     Z_q = setup_data["Z_q"].clone().requires_grad_(True)
-    mask_memory = setup_data["mask_memory"]
     edges_memory = setup_data["edges_memory"]
     dropout = setup_data["dropout"]
     g_src = setup_data["g_src"]
@@ -103,7 +106,7 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     )
     
 
-    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
     loss = Z_q_tilde.sum()
     loss.backward()
 
@@ -126,7 +129,7 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     # sparse attention
     attn_module.sparse = True
     
-    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edge_index=edges_memory, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
     loss_sparse = Z_q_tilde_sparse.sum()
     loss_sparse.backward()
     

@@ -45,14 +45,20 @@ class TestSpatialNeighborSearchInit:
         
         coord1 = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]])
         
-        mask = search(coord1)
+        mask = search(coord1, return_full_mask=True)
+        edges = search(coord1)
         assert mask.shape == (1, 2, 2)
         assert torch.sum(mask).item() == 2
+        assert edges.shape[0] == 2
+        assert edges.shape[1] == torch.sum(mask)
         
         coord2 = torch.tensor([[[10.0, 10.0], [2.0, 2.0]]])
-        mask2 = search(coord1, coord2)
+        mask2 = search(coord1, coord2, return_full_mask=True)
+        edges2 = search(coord1, coord2)
         assert mask2.shape == (1, 2, 2)
         assert torch.sum(mask2).item() == 0
+        assert edges2.shape[0] == 2
+        assert edges2.shape[1] == torch.sum(mask2)
         
         
     def test_knn_example(self) -> None:
@@ -61,17 +67,36 @@ class TestSpatialNeighborSearchInit:
         
         coord1 = torch.randn((2, 100, 2))
         
-        mask = search(coord1)
+        mask = search(coord1, return_full_mask=True)
+        edges = search(coord1)
         assert mask.shape == (2, 100, 100)
         # Each point should have exactly k neighbors (excluding self)
         for b in range(2):
             for n in range(100):
                 assert torch.sum(mask[b, :, n]).item() == 32
+        assert edges.shape[0] == 2
+        assert edges.shape[1] == torch.sum(mask)
                 
         coord2 = torch.randn((2, 150, 2))
-        mask2 = search(coord1, coord2)
+        mask2 = search(coord1, coord2, return_full_mask=True)
+        edges2 = search(coord1, coord2)
         assert mask2.shape == (2, 100, 150)
+        assert edges2.shape[0] == 2
+        assert edges2.shape[1] == torch.sum(mask2)
         for b in range(2):
             for n in range(150):
                 assert torch.sum(mask2[b, :, n]).item() == 32
+                
+    def test_full_example(self) -> None:
+        """Test full example with both modes and return_full_mask option"""
+        search_full = SpatialNeighborSearch(mode='full')
         
+        coords_a = torch.randn((1, 50, 3))
+        coords_b = torch.randn((1, 60, 3))
+        
+        mask_full = search_full(coords_a, coords_b, return_full_mask=True)
+        edges_full = search_full(coords_a, coords_b)
+        assert mask_full.shape == (1, 50, 60)
+        assert torch.all(mask_full)
+        assert edges_full.shape[1] == 50 * 60
+        assert edges_full.shape[0] == 2

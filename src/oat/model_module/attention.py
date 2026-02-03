@@ -77,7 +77,6 @@ class GeometryAwareMHA(nn.Module):
         # Output projection layer for combining attention heads
         self.W_O = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
         
-        
     def forward(
         self,
         query: torch.Tensor,
@@ -86,7 +85,7 @@ class GeometryAwareMHA(nn.Module):
         geo_k: Optional[torch.Tensor] = None,
         geo_q: Optional[torch.Tensor] = None,
         need_weights: bool = False,
-        attn_edge_index: Optional[torch.Tensor] = None,
+        attn_edges: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Compute multi-head attention with optional geometric bias and sparse attention.
@@ -103,7 +102,7 @@ class GeometryAwareMHA(nn.Module):
             geo_q: Optional geometric features for queries of shape (B, N_q, d_geo_bias)
             need_weights: Whether to return attention weights. If False and sparse attention is enabled, 
                           weights may not be computed for efficiency
-            attn_edge_index: Optional attention edge indices of shape [2, E] in flattened batch space
+            attn_edges: Optional attention edge indices of shape [2, E] in flattened batch space
         Returns:
             A tuple containing:
                 - attn_output: Attention output tensor of shape (..., N_q, D_emb), same leading dimensions as query
@@ -128,240 +127,151 @@ class GeometryAwareMHA(nn.Module):
         Q_heads = Q.view(B, N_q, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N_q, d_k)
         K_heads = K.view(B, N_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N_k, d_k)
         V_heads = V.view(B, N_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, H, N_k, d_k)
-        compute_attn_bias = self.f_geo is not None and geo_k is not None and geo_q is not None
-        
-        if not self.sparse or attn_edge_index is None:
-            if attn_edge_index is not None:
-                raise ValueError("attn_edge_index should be None when sparse is False")
+
+        if not self.sparse or attn_edges is None:
             # Dense attention path
-            if compute_attn_bias:
-                geo_k_exp = geo_k.unsqueeze(1).expand(-1, N_q, -1, -1)  # (B, N_q, N_k, d_geo_bias)
-                geo_q_exp = geo_q.unsqueeze(2).expand(-1, -1, N_k, -1)  # (B, N_q, N_k, d_geo_bias)
-                dist_qk = torch.abs(geo_q_exp - geo_k_exp)  # (B, N_q, N_k, d_geo_bias)
-            else:
-                dist_qk = None
+            
             out, attn_weights_out = self._dense_attention(
                 Q_heads,  # (B, H, N_q, d_k)
                 K_heads,  # (B, H, N_k, d_k)
                 V_heads,  # (B, H, N_k, d_k)
-                attn_mask=None,
-                dist_qk=dist_qk,
+                attn_edges=attn_edges,  # (2, E) or None
+                geo_q=geo_q,  # (B, N_q, d_geo_bias) or None
+                geo_k=geo_k,  # (B, N_k, d_geo_bias) or None
                 need_weights=need_weights
             )
-            out = out.transpose(1, 2).contiguous()  # (B, N_q, H, d_k)
-            out = out.view(B, N_q, self.embed_dim)  # (B, N_q, D_emb)
+            
         else:
-            # return out.reshape(*orig_shape_q[:-2], N_q, self.embed_dim), attn_weights_out
-        
-        
-            Q_flat = Q.reshape(B * N_q, self.num_heads, self.head_dim)  # (B * N_q, H, d_k)
-            K_flat = K.reshape(B * N_k, self.num_heads, self.head_dim)  # (B * N_k, H, d_k)
-            V_flat = V.reshape(B * N_k, self.num_heads, self.head_dim)  # (B * N_k, H, d_k)
+            out, attn_weights_out = self._sparse_attention(
+                Q_heads,  # (B, H, N_q, d_k)
+                K_heads,  # (B, H, N_k, d_k)
+                V_heads,  # (B, H, N_k, d_k)
+                attn_edges=attn_edges,  # (2, E)
+                geo_q=geo_q,  # (B, N_q, d_geo_bias) or None
+                geo_k=geo_k,  # (B, N_k, d_geo_bias) or None
+                need_weights=need_weights
+            )
+            
 
-            if compute_attn_bias:
-                geo_k_flat = geo_k.reshape(B * N_k, self.d_geo_bias)  # (B * N_k, d_geo_bias)
-                geo_q_flat = geo_q.reshape(B * N_q, self.d_geo_bias)  # (B * N_q, d_geo_bias)
-
-            
-            # if self.sparse and attn_mask_flat is not None and not need_weights:
-            #     # Use sparse attention implementation
-            #     attn_output, attn_weights = self._sparse_attention(Q, K, V, attn_mask_flat, dist_qk_flat)  # (B, H, N_q, d_k)
-            # else:
-            #     # Equation 20: Compute attention logits with geometric bias
-            #     attn_output, attn_weights = self._dense_attention(Q, K, V, attn_mask_flat, dist_qk_flat, need_weights)  # (B, H, N_q, d_k)
-            
-            edge_Q = Q_flat[attn_edge_index[0]]
-            edge_K = K_flat[attn_edge_index[1]]
-            edge_V = V_flat[attn_edge_index[1]]
-            
-            scores = torch.einsum('bhd,bhd->bh', edge_Q, edge_K) / (self.head_dim ** 0.5)  # (E, H)
-            if False:# compute_attn_bias:
-                g_diff = torch.abs(geo_q_flat[attn_edge_index[0]] - geo_k_flat[attn_edge_index[1]])  # (E, d_geo_bias)
-                b_attn = self.f_geo(g_diff)  # (E, H)
-                scores = scores + b_attn  # Add geometric bias
-                
-            attn_weights = pyg_softmax(scores, attn_edge_index[0], num_nodes=B * N_q)  # (E, H)
-            
-            if need_weights:
-                attn_weights_out = attn_weights.view(-1, self.num_heads, N_q, N_k)  # (B, H, N_q, N_k)
-            else:
-                attn_weights_out = None
-            out = scatter(attn_weights.unsqueeze(-1) * edge_V, attn_edge_index[0],
-                        dim=0, dim_size=B * N_q, reduce='sum')
-            out = out.view(B, N_q, self.num_heads, self.head_dim)  # (B, N_q, H, d_k)
-            
         # combine heads
-        #attn_output = attn_output.transpose(1, 2).contiguous()  # (B, N_q, H, head_dim)
-        #attn_output = attn_output.view(B, N_q, self.embed_dim)  # (B, N_q, D_emb)
+        out = out.transpose(1, 2).contiguous()  # (B, N_q, H, d_k)
+        out = out.view(B, N_q, self.embed_dim)  # (B, N_q, D_emb)
         attn_output = self.W_O(out)  # (B, N_q, D_emb)
         attn_output = attn_output.view(B, N_q, self.embed_dim)  # Restore original shape
-        return attn_output, attn_weights_out   
+        return attn_output, attn_weights_out
+    
+    def _sparse_attention(
+        self,
+        Q: torch.Tensor,  # [B, H, N_q, d_k]
+        K: torch.Tensor,  # [B, H, N_k, d_k]
+        V: torch.Tensor,  # [B, H, N_k, d_k]
+        attn_edges: torch.Tensor,  # [2, E]
+        geo_q: Optional[torch.Tensor] = None,
+        geo_k: Optional[torch.Tensor] = None,
+        need_weights: bool = False
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        B, H, N_q, d_k = Q.shape
+        N_k = K.shape[2]
+        
+        # Flatten batch dimension
+        Q_flat = Q.transpose(1, 2).reshape(B * N_q, H, d_k)  # [B*N_q, H, d_k]
+        K_flat = K.transpose(1, 2).reshape(B * N_k, H, d_k)  # [B*N_k, H, d_k]
+        V_flat = V.transpose(1, 2).reshape(B * N_k, H, d_k)  # [B*N_k, H, d_k]
+        
+        # Extract edge features
+        edge_Q = Q_flat[attn_edges[0]]  # [E, H, d_k]
+        edge_K = K_flat[attn_edges[1]]  # [E, H, d_k]
+        edge_V = V_flat[attn_edges[1]]  # [E, H, d_k]
+        
+        # Equation 20: Scaled dot-product attention
+        attn_logits = (edge_Q * edge_K).sum(dim=-1) / (d_k ** 0.5)  # [E, H]
+        
+        # Equation 15: Geometry bias
+        if self.f_geo is not None and geo_k is not None and geo_q is not None:
+            geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
+            geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
+            
+            dist_qk = torch.abs(geo_q_flat[attn_edges[0]] - geo_k_flat[attn_edges[1]])  # [E, d_geo]
+            b_attn = self.f_geo(dist_qk)  # [E, H]
+            attn_logits = attn_logits + b_attn
+        
+        # Equation 22: Softmax per query node
+        attn_weights = pyg_softmax(attn_logits, attn_edges[0], num_nodes=B * N_q)  # [E, H]
+        attn_weights = self.dropout(attn_weights)
+        
+        # Equation 23: Aggregate values
+        weighted_V = attn_weights.unsqueeze(-1) * edge_V  # [E, H, d_k]
+        out = scatter(weighted_V, attn_edges[0], dim=0, dim_size=B * N_q, reduce='sum')  # [B*N_q, H, d_k]
+        out = out.view(B, N_q, H, d_k).transpose(1, 2)  # [B, H, N_q, d_k]
+        
+        # Optionally reconstruct dense weights (expensive!)
+        if need_weights:
+            attn_weights_dense = torch.zeros(B * N_q, N_k, H, device=Q.device)
+            attn_weights_dense[attn_edges[0], attn_edges[1]] = attn_weights
+            attn_weights_out = attn_weights_dense.view(B, N_q, N_k, H).permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
+        else:
+            attn_weights_out = None
+        
+        return out, attn_weights_out
 
     def _dense_attention(
         self,
-        Q: torch.Tensor,
-        K: torch.Tensor,
-        V: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
-        dist_qk: Optional[torch.Tensor] = None,
+        Q: torch.Tensor,  # [B, H, N_q, d_k]
+        K: torch.Tensor,  # [B, H, N_k, d_k]
+        V: torch.Tensor,  # [B, H, N_k, d_k]
+        attn_edges: Optional[torch.Tensor] = None,
+        geo_q: Optional[torch.Tensor] = None,
+        geo_k: Optional[torch.Tensor] = None,
         need_weights: bool = False
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Compute dense (full) attention between query, key, and value tensors.
-        This method implements the standard scaled dot-product attention mechanism with optional
-        geometry-aware bias and masking. It follows equations 15, 21, 22, and 23 from the paper.
-        Args:
-            Q: Query tensor of shape (B, H, N_q, d_k) where B is batch size, H is number of heads,
-                N_q is number of queries, and d_k is head dimension
-            K: Key tensor of shape (B, H, N_kv, d_k)
-            V: Value tensor of shape (B, H, N_kv, d_k)
-            attn_mask: Optional boolean/binary mask of shape (B, N_q, N_kv) where 0 indicates
-                positions to mask out. Defaults to None
-            dist_qk: Optional distance tensor of shape (B, N_q, N_kv, d_geo_bias) for computing
-                geometry-aware attention bias. Defaults to None
-            need_weights: Whether to return attention weights. Defaults to False
-        Returns:
-            A tuple containing:
-                - Output tensor of shape (B, H, N_q, d_k) with attended values
-                - Attention weights of shape (B, H, N_q, N_kv) if need_weights is True, else None
-        """
-        attn_logits = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, H, N_q, N_kv)
+        B, H, N_q, d_k = Q.shape
+        N_k = K.shape[2]
         
-        # Equation 15: Compute geometry-aware attention bias
-        if self.f_geo and dist_qk is not None:
-            b_attn = self.f_geo(dist_qk)  # (B, N_q, N_kv, H)
-            b_attn = b_attn.permute(0, 3, 1, 2)  # (B, H, N_q, N_kv)
-        else:
-            b_attn = 0
+        # Equation 20: QK^T / sqrt(d_k)
+        attn_logits = torch.matmul(Q, K.transpose(-2, -1)) / (d_k ** 0.5)  # [B, H, N_q, N_k]
+        
+        # Equation 15: Geometry bias
+        if self.f_geo is not None and geo_k is not None and geo_q is not None:
+            # Compute pairwise geometry features
+            geo_q_exp = geo_q.unsqueeze(2)  # [B, N_q, 1, d_geo]
+            geo_k_exp = geo_k.unsqueeze(1)  # [B, 1, N_k, d_geo]
+            dist_qk = torch.abs(geo_q_exp - geo_k_exp)  # [B, N_q, N_k, d_geo]
             
-        attn_logits = attn_logits + b_attn  # Add geometric bias
-        # Equation 21: Apply distance mask if provided
-        # if attn_mask is not None:
-        #     # Convert boolean/binary mask to attention mask (-inf for masked positions)
-        #     mask = attn_mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)  # (B, H, N_q, N_kv)
-        #     attn_logits = attn_logits.masked_fill(mask == 0, float('-inf'))
+            b_attn = self.f_geo(dist_qk)  # [B, N_q, N_k, H]
+            b_attn = b_attn.permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
+            attn_logits = attn_logits + b_attn
         
-        # Equation 22: Compute attention weights
-        attn_weights = F.softmax(attn_logits, dim=-1)  # (B, H, N_q, N_kv)
-        # Replace any NaNs (e.g., from fully masked rows) with zeros to avoid propagating NaNs
+        # Equation 21: Apply distance mask
+        if attn_edges is not None:
+            mask = torch.zeros(B, N_q, N_k, dtype=torch.bool, device=Q.device)
+            # Unflatten edges: assume edges are in flattened [0, B*N_q) and [0, B*N_k)
+            batch_idx = attn_edges[0] // N_q
+            q_idx = attn_edges[0] % N_q
+            k_idx = attn_edges[1] % N_k
+            mask[batch_idx, q_idx, k_idx] = True
+            
+            mask = mask.unsqueeze(1)  # [B, 1, N_q, N_k]
+            attn_logits = attn_logits.masked_fill(~mask, float('-inf'))
+        
+        # Equation 22: Softmax
+        attn_weights = F.softmax(attn_logits, dim=-1)
         attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
         attn_weights = self.dropout(attn_weights)
         
-        # Equation 23: Apply attention to values
-        out = torch.matmul(attn_weights, V)  # (B, H, N_q, d_k)
-        if need_weights:
-            return out, attn_weights
-        else:
-            return out, None
-    
-    # def _sparse_attention(
-    #     self,
-    #     Q: torch.Tensor,
-    #     K: torch.Tensor,
-    #     V: torch.Tensor,
-    #     attn_mask: torch.Tensor,
-    #     dist_qk: Optional[torch.Tensor]
-    # ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    #     """
-    #     Compute sparse attention by only considering valid neighbors specified by attention mask.
-    #     This method implements an efficient sparse attention mechanism that:
-    #     1. Identifies valid neighbors for each query using the attention mask
-    #     2. Extracts only the relevant key-value pairs for computation
-    #     3. Applies scaled dot-product attention with optional geometric bias
-    #     4. Returns the attention output for valid neighbors only
-    #     Args:
-    #         Q: Query tensor of shape (batch_size, num_heads, num_queries, head_dim)
-    #         K: Key tensor of shape (batch_size, num_heads, num_keys, head_dim)
-    #         V: Value tensor of shape (batch_size, num_heads, num_values, head_dim)
-    #         attn_mask: Binary attention mask of shape (batch_size, num_queries, num_keys) 
-    #             indicating valid connections (1 for valid, 0 for invalid)
-    #         dist_qk: Optional distance tensor for geometric bias computation
-    #     Returns:
-    #         A tuple containing:
-    #             - output: Attention output tensor of shape (batch_size, num_heads, num_queries, head_dim)
-    #             - None: Placeholder for attention weights (not returned in sparse implementation)
-    #     """
-    #     assert attn_mask is not None, "Attention mask must be provided for sparse attention."
-    #     B, H, N_q, d_k = Q.shape
-    #     _, _, N_kv, _ = K.shape
-    #     # Get maximum number of neighbors (k_max)
-    #     k_counts = attn_mask.sum(dim=-1)  # (B, N_q)
-    #     k_max = int(k_counts.max().long().item())
+        # Equation 23: Apply to values
+        out = torch.matmul(attn_weights, V)  # [B, H, N_q, d_k]
         
-    #     if k_max == 0:
-    #         # No valid neighbors for any query: return zeros.
-    #         # Note: this early return bypasses dropout used in the normal path.
-    #         #       Dropout on an all-zero tensor is a no-op, so skipping it here
-    #         #       does not change the output or gradients; this behavior is
-    #         #       intentional and documents the edge case explicitly.
-    #         #       However, because dropout normally consumes random numbers from
-    #         #       the global RNG, this shortcut does not advance the RNG state
-    #         #       in the same way as the full path. As a result, subsequent
-    #         #       stochastic operations that rely on the global RNG may differ
-    #         #       between runs with and without valid neighbors. If strict,
-    #         #       bitwise reproducibility of RNG-dependent behavior is required,
-    #         #       callers should account for this difference.
-    #         return torch.zeros(B, H, N_q, d_k, device=Q.device, dtype=Q.dtype), None
+        return out, attn_weights if need_weights else None
+
+
+    def _from_edges_to_mask(self, attn_edge_index: torch.Tensor, B: int, N_q: int, N_k: int) -> torch.Tensor:
+        """Convert edge indices to dense mask."""
+        mask = torch.zeros(B, N_q, N_k, dtype=torch.bool, device=attn_edge_index.device)
         
-    #     # Use topk to extract the indices of valid neighbors.
-    #     # To ensure deterministic behavior when multiple positions share the same
-    #     # mask value (binary 0/1), build a score tensor that:
-    #     #   - ranks all valid positions (mask==1) above all invalid ones (mask==0)
-    #     #   - breaks ties among valid positions by favoring lower key indices.
-    #     idx = torch.arange(N_kv, device=attn_mask.device).view(1, 1, N_kv)
-    #     idx = idx.expand_as(attn_mask)
-    #     # Valid positions get scores in (0, N_kv+1], invalid positions get <= 0.
-    #     scores = attn_mask * (N_kv + 1) - idx
-    #     _, neighbor_indices = torch.topk(scores, k=min(k_max, N_kv), dim=-1, largest=True)
-    #     # neighbor_indices: (B, N_q, k_max)
+        # Unflatten batch dimension from edges
+        batch_idx = attn_edge_index[0] // N_q
+        q_idx = attn_edge_index[0] % N_q
+        k_idx = attn_edge_index[1] % N_k
         
-    #     # Create mask for actually valid neighbors (since some queries may have < k_max neighbors)
-    #     # Gather the mask values at selected indices to see which are actually valid
-    #     neighbor_mask = torch.gather(attn_mask, 2, neighbor_indices) > 0  # (B, N_q, k_max)
-        
-    #     # Gather K and V for neighbors using torch.gather along the N_kv dimension
-    #     # neighbor_indices: (B, N_q, k_max) indexing the N_kv dimension
-    #     N_kv = K.size(2)
-    #     # Build gather index tensor over N_kv, expanded to (B, H, N_q, k_max, d_k)
-    #     kv_idx_gather = neighbor_indices.unsqueeze(1).unsqueeze(-1).expand(B, H, N_q, k_max, d_k)
-    #     # Expand K, V to include the query dimension before gathering
-    #     K_expanded = K.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
-    #     V_expanded = V.unsqueeze(2).expand(B, H, N_q, N_kv, d_k)
-    #     K_neighbors = torch.gather(K_expanded, 3, kv_idx_gather)  # (B, H, N_q, k_max, d_k)
-    #     V_neighbors = torch.gather(V_expanded, 3, kv_idx_gather)  # (B, H, N_q, k_max, d_k)
-    #     # Gather geometric bias: (B, H, N_q, N_kv) -> (B, H, N_q, k_max)
-        
-    #     # Compute attention scores: (B, H, N_q, k_max)
-    #     # Q: (B, H, N_q, d_k) -> (B, H, N_q, 1, d_k)
-    #     # K_neighbors: (B, H, N_q, k_max, d_k)
-    #     attn_logits = torch.matmul(Q.unsqueeze(3), K_neighbors.transpose(-2, -1)).squeeze(3)  # (B, H, N_q, k_max)
-    #     attn_logits = attn_logits / (d_k ** 0.5)
-        
-    #     # Compute geometry-aware attention bias for neighbors
-    #     if self.f_geo and dist_qk is not None:
-    #         idx_bias_expanded = neighbor_indices.unsqueeze(-1).expand(B, N_q, k_max, dist_qk.shape[-1])
-    #         dist_qk_neighbors = torch.gather(
-    #             dist_qk,
-    #             2,
-    #             idx_bias_expanded
-    #         )  # (B, N_q, k_max, D_r)
-    #         # self.f_geo maps per-query, per-neighbor distances to per-head bias
-    #         b_attn_neighbors = self.f_geo(dist_qk_neighbors)  # (B, N_q, k_max, H)
-    #         b_attn_neighbors = b_attn_neighbors.permute(0, 3, 1, 2)  # (B, H, N_q, k_max)
-    #     else:
-    #         b_attn_neighbors = 0
-    #     attn_logits = attn_logits + b_attn_neighbors
-        
-    #     # Mask out invalid neighbors (those beyond actual k for each query)
-    #     neighbor_mask_expanded = neighbor_mask.unsqueeze(1).expand(B, H, N_q, k_max)
-    #     attn_logits = attn_logits.masked_fill(~neighbor_mask_expanded, float('-inf'))
-        
-    #     # Softmax over valid neighbors
-    #     attn_weights = F.softmax(attn_logits, dim=-1)  # (B, H, N_q, k_max)
-    #     attn_weights = attn_weights.masked_fill(~neighbor_mask_expanded, 0.0)  # Zero out invalid
-    #     attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
-    #     attn_weights = self.dropout(attn_weights)
-        
-    #     # Apply attention to values: (B, H, N_q, k_max) x (B, H, N_q, k_max, d_k) -> (B, H, N_q, d_k)
-    #     output = torch.matmul(attn_weights.unsqueeze(3), V_neighbors).squeeze(3)
-    #     return output, None
+        mask[batch_idx, q_idx, k_idx] = True
+        return mask
