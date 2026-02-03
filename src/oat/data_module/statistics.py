@@ -33,14 +33,18 @@ class RunningFeatureStats:
         self.min = torch.full((num_features,), float('inf'), device=device)
         self.max = torch.full((num_features,), float('-inf'), device=device)
 
-    def update(self, x: torch.Tensor):
+    def update(self, x: torch.Tensor) -> None:
 
         # Ensure input is on the same device as the running statistics
         if x.device != self.count.device:
             x = x.to(self.count.device)
         # Move feature dimension to first axis and flatten remaining dims
         dims = list(range(x.dim()))
-        permute_order = [self.feature_dim] + [i for i in dims if i != self.feature_dim]
+        if self.feature_dim < 0:
+            feature_dim = x.dim() + self.feature_dim
+        else:
+            feature_dim = self.feature_dim
+        permute_order = [feature_dim] + [i for i in dims if i != feature_dim]
         x_flat = x.permute(*permute_order).contiguous().view(self.num_features, -1)
 
         # Mask NaNs
@@ -74,11 +78,11 @@ class RunningFeatureStats:
             self.count[f] = total_count
 
     @property
-    def variance(self):
+    def variance(self) -> torch.Tensor:
         return self.M2 / torch.clamp(self.count, min=1)
 
     @property
-    def std(self):
+    def std(self) -> torch.Tensor:
         return self.variance.sqrt()
 
     def get_standard_transform(self) -> Transform:
@@ -92,7 +96,7 @@ class RunningFeatureStats:
                                channel_dim=self.feature_dim)
 
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Reset all running statistics
         """
