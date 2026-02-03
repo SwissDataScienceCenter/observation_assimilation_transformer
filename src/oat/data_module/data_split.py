@@ -105,11 +105,9 @@ class TrainDataset(Dataset[Dict[str, Any]]):
             key_data[key] = observation_data[key][key_indices]
             query_data[key] = observation_data[key][query_indices]
             
-        split_data = {
-            'index': idx,
+        split_data = data | {
             'observation_data': key_data,
             'query_data': query_data,
-            'global_data': data['global_data'],
             'key_indices': key_indices,
             'query_indices': query_indices
         }
@@ -183,11 +181,10 @@ class EvalDataset(Dataset[Dict[str, Any]]):
         for key in observation_data:
             eval_data[key] = observation_data[key][self.eval_indices]
             observed_data[key] = observation_data[key][self.observed_indices]
-            
-        split_data = {
-            'index': idx,
+        
+        split_data = data | {
             'observation_data': observed_data,
-            'query_data': eval_data,
-            'global_data': data['global_data']
+            'query_data': eval_data
         }
+        
         return split_data
