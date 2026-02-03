@@ -17,6 +17,7 @@ from pyproj import Transformer
 from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
 from torch.utils.data import Dataset
+from oat.data_module import transform, statistics
 
 
 @dataclass
@@ -429,7 +430,77 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.sin(year_angle),
             np.cos(year_angle)
         ], dtype=self.config.dtype)
+        
+    def get_transform(self, num_data_points: int) -> transform.NestedTransform:
+        """
+        Compute data-driven transforms (log, standardization) from random samples.
+            num_data_points: Number of random data points to sample for statistics
+        Returns: NestedTransform to apply to dataset
+        """
+        apply_log = ['wind_gust', 'wind_speed']
+        log_indices = [i for i, var in enumerate(self.config.obs_vars) if var in apply_log]
 
+        # Create pre-transform with log
+        log_transform = transform.LogTransform(apply_to=log_indices, 
+                                               feature_dim=-1, 
+                                               offset=1)
+        pre_transform = transform.NestedTransform({
+            'observation_data': {
+                'obs': log_transform
+            }
+        })
+        
+        # Initialize statistics gatherers
+        stats_dict = {
+            'observation_data': {
+                'obs': statistics.RunningFeatureStats(
+                    num_features=len(self.config.obs_vars),
+                    feature_dim=-1,
+                ),
+                'topo': statistics.RunningFeatureStats(
+                    num_features=len(self.config.topo_vars),
+                    feature_dim=-3,
+                ),
+                'geo': statistics.RunningFeatureStats(
+                    num_features=self.station_geo.shape[-1],
+                    feature_dim=-1,
+                ),
+            },
+            'global_data': {
+                'global_field': statistics.RunningFeatureStats(
+                    num_features=len(self.config.nwp_vars) + len(self.config.topo_vars),
+                    feature_dim=-3,
+                )
+            
+            }
+        }
+        # Gather statistics
+        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
+            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
+                stats_gatherer.update(sample)
+            elif isinstance(stats_gatherer, dict):
+                for key, stat in stats_gatherer.items():
+                    gather_stats(sample[key], stat)
+                    
+        rand_indices = np.random.choice(len(self), size=num_data_points, replace=False)
+        for idx in rand_indices:
+            sample = self[idx]
+            pre_transformed_sample = pre_transform(sample)
+            gather_stats(pre_transformed_sample, stats_dict)
+        
+        transform_dict = {
+            'observation_data': {
+                'obs': transform.ComposedTransform([log_transform, 
+                                                    stats_dict['observation_data']['obs'].get_standard_transform()]),
+                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            },
+            'global_data': {
+                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+            }
+        }
+        post_transform = transform.NestedTransform(transform_dict)
+        return post_transform
 
 # Example usage
 if __name__ == "__main__":
