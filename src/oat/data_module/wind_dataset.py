@@ -53,8 +53,7 @@ def get_time_embedding(datetimes: np.ndarray) -> np.ndarray:
     seconds = (
         dt.hour * 3600 +
         dt.minute * 60 +
-        dt.second +
-        dt.microsecond * 1e-6
+        dt.second
     )
     day_angle = 2 * np.pi * seconds / seconds_in_day
     
@@ -123,7 +122,7 @@ class OATBatch(TypedDict):
     global_data: Dict[str, torch.Tensor]
 
 
-class WindDataset(Dataset[OATBatch]):
+class WindDataset(Dataset[Dict[str, Any]]):
     """Custom Dataset for observation-based downscaling.    """
     
     def __init__(self, 
@@ -218,23 +217,16 @@ class WindDataset(Dataset[OATBatch]):
         
     def get_query(
         self,
-        idx: torch.Tensor,
         query_coords: torch.Tensor,
-        # input_data: dict[str, xr.Dataset],
         query_obs: torch.Tensor | None = None
-    ) -> QueryBatch:
-        time = self.times[idx]
+    ) -> Dict[str, Any]:
         datasets = self._open_per_worker()
         if datasets is None:
             datasets = self._load_data_lazily()
         input_data = datasets['X']
         topo_q = []
-        for key, dataset in input_data.items():
-            if key not in self.constant_input:
-                data = dataset.sel(time=time).load()
-                data_tensor = torch.tensor(data.to_array().values, dtype=self.dtype)
-                # topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
-            else:
+        for key, _ in input_data.items():
+            if key in self.constant_input:
                 data_tensor = torch.from_numpy(self.constant_data_cache[key][self.constant_var_indices[key]]).to(self.dtype)
                 topo_q.append(get_context_data(query_coords, data_tensor, self.input_grids[key], self.input_extent[key]))
                  
@@ -243,7 +235,7 @@ class WindDataset(Dataset[OATBatch]):
             query_obs = torch.nan_to_num(query_obs, nan=0.0)
         else:
             mask_obs = None
-        query: QueryBatch = {
+        query = {
             'coords': query_coords,
             'topo': torch.cat(topo_q, dim=1),
             'geo': query_coords, # TODO: add elevation later
@@ -275,18 +267,7 @@ class WindDataset(Dataset[OATBatch]):
             self._cache[wid] = self._load_data_lazily()
         return self._cache[wid]
     
-    def _split_station_indices(self, total_stations: int, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        rng = np.random.default_rng(self.seed + idx)
-        indices = np.arange(total_stations)
-        # TODO: More modes and more flexible splits
-        if self.station_split_mode == 'random':
-            rng.shuffle(indices)
-            split = total_stations // 2
-            return indices[:split], indices[split:]
-        else:
-            raise ValueError(f"Unknown station_split_mode: {self.station_split_mode}")
-    
-    def __getitem__(self, idx: int) -> OATBatch:
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
         time = self.times[idx]
         datasets = self._open_per_worker()
         if datasets is None:
@@ -317,14 +298,14 @@ class WindDataset(Dataset[OATBatch]):
             
         mask = ~torch.isnan(Y)
         Y = torch.nan_to_num(Y, nan=0.0)
-        observation_data: ObservationBatch = {
+        observation_data = {
             'coords': station_pos,
             'topo': torch.cat(topo_obs, dim=1),
             'geo': station_pos, # TODO: add elevation later
             'obs': Y,
             'mask_obs': mask
         }
-        out: OATBatch = {
+        out = {
             'index': idx,
             'observation_data': observation_data,
             'global_data': global_data
