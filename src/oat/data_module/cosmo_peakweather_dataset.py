@@ -482,9 +482,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 for key, stat in stats_gatherer.items():
                     gather_stats(sample[key], stat)
                     
-        rand_indices = np.random.choice(len(self), size=num_data_points, replace=False)
+        rand_indices = torch.randperm(len(self))[:num_data_points]
+        
         for idx in rand_indices:
-            sample = self[idx]
+            sample = self[int(idx)]
             pre_transformed_sample = pre_transform(sample)
             gather_stats(pre_transformed_sample, stats_dict)
         
