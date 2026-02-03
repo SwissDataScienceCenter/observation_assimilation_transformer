@@ -6,7 +6,8 @@ from typing import Any, Dict
 def create_splits(dataset: Dataset[Dict[str, Any]],
                   val_fraction: float = 0.2,
                   test_fraction: float = 0.2,
-                  train_split_fraction: float = 0.8) -> tuple[Dataset[Dict[str, Any]], 
+                  train_split_fraction: float = 0.8,
+                  seed: int | None = None) -> tuple[Dataset[Dict[str, Any]], 
                                                               Dataset[Dict[str, Any]], 
                                                               Dataset[Dict[str, Any]]]:
     """
@@ -17,13 +18,19 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
         dataset: The input dataset containing stations to be split.
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
-        train_split_fraction: Fraction of time series data to use for training within the training set (default: 0.8).
+        train_split_fraction: Fraction of training stations to use as observed stations (vs query stations) in each training sample (default: 0.8).
+        seed: Optional random seed for reproducibility (default: None).
     Returns:
         A tuple containing the train, validation, and test datasets.
     """
+    
+    assert val_fraction + test_fraction < 1.0, "Validation and test fractions must sum to less than 1."
+    assert val_fraction >= 0.0 and test_fraction >= 0.0, "Validation and test fractions must be non-negative."
+    
     num_stations = len(dataset.stations)
     indices = np.arange(num_stations, dtype=int)
-    indices = indices[torch.randperm(num_stations)]
+    rng = torch.Generator().manual_seed(seed) if seed is not None else None
+    indices = indices[torch.randperm(num_stations, generator=rng).numpy()]
     
     test_size = int(num_stations * test_fraction)
     val_size = int(num_stations * val_fraction)
@@ -32,7 +39,9 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     val_indices = indices[num_stations - (val_size + test_size):num_stations - test_size]
     test_indices = indices[num_stations - test_size:]
     
-    train_dataset = TrainDataset(dataset, train_indices, split_fraction=train_split_fraction)
+    assert len(train_indices) > 0 and len(val_indices) > 0 and len(test_indices) > 0, "Each split must contain at least one station."
+    
+    train_dataset = TrainDataset(dataset, train_indices, split_fraction=train_split_fraction, seed=seed)
     val_dataset = EvalDataset(dataset, val_indices, train_indices)
     test_dataset = EvalDataset(dataset, test_indices, np.concatenate((train_indices, val_indices)))
     
@@ -49,7 +58,7 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         dataset: The underlying dataset to wrap
         train_indices: Array of station indices to use for training
         split_fraction: Fraction of stations to use as observed/key stations (default: 0.8)
-        seed: Random seed for reproducible station splits (default: 42)
+        seed: Optional random seed for reproducibility (default: None)
     Attributes:
         dataset: The wrapped dataset
         train_indices: Indices of training stations
@@ -67,12 +76,13 @@ class TrainDataset(Dataset[Dict[str, Any]]):
     def __init__(self,
                  dataset: Dataset[Dict[str, Any]],
                  train_indices: np.ndarray,
-                 split_fraction: float = 0.8):
+                 split_fraction: float = 0.8,
+                 seed: int | None = None):
         self.dataset = dataset
         self.train_indices = train_indices
         self.stations = dataset.stations[self.train_indices]
         self.split_fraction = split_fraction
-        self.rng = torch.Generator()
+        self.rng = torch.Generator().manual_seed(seed) if seed is not None else None
         
     def __len__(self) -> int:
         return len(self.dataset)
@@ -92,7 +102,7 @@ class TrainDataset(Dataset[Dict[str, Any]]):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         data = self.dataset[idx]
         
-        permuted_indices = self.train_indices[torch.randperm(len(self.train_indices), generator=self.rng)]
+        permuted_indices = self.train_indices[torch.randperm(len(self.train_indices), generator=self.rng).numpy()]
         split_point = self.num_observed_stations
         key_indices = permuted_indices[:split_point]
         query_indices = permuted_indices[split_point:]
