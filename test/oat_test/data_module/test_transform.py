@@ -138,7 +138,7 @@ class TestLogTransform:
     def test_log_serialization(self) -> None:
         transform = LogTransform(offset=0.5)
         d = transform.to_dict()
-        assert d == {"type": "LogTransform", "offset": 0.5}
+        assert d == {"type": "LogTransform", "offset": 0.5, "feature_dim": -1, "apply_to": None}
         restored = LogTransform.from_dict(d)
         assert restored.offset == 0.5
 
