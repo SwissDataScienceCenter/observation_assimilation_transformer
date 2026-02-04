@@ -17,6 +17,7 @@ from pyproj import Transformer
 from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
 from torch.utils.data import Dataset
+from oat.data_module import transform, statistics
 
 
 @dataclass
@@ -110,7 +111,6 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Station observations
         self.obs_ds = PeakWeatherDataset(
             root=self.config.obs_path,
-            pad_missing_values=False,
             station_type='meteo_station'
         )
         
@@ -262,11 +262,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 "times available (self.times is empty). Ensure times are set "
                 "before loading observations."
             )
-        self.obs_df = self.obs_ds.get_observations(
+        self.obs_df, self.obs_mask = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1],
             parameters=self.config.obs_vars,
             stations=self.stations,
+            return_mask=True
         )
         
         # Station metadata
@@ -335,6 +336,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Get observations for this time, with explicit error handling
         try:
             df_time = self.obs_df.xs(time)
+            df_mask_time = self.obs_mask.xs(time)
         except KeyError as exc:
             raise KeyError(
                 f"Observations for time {time!r} not found in obs_df index."
@@ -345,6 +347,14 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             index=self.stations
         )
         obs_values = df_final.values  # (N_stations, C_obs)
+        df_mask_unstacked = df_mask_time.unstack()
+        df_mask_final = df_mask_unstacked.reindex(
+            columns=self.config.obs_vars,
+            index=self.stations
+        )
+        obs_mask = df_mask_final.values  # (N_stations, C_obs)
+        #obs_mask[np.isnan(obs_mask)] = False  # Treat NaN in mask as False
+        # obs_values[~obs_mask] = 0  # Set missing values to NaN for masking
         
         # Extract topographic patches at station locations
         topo_field = torch.from_numpy(
@@ -362,8 +372,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             'coords': self.station_coords,
             'geo': self.station_geo,
             'topo': topo_patches,
-            'obs': torch.from_numpy(obs_values).to(self.config.dtype),
-            'mask_obs': torch.from_numpy(~np.isnan(obs_values)),
+            'obs': torch.from_numpy(obs_values.copy()).to(self.config.dtype),
+            'mask_obs': torch.from_numpy(obs_mask.copy()).to(self.config.dtype),
         }
         
         return {
@@ -429,7 +439,79 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.sin(year_angle),
             np.cos(year_angle)
         ], dtype=self.config.dtype)
+        
+    def get_transform(self, num_data_points: int) -> tuple[transform.NestedTransform, transform.Transform]:
+        """
+        Compute data-driven transforms (log, standardization) from random samples.
+            num_data_points: Number of random data points to sample for statistics
+        Returns: NestedTransform to apply to batches, and output_transform for obs-only.
+        """
+        apply_log = ['wind_gust', 'wind_speed']
+        log_indices = [i for i, var in enumerate(self.config.obs_vars) if var in apply_log]
 
+        # Create pre-transform with log
+        log_transform = transform.LogTransform(apply_to=log_indices, 
+                                               feature_dim=-1, 
+                                               offset=1)
+        pre_transform = transform.NestedTransform({
+            'observation_data': {
+                'obs': log_transform
+            }
+        })
+        
+        # Initialize statistics gatherers
+        stats_dict = {
+            'observation_data': {
+                'obs': statistics.RunningFeatureStats(
+                    num_features=len(self.config.obs_vars),
+                    feature_dim=-1,
+                ),
+                'topo': statistics.RunningFeatureStats(
+                    num_features=len(self.config.topo_vars),
+                    feature_dim=-3,
+                ),
+                'geo': statistics.RunningFeatureStats(
+                    num_features=self.station_geo.shape[-1],
+                    feature_dim=-1,
+                ),
+            },
+            'global_data': {
+                'global_field': statistics.RunningFeatureStats(
+                    num_features=len(self.config.nwp_vars) + len(self.config.topo_vars),
+                    feature_dim=-3,
+                )
+            
+            }
+        }
+        # Gather statistics
+        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
+            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
+                stats_gatherer.update(sample)
+            elif isinstance(stats_gatherer, dict):
+                for key, stat in stats_gatherer.items():
+                    gather_stats(sample[key], stat)
+                    
+        rand_indices = torch.randperm(len(self))[:num_data_points]
+        
+        for idx in rand_indices:
+            sample = self[int(idx)]
+            pre_transformed_sample = pre_transform(sample)
+            gather_stats(pre_transformed_sample, stats_dict)
+        
+        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
+            
+        transform_dict = {
+            'observation_data': {
+                'obs':output_transform,
+                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            },
+            'global_data': {
+                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+            }
+        }
+        post_transform = transform.NestedTransform(transform_dict)
+        return post_transform, output_transform
 
 # Example usage
 if __name__ == "__main__":

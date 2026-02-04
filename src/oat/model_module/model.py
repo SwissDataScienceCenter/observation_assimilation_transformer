@@ -99,6 +99,7 @@ class OATConfig:
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
+    num_samples: int = 100
     
     @classmethod
     def default(cls) -> 'OATConfig':
@@ -110,7 +111,8 @@ class OATConfig:
             fusion_layer=FusionLayerConfig(out_channels=d_model),
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
-            output_head=OutputHeadConfig(in_features=d_model)
+            output_head=OutputHeadConfig(in_features=d_model),
+            num_samples=100
         )
 
 
@@ -195,6 +197,7 @@ class OAT(nn.Module):
             target_features=config.output_head.target_features,
             loss_fn=config.output_head.loss_fn,
         )
+        self.num_samples = config.num_samples
         
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
@@ -234,8 +237,9 @@ class OAT(nn.Module):
         self,
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
-        query_data: Dict[str, torch.Tensor]
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        query_data: Dict[str, torch.Tensor],
+        num_samples: int | None = None
+    ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through OAT model.
         
@@ -260,8 +264,16 @@ class OAT(nn.Module):
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
-        out = self._forward(global_data, observation_data, query_data)
-        return self.output_head(out)
+            
+        oat_out = self._forward(global_data, observation_data, query_data)
+        out = self.output_head(oat_out)
+        
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)          
+        out['samples'] = samples
+        return out
     
     def forward_with_loss(
         self,
@@ -269,7 +281,8 @@ class OAT(nn.Module):
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
-        target_mask_obs: torch.Tensor
+        target_mask_obs: torch.Tensor,
+        num_samples: int | None = None
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
@@ -284,8 +297,17 @@ class OAT(nn.Module):
             predictions: Dict with model outputs
             loss: Scalar loss tensor
         """
-        out = self._forward(global_data, observation_data, query_data)
-        return self.output_head.loss(out, target_obs, target_mask_obs)
+        
+        oat_out = self._forward(global_data, observation_data, query_data)
+        out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)
+            
+        out['samples'] = samples
+        return out, loss
 
     def _forward(
         self,

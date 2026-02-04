@@ -1,7 +1,13 @@
 from oat.predictor_module import OATPredictor
 from oat.model_module import OAT
 import torch
+import os
+import pytest
 
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
 def test_simple_predictor(batch_fixture):
 
     model = OAT()
