@@ -1,7 +1,7 @@
 import os
 import pytest
 import torch
-from oat.model_module.global_encoder import SwinUNETRGlobalEncoder
+from oat.model_module.global_encoder import SwinUNETRGlobalEncoder, UNetGlobalEncoder
 from typing import Any, Dict
 
 @pytest.fixture
@@ -10,6 +10,17 @@ def swin_unetr_params() -> Dict[str, Any]:
         'out_channels': 4,
         'spatial_dims': 2,
         'patch_size': 2,
+    }
+    
+    
+@pytest.fixture
+def unet_params() -> Dict[str, Any]:
+    return {
+        'out_channels': 4,
+        'spatial_dims': 2,
+        'channels': (8, 16, 32, 64),
+        'strides': (1, 1, 1),
+        'num_res_units': 2,
     }
 
 
@@ -45,9 +56,27 @@ def encoder_from_batch(batch_fixture: dict[str, Any], swin_unetr_params: Dict[st
         swin_unetr_params=params,
         field_extent=field_extent
     )
+    
+@pytest.fixture
+def unet_encoder(img: torch.Tensor, unet_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> UNetGlobalEncoder:
+    params = unet_params.copy()
+    params['in_channels'] = img.shape[-3]
+    return UNetGlobalEncoder(
+        unet_params=params,
+        field_extent=field_extent
+    )
+    
+@pytest.fixture
+def unet_encoder_from_batch(batch_fixture: dict[str, Any], unet_params: Dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> UNetGlobalEncoder:
+    params = unet_params.copy()
+    params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+    return UNetGlobalEncoder(
+        unet_params=params,
+        field_extent=field_extent
+    )
 
-def test_swin_unetr_global_encoder_initialization(encoder: SwinUNETRGlobalEncoder, 
-                                                  field_extent: Dict[str, torch.Tensor]) -> None:
+@pytest.mark.parametrize("encoder", ["encoder", "unet_encoder"], indirect=True)
+def test_swin_unetr_global_encoder_initialization(encoder: object, field_extent: Dict[str, torch.Tensor]) -> None:
     assert encoder.model is not None
     assert encoder.field_extent == field_extent
 
@@ -84,7 +113,8 @@ def test_forward_output_shape(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor
     assert output.shape[2] == 4  # out_channels from swin_unetr_params
 
 
-def test_forward_different_batch_sizes(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
+@pytest.mark.parametrize("encoder", ["encoder", "unet_encoder"], indirect=True)
+def test_forward_different_batch_sizes(encoder: object, img: torch.Tensor) -> None:
     for batch_size in [1, 3, 4,]:
         num_stations = 5
         global_data = {
@@ -98,7 +128,8 @@ def test_forward_different_batch_sizes(encoder: SwinUNETRGlobalEncoder, img: tor
         assert output.shape[0] == batch_size
 
 
-def test_forward_different_station_counts(encoder: SwinUNETRGlobalEncoder, img: torch.Tensor) -> None:
+@pytest.mark.parametrize("encoder", ["encoder", "unet_encoder"], indirect=True)
+def test_forward_different_station_counts(encoder: object, img: torch.Tensor) -> None:
     batch_size = 2
     for num_stations in [1, 10, 50]:
         global_data = {
@@ -115,7 +146,8 @@ def test_forward_different_station_counts(encoder: SwinUNETRGlobalEncoder, img: 
     os.getenv("CI") == "true",
     reason="Too heavy for CI"
 )        
-def test_with_batch(encoder_from_batch: SwinUNETRGlobalEncoder, batch_fixture: dict[str, Any]) -> None:
+@pytest.mark.parametrize("encoder_from_batch", ["encoder_from_batch", "unet_encoder_from_batch"], indirect=True)
+def test_with_batch(encoder_from_batch: object, batch_fixture: dict[str, Any]) -> None:
     global_data = batch_fixture["global_data"]
     local_data = batch_fixture["observation_data"]
     batch_size, num_stations = local_data["coords"].shape[:2]
