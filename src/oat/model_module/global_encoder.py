@@ -28,6 +28,7 @@ class BaseGlobalEncoder(torch.nn.Module, ABC):
     
     
 class UNetGlobalEncoder(BaseGlobalEncoder):
+    """Global encoder using UNet architecture."""
     
     def __init__(self, *, unet_params: Dict[str, Any], field_extent: Dict[str, Any], **kwargs: Any) -> None:
         """
