@@ -439,23 +439,36 @@ class QuantileOutputHead(BaseOutputHead):
         
         return {"qval_pred": quantiles, "tau": tau, "coeffs": coeffs}  # [..., Q, target_features]
     
-    def _compute_inv_cdf(self, q: torch.Tensor, coeffs: torch.Tensor) -> torch.Tensor:
+    def _compute_inv_cdf(
+        self,
+        q: torch.Tensor,
+        coeffs: torch.Tensor,
+        min_vals: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Compute the inverse CDF (quantile function) for given quantiles and coefficients.
         
         Args:
             q: Quantile levels [..., Q]
             coeffs: Coefficients of Bernstein basis [..., degree+1, target_features]
+            min_vals: Optional minimum value offset [..., target_features] to be added
+                to the Bernstein polynomial sum, i.e.
+                    Q(tau) = min_vals + sum_i c_i * B_i(tau)
+        
         Returns:
             Quantile values [..., Q, target_features]
         """
         
         basis = self._bernstein_basis(q)  # [..., Q, degree+1]
         quantiles = torch.einsum(
-            "...qk,...kn->...qn", 
-            basis, 
-            coeffs
+            "...qk,...kn->...qn",
+            basis,
+            coeffs,
         )  # [..., Q, target_features]
+
+        if min_vals is not None:
+            # Broadcast min_vals [..., target_features] across the quantile dimension.
+            quantiles = quantiles + min_vals.unsqueeze(-2)
         return quantiles
     
     def compute_innovation(
