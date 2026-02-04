@@ -180,7 +180,7 @@ class LinearOutputHead(BaseOutputHead):
             Samples [B, S, num_samples, target_features]
         """
         pred = out['val_pred']  # [B, S, target_features]
-        samples = pred.unsqueeze(-2)  # [B, S, num_samples, target_features]
+        samples = pred.unsqueeze(-2).expand(-1, -1, num_samples, -1)  # [B, S, num_samples, target_features]
         return samples
     
 class GaussianOutputHead(BaseOutputHead):
