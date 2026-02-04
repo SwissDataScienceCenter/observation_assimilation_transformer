@@ -437,7 +437,12 @@ class QuantileOutputHead(BaseOutputHead):
             coeffs
         )  # [..., Q, target_features]
         
-        return {"qval_pred": quantiles, "tau": tau, "coeffs": coeffs}  # [..., Q, target_features]
+        return {
+            "qval_pred": quantiles,
+            "tau": tau,
+            "coeffs": coeffs,
+            "min_vals": min_vals,
+        }  # [..., Q, target_features]
     
     def _compute_inv_cdf(
         self,
