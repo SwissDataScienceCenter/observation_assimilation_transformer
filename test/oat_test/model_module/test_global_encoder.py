@@ -76,7 +76,7 @@ def unet_encoder_from_batch(batch_fixture: dict[str, Any], unet_params: Dict[str
     )
 
 @pytest.mark.parametrize("encoder", ["encoder", "unet_encoder"], indirect=True)
-def test_swin_unetr_global_encoder_initialization(encoder: object, field_extent: Dict[str, torch.Tensor]) -> None:
+def test_global_encoder_initialization(encoder: object, field_extent: Dict[str, torch.Tensor]) -> None:
     assert encoder.model is not None
     assert encoder.field_extent == field_extent
 
