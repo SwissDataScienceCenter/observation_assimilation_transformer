@@ -22,11 +22,15 @@ from oat.model_module import (
 @dataclass
 class GlobalEncoderConfig:
     """Configuration for global encoder (Eq. 1)."""
+    type: str = "UNet"
     in_channels: int = 8    # data dependent
     out_channels: int = 32
     spatial_dims: int = 2
     patch_size: int = 2
     window_size: int = 7
+    channels: Tuple[int, ...] = (16, 32, 64, 128)
+    strides: Tuple[int, ...] = (1, 1, 1)
+    num_res_units: int = 2
     field_extent_min: Tuple[float, float] = (2255500., 840500.)    # data dependent
     field_extent_max: Tuple[float, float] = (2964500., 1479500.)   # data dependent
 
@@ -156,19 +160,37 @@ class OAT(nn.Module):
         d_topo = config.topographic_encoder.out_channels
         
         # Global encoder (Eq. 1)
-        self.global_encoder = global_encoder.SwinUNETRGlobalEncoder(
-            swin_unetr_params={
-                'in_channels': config.global_encoder.in_channels,
-                'out_channels': config.global_encoder.out_channels,
-                'spatial_dims': config.global_encoder.spatial_dims,
-                'patch_size': config.global_encoder.patch_size,
-                'window_size': config.global_encoder.window_size,
-            },
-            field_extent={
-                'min': torch.tensor(config.global_encoder.field_extent_min),
-                'max': torch.tensor(config.global_encoder.field_extent_max)
-            }
-        )
+        if config.global_encoder.type == "UNet":
+            self.global_encoder = global_encoder.UNetGlobalEncoder(
+                unet_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'channels': config.global_encoder.channels,
+                    'strides': config.global_encoder.strides,
+                    'num_res_units': config.global_encoder.num_res_units,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        elif config.global_encoder.type == "SwinUNETR":
+            self.global_encoder = global_encoder.SwinUNETRGlobalEncoder(
+                swin_unetr_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'patch_size': config.global_encoder.patch_size,
+                    'window_size': config.global_encoder.window_size,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        else:
+            raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet' and 'SwinUNETR'.")
         
         # Topographic encoder (Eq. 4-5)
         self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(

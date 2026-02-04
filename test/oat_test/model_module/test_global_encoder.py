@@ -141,6 +141,17 @@ def test_forward_different_station_counts(encoder: object, img: torch.Tensor) ->
         output = encoder(global_data, local_data)
         assert output.shape[1] == num_stations
         
+def test_unet_output_size(unet_encoder: UNetGlobalEncoder, img: torch.Tensor) -> None:
+    batch_size = 2
+    global_data = {
+        "global_field": img[:batch_size]
+    }
+    output = unet_encoder.apply_model(global_data)
+    expected_height = img.shape[-2]
+    expected_width = img.shape[-1]
+    assert output.shape[-2] == expected_height
+    assert output.shape[-1] == expected_width
+        
 
 @pytest.mark.skipif(
     os.getenv("CI") == "true",

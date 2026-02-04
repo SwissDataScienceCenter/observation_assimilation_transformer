@@ -50,9 +50,15 @@ class UNetGlobalEncoder(BaseGlobalEncoder):
         Returns:
             Encoded global features at local positions [B, S, D].
         """
-        global_field = global_data["global_field"]  # Expecting shape (B, C, H, W)
-        output = self.model(global_field)
+        output = self.apply_model(global_data)
         # interpolation
+        emb = self.interpolate(output, local_data)
+        return emb
+    
+    def apply_model(self, global_data: Dict[str, Any]) -> torch.Tensor:
+        return self.model(global_data["global_field"])
+    
+    def interpolate(self, output: torch.Tensor, local_data: Dict[str, Any]) -> torch.Tensor:
         pos_transformed = pos_transform(local_data['coords'], 
                                 self.field_extent['min'], 
                                 self.field_extent['max']).unsqueeze(2)
