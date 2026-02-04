@@ -66,7 +66,7 @@ class BaseOutputHead(nn.Module, ABC):
         raise NotImplementedError()
     
     @abstractmethod
-    def sample(self, out: dict, num_samples: int) -> torch.Tensor:
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
         """
         Generate samples from the output distribution.
         
@@ -170,7 +170,7 @@ class LinearOutputHead(BaseOutputHead):
         loss = self.loss_normalization_per_sample(loss, mask)
         return out, loss
     
-    def sample(self, out: Dict, num_samples: int) -> torch.Tensor:
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
         """ Generate samples from the output distribution.
 
         Args:
@@ -266,7 +266,7 @@ class GaussianOutputHead(BaseOutputHead):
         return preds, loss
     
     
-    def sample(self, out: Dict, num_samples: int) -> torch.Tensor:
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
         """ Generate samples from the output distribution.
 
         Args:
