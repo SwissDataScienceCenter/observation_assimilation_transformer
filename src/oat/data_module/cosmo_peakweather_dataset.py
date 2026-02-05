@@ -20,6 +20,14 @@ from torch.utils.data import Dataset
 from oat.data_module import transform, statistics
 
 
+dtype_map = {
+    "float32": torch.float32,
+    "float64": torch.float64,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
+
+
 @dataclass
 class CosmoPeakWeatherConfig:
     """Configuration for COSMO-PeakWeather dataset"""
@@ -52,7 +60,7 @@ class CosmoPeakWeatherConfig:
     clear_cache: bool = False
     
     # Data type
-    dtype: torch.dtype = torch.float32
+    dtype: str = "float32"
 
 
 class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
@@ -102,11 +110,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             self.nwp_ds.name_to_index[v] for v in self.config.nwp_vars
         ]
         
+        
         # Reference grid for spatial alignment
         self.ref_nwp_ds = xr.open_zarr(self.config.ref_nwp_path)
-        
+        topo_vars = [str(var) for var in self.config.topo_vars]
         # Topography (constant)
-        self.topo_ds = xr.open_zarr(self.config.topo_path)[self.config.topo_vars]
+        self.topo_ds = xr.open_zarr(self.config.topo_path)[topo_vars]
         
         # Station observations
         self.obs_ds = PeakWeatherDataset(
@@ -242,16 +251,17 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             for var in self.config.topo_vars
             if var in topo_data_vars
         ]
+        topo_vars = [str(var) for var in self.config.topo_vars]
         
         # Project topo onto reference NWP grid for global field
-        topo_interp = self.topo_ds[self.config.topo_vars].interp(
+        topo_interp = self.topo_ds[topo_vars].interp(
             x=self.ref_nwp_ds.x,
             y=self.ref_nwp_ds.y,
             method='nearest'
         ).to_array().values
         
         topo_interp = np.nan_to_num(topo_interp, nan=0.0)
-        self.topo_on_nwp_grid = torch.from_numpy(topo_interp).to(self.config.dtype)
+        self.topo_on_nwp_grid = torch.from_numpy(topo_interp).to(dtype_map[self.config.dtype])
         
     def _load_observations(self) -> None:
         """Load station observations for entire time period"""
@@ -273,16 +283,16 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Station metadata
         self.station_coords = torch.tensor(
             self.obs_ds.stations_table.loc[self.stations][
-                ['swiss_easting', 'swiss_northing']
+                self.config.coord_vars
             ].values,
-            dtype=self.config.dtype
+            dtype=dtype_map[self.config.dtype]
         )
         
         self.station_geo = torch.tensor(
             self.obs_ds.stations_table.loc[self.stations][
-                ['swiss_easting', 'swiss_northing', 'dem']
+                self.config.geo_vars
             ].values,
-            dtype=self.config.dtype
+            dtype=dtype_map[self.config.dtype]
         )
         
     def __len__(self) -> int:
@@ -322,7 +332,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         nwp_field = values[:, self.nwp_indices]
         nwp_field = torch.from_numpy(
             nwp_field.reshape(len(self.nwp_var_idx), *self.nwp_shape)
-        ).to(self.config.dtype)
+        ).to(dtype_map[self.config.dtype])
         
         # Concatenate with topo
         global_field = torch.cat([nwp_field, self.topo_on_nwp_grid], dim=0)
@@ -359,7 +369,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Extract topographic patches at station locations
         topo_field = torch.from_numpy(
             self.topo_data[self.topo_var_idx]
-        ).to(self.config.dtype)
+        ).to(dtype_map[self.config.dtype])
         
         topo_patches = self._extract_patches(
             self.station_coords,
@@ -372,8 +382,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             'coords': self.station_coords,
             'geo': self.station_geo,
             'topo': topo_patches,
-            'obs': torch.from_numpy(obs_values.copy()).to(self.config.dtype),
-            'mask_obs': torch.from_numpy(obs_mask.copy()).to(self.config.dtype),
+            'obs': torch.from_numpy(obs_values.copy()).to(dtype_map[self.config.dtype]),
+            'mask_obs': torch.from_numpy(obs_mask.copy()).to(dtype_map[self.config.dtype]),
         }
         
         return {
@@ -438,7 +448,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.cos(day_angle),
             np.sin(year_angle),
             np.cos(year_angle)
-        ], dtype=self.config.dtype)
+        ], dtype=dtype_map[self.config.dtype])
         
     def get_transform(self, num_data_points: int) -> tuple[transform.NestedTransform, transform.Transform]:
         """
@@ -502,6 +512,11 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             
         transform_dict = {
             'observation_data': {
+                'obs':output_transform,
+                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            },
+            'query_data': {
                 'obs':output_transform,
                 'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
                 'geo': stats_dict['observation_data']['geo'].get_standard_transform(),

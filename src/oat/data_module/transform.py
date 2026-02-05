@@ -323,6 +323,7 @@ class NestedTransform(nn.Module):
             transform_dict: Dictionary with the same structure as the data.
                            Values are either Transform instances or nested dicts of transforms.
         """
+        super().__init__()
         self.transform_dict = transform_dict
 
     def _apply_recursive(self, sample: dict | torch.Tensor, transform_spec: dict | Transform) -> dict | torch.Tensor:
