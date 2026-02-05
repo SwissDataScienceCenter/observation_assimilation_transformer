@@ -28,15 +28,16 @@ obs_vars:
   - wind_u
   - wind_v
 
+coord_vars:
+  - swiss_easting
+  - swiss_northing
+
+geo_vars:
+  - swiss_easting
+  - swiss_northing
+  - dem
 # Stations (null = all available stations)
 stations: null
-# Example with specific stations:
-# stations:
-#   - ABO
-#   - AEG
-#   - WYN
-#   - ZER
-#   - KLO
 
 # Time range (null = full available range)
 start_date: null  # Format: 'YYYY-MM-DD'
@@ -54,5 +55,4 @@ use_time_embedding: true
 cache_dir: ".cache_constant_inputs"
 clear_cache: false
 
-# Data type (use float32 for training, float16 for inference)
-# Note: dtype is configured in code (expects a torch.dtype like torch.float32); do not set it here as a string.
+dtype: float32

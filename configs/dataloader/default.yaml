@@ -1,0 +1,5 @@
+batch_size: 32
+num_workers: 2
+prefetch_factor: 2
+persistent_workers: true
+pin_memory: false

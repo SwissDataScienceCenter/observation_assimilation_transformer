@@ -1,5 +1,7 @@
 defaults:
-  - data: wind_data
+  - dataset: cosmo_peakweather
+  - split: default
+  - dataloader: default
 
 seed: 42
 
