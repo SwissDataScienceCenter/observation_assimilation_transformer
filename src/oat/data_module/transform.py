@@ -39,6 +39,9 @@ class Transform:
         d = yaml.safe_load(yaml_str)
         return Transform.from_dict(d)
     
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+    
     
 @register_transform
 class IdentityTransform(Transform):
@@ -296,6 +299,10 @@ class ComposedTransform(Transform):
         transforms = [Transform.from_dict(td) for td in d["transforms"]]
         return cls(transforms)
     
+    def __repr__(self) -> str:
+        chain = " -> ".join(t.__class__.__name__ for t in self.transforms)
+        return f"{self.__class__.__name__}({chain})"
+    
 class NestedTransform:
     """Applies transforms to a nested dictionary of tensors.
     
@@ -396,6 +403,21 @@ class NestedTransform:
         instance.transform_dict = instance._dict_from_serializable(d["transform_dict"])
         return instance
     
+    def __repr__(self) -> str:
+            def render(d: dict, indent: int = 0) -> list[str]:
+                lines = []
+                pad = "  " * indent
+                for key, value in d.items():
+                    if isinstance(value, Transform):
+                        lines.append(f"{pad}{key}: {repr(value)}")
+                    elif isinstance(value, dict):
+                        lines.append(f"{pad}{key}:")
+                        lines.extend(render(value, indent + 1))
+                return lines
+
+            body = "\n".join(render(self.transform_dict))
+            return f"{self.__class__.__name__}(\n{body}\n)"
+
 def transform_dict_to_yaml(transform_dict: dict[str, Transform]) -> str:
     transform_dicts = {key: tr.to_dict() for key, tr in transform_dict.items()}
     td = {'transforms': transform_dicts}
@@ -407,3 +429,4 @@ def transform_dict_from_yaml(yaml_str: str) -> dict[str, Transform]:
     for key, tr_dict in d['transforms'].items():
         transform_dict[key] = Transform.from_dict(tr_dict)
     return transform_dict
+
