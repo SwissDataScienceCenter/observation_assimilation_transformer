@@ -92,6 +92,8 @@ class OATPredictor(pl.LightningModule):
         # y_hat_unorm shape: [batch,station,sample,feature]
         # target_obs shape: [batch,station,feature]
         y_hat_unorm = self._unnormalize_prediction(y_hat)
+        # TODO targets are to be unormalized too
+        
         # TODO log metrics with unorm value
 
 
