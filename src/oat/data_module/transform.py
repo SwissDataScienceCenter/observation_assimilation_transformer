@@ -309,7 +309,7 @@ class ComposedTransform(Transform):
         chain = " -> ".join(t.__class__.__name__ for t in self.transforms)
         return f"{self.__class__.__name__}({chain})"
     
-class NestedTransform:
+class NestedTransform(nn.Module):
     """Applies transforms to a nested dictionary of tensors.
     
     The transform_dict should mirror the structure of the data dictionary.

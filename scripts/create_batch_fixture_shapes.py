@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import yaml
+from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherConfig, CosmoPeakWeatherDataset
+from oat.data_module.data_split import create_splits
 import torch
 from torch.utils.data import DataLoader
 import pandas as pd
@@ -7,26 +10,39 @@ from omegaconf import OmegaConf
 from src.oat.data_module import factory
 
 def main():
-    data_config = OmegaConf.load('/scratch/mch/cdonner/observation_assimilation_transformer/configs/data/wind_data.yaml')
-    dataset = factory.create_dataset(data_config)
-    loader = DataLoader(dataset, batch_size=16, shuffle=False)
-    batch = next(iter(loader))
+    config_path = "/scratch/mch/cdonner/observation_assimilation_transformer/configs/data/cosmo_peakweather_data.yaml"
+    with open(config_path, 'r') as f:
+        config_dict = yaml.safe_load(f)
+        
+    config = CosmoPeakWeatherConfig(**config_dict)
 
-    df = create_batch_fixture_table(batch=batch)
+    dataset = CosmoPeakWeatherDataset(config)
+    train_dataset, val_dataset, test_dataset = create_splits(dataset)
+    datasets = [train_dataset, val_dataset, test_dataset]
+    labels = ["train_dataset", "val_dataset", "test_dataset"]
+    
 
-    ROOT = Path(__file__).resolve().parents[1]
+    for ds, label in zip(datasets, labels):
+    
+        loader = DataLoader(ds, batch_size=16, shuffle=False)
+        batch = next(iter(loader))
 
-    out_file = ROOT / "test" / "oat_test" / "batch_shapes.pickle"
 
-    out_file.parent.mkdir(parents=True, exist_ok=True)
+        df = create_batch_fixture_table(batch=batch)
 
-    df.to_pickle(out_file)
+        ROOT = Path(__file__).resolve().parents[1]
 
-    print(f"Saved batch shape table to {out_file}")
+        out_file = ROOT / "test" / "oat_test" / f"batch_shapes_{label}.pickle"
 
-    df = pd.read_pickle(out_file)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    print("With content:\n", df)
+        df.to_pickle(out_file)
+
+        print(f"Saved batch shape table to {out_file}")
+
+        df = pd.read_pickle(out_file)
+
+        print("With content:\n", df)
 
 
 def create_batch_fixture_table(batch: dict[str, dict[str, torch.Tensor]]) -> pd.DataFrame:
