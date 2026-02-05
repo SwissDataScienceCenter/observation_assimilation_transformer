@@ -5,10 +5,14 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
+from oat.data_module.transform import Transform
+
 class OATPredictor(pl.LightningModule):
 
     def __init__(self,
                  oat_model: nn.Module,
+                 input_transform: Transform,
+                 output_transform: Transform,
                  lr: float = 1e-3,
                  training_stations_split: float = 0.2,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
@@ -19,7 +23,7 @@ class OATPredictor(pl.LightningModule):
         super().__init__()
 
         # Ignore the model itself in hparams but update manually with its cfg
-        self.save_hyperparameters(ignore=['oat_model'])
+        self.save_hyperparameters(ignore=['oat_model', 'input_transform', 'output_transform'])
         self.hparams.update({'model_cfg': oat_model.config})
 
         self.training_stations_split = training_stations_split
@@ -30,52 +34,40 @@ class OATPredictor(pl.LightningModule):
         self.scheduler_params = scheduler_params or {}
 
         self.model = oat_model
+        self.input_transform = input_transform
+        self.output_transform = output_transform
 
     def _normalize_batch(self, batch):
         # TODO implement
-        pass
+        return self.input_transform(batch)
 
-    def _unnormalize_prediction(self, pred):
-        # TODO implement
-        pass
+    def _unnormalize_prediction(self, y_hat: dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Given the model's prediction, de-normalizes the predicted samples
+        and return them.
 
+        Args:
+            y_hat: the model's prediction containing samples
 
-    def _split_queries_key_values(self, batch):
-        assert batch['observation_data']['obs'] is not None
+        Returns:
+           The tensor with de-normalized samples.
+        """
+        return self.output_transform(y_hat['samples'])
 
-        n_stations = batch['observation_data']['coords'].shape[1]
-        n_select = int(self.training_stations_split * n_stations)
-
-        q_station_idx = torch.randperm(n_stations)[:n_select]
-        kv_station_idx = torch.randperm(n_stations)[n_select:]
-
-        all_data = batch['observation_data']
-        # select key-value stations
-        batch['observation_data'] = {
-                k: v.index_select(1, kv_station_idx) if v.shape[1]  == n_stations else v
-                for k,v in all_data.items()
-        }
-        # select query stations and drop observational keys (which will be targets)
-        batch['query_data'] = {
-                k: v.index_select(1, q_station_idx) if v.shape[1]  == n_stations else v
-                for k,v in all_data.items() 
-        }
-
-        target_obs = batch['query_data'].pop('obs', None)
-        target_mask_obs = batch['query_data'].pop('mask_obs', None)
-
-        return batch, target_obs, target_mask_obs
-
-    def forward(self, batch, query_locations = None, return_loss = False):
+    def forward(self, batch, query_locations = None, return_loss_and_targets = False):
 
         if query_locations is None:
-            # If no query locations are given, a subset of the batch is used as query
-            batch, target_obs, target_mask_obs = self._split_queries_key_values(batch=batch)
+            # If no query locations are given, we assume that they are given by the dataloader
+            assert "query_data" in batch.keys(), "Batch does not contain query data and no query\
+                locations have been provided"
+
+            target_obs = batch['query_data'].pop('obs', None)
+            target_mask_obs = batch['query_data'].pop('mask_obs', None)
         else:
             # TODO implement
             pass
 
-        if not return_loss:
+        if not return_loss_and_targets:
             out = self.model.forward(global_data=batch['global_data'],
                                observation_data=batch['observation_data'],
                                query_data=batch['query_data'])
@@ -86,25 +78,28 @@ class OATPredictor(pl.LightningModule):
             out, loss = self.model.forward_with_loss(global_data=batch['global_data'],
                                                      observation_data=batch['observation_data'],
                                                      query_data=batch['query_data'],
-                                                     target_obs=target_mask_obs,
+                                                     target_obs=target_obs,
                                                      target_mask_obs=target_mask_obs)
 
-            return out, loss
+            return out, loss, target_obs, target_mask_obs
 
     def training_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
 
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
+        # y_hat_unorm shape: [batch,station,sample,feature]
+        # target_obs shape: [batch,station,feature]
         y_hat_unorm = self._unnormalize_prediction(y_hat)
         # TODO log metrics with unorm value
+
 
         return loss
 
     def validation_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
 
@@ -115,7 +110,7 @@ class OATPredictor(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("test_loss", loss)
 

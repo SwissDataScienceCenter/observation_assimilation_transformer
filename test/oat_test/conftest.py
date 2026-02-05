@@ -2,6 +2,9 @@ import pytest
 import pandas as pd
 from pathlib import Path
 import torch
+import pickle
+
+from oat.data_module.transform import Transform
 
 # Path to the table containing the shapes and dtypes.
 TABLE_PATH = Path(__file__).resolve().parent / "batch_shapes_test_dataset.pickle"
@@ -57,3 +60,18 @@ def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
 def batch_fixture() -> dict[str, dict[str, torch.Tensor]]:
     """Provides a dummy batch based on the saved batch_shapes.pickle table."""
     return generate_batch_from_table()
+
+@pytest.fixture
+def transform_fixture() -> tuple[Transform, Transform]:
+    """Provides a dummy transform."""
+    
+    in_pickle_file = Path(__file__).resolve().parent / "input_transform.pickle"
+    out_pickle_file = Path(__file__).resolve().parent / "output_transform.pickle"
+    
+    with open(in_pickle_file, "rb") as f:
+        in_transform = pickle.load(f) 
+        
+    with open(out_pickle_file, "rb") as f:
+        out_transform = pickle.load(f) 
+        
+    return in_transform, out_transform

@@ -68,7 +68,7 @@ class TransformerConfig:
     dropout: float = 0.1
     activation: str = "GELU"
     sparse_attn: bool = True
-    d_geo_bias: int = 2   # data dependent
+    d_geo_bias: int = 3   # data dependent
     dim_geo_bias_feedforward: int = 16
     activation_geo_bias: str = "ReLU"
 
@@ -86,7 +86,7 @@ class MaskingConfig:
 class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
     in_features: int = 64
-    target_features: int = 1  # data dependent
+    target_features: int = 4  # data dependent
     loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
     min_std_val: float = 1e-3
