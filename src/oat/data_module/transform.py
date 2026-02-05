@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import yaml
 from typing import Any
 
@@ -8,11 +9,11 @@ def register_transform(cls: type['Transform']) -> type['Transform']:
     TRANSFORM_REGISTRY[cls.__name__] = cls
     return cls
 
-class Transform:
+class Transform(nn.Module):
     """Base class for data transformations."""
 
-    def __call__(self, sample: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError("Transform __call__ method not implemented.")
+    def forward(self, sample: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError("Transform forward method not implemented.")
 
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("Transform inverse method not implemented.")
@@ -47,7 +48,7 @@ class Transform:
 class IdentityTransform(Transform):
     """A no-op transformation that returns the input unchanged."""
 
-    def __call__(self, sample: torch.Tensor) -> torch.Tensor:
+    def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Return the sample unchanged."""
         return sample
 
@@ -74,31 +75,30 @@ class TranslateScaleTransform(Transform):
             translate (tuple): Translation values for each dimension.
             scale (tuple): Scaling factors for each dimension.
         """
-        self.translate = translate
-        self.scale = scale
+        super().__init__()
+        self.register_buffer("translate", translate)
+        self.register_buffer("scale", scale)
         self.channel_dim = channel_dim
 
-    def __call__(self, sample: torch.Tensor) -> torch.Tensor:
+    def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Apply translation and scaling to the sample."""
-        translate = self.translate.to(sample.device)
-        scale = self.scale.to(sample.device)
+
         # Align translate/scale shape with sample shape
         shape = [1] * sample.dim()
         shape[self.channel_dim] = -1
-        translate = translate.view(shape)
-        scale = scale.view(shape)
+        translate = self.translate.view(shape)
+        scale = self.scale.view(shape)
         return (sample + translate) * scale
         
 
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         """Revert the translation and scaling applied to the sample."""
-        translate = self.translate.to(sample.device)
-        scale = self.scale.to(sample.device)
+
         # Align translate/scale shape with sample shape
         shape = [1] * sample.dim()
         shape[self.channel_dim] = -1
-        translate = translate.view(shape)
-        scale = scale.view(shape)
+        translate = self.translate.view(shape)
+        scale = self.scale.view(shape)
         return sample / scale - translate
 
     # -------- YAML serialization --------
@@ -128,9 +128,10 @@ class StandardNormalizeTransform(TranslateScaleTransform):
             mean (tuple): Mean values for each dimension.
             std (tuple): Standard deviation values for each dimension.
         """
-        self.mean = mean
-        self.std = std
         super().__init__(translate=-mean, scale=1./std, channel_dim=channel_dim)
+        self.register_buffer("mean", mean)
+        self.register_buffer("std", std)
+
         
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,11 +160,13 @@ class MinMaxTransform(TranslateScaleTransform):
             data_max (tuple): Maximum values for each dimension.
             feature_range (tuple): Desired range of transformed data.
         """
-        self.data_min = data_min
-        self.data_max = data_max
+
         scale = 1 / (data_max - data_min)
         translate = -data_min
         super().__init__(translate=translate, scale=scale, channel_dim=channel_dim)
+        
+        self.register_buffer("data_min", data_min)
+        self.register_buffer("data_max", data_max)
         
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,12 +198,15 @@ class LogTransform(Transform):
             feature_dim (int): Dimension of features in the input tensor.
             apply_to (list[int] | None): Indices of features to apply the transform to. If None, applies to all features.
         """
+        super().__init__()
+        
+        # TODO should we make EVERY attribute a buffer?
         self.offset = offset
         self.feature_dim = feature_dim
         
         # Convert to tensor once during initialization if provided
         if apply_to is not None:
-            self.apply_to = torch.tensor(apply_to, dtype=torch.long)
+            self.register_buffer("apply_to", torch.tensor(apply_to, dtype=torch.long))
             # Precompute boolean mask for efficient indexing
             self._use_mask = True
         else:
@@ -213,7 +219,7 @@ class LogTransform(Transform):
     def _inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
         return torch.exp(x) - self.offset
 
-    def __call__(self, sample: torch.Tensor) -> torch.Tensor:
+    def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Apply logarithmic transformation to the sample."""
         if not self._use_mask:
             return self._forward_transform(sample)
@@ -222,8 +228,7 @@ class LogTransform(Transform):
         result = sample.clone()
         
         # Use advanced indexing for efficient in-place update
-        # Move apply_to to same device as sample
-        indices = self.apply_to.to(sample.device)
+        indices = self.apply_to
         transformed = result.index_select(self.feature_dim, indices).copy_(
             self._forward_transform(sample.index_select(self.feature_dim, indices))
         )
@@ -240,7 +245,7 @@ class LogTransform(Transform):
         result = sample.clone()
         
         # Use advanced indexing for efficient in-place update
-        indices = self.apply_to.to(sample.device)
+        indices = self.apply_to
         transformed = result.index_select(self.feature_dim, indices).copy_(
             self._inverse_transform(sample.index_select(self.feature_dim, indices))
         )
@@ -274,9 +279,10 @@ class ComposedTransform(Transform):
         Args:
             transforms (list): List of Transform instances to concatenate.
         """
+        super().__init__()
         self.transforms = transforms
 
-    def __call__(self, sample: torch.Tensor) -> torch.Tensor:
+    def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Apply all transformations in sequence to the sample."""
         for transform in self.transforms:
             sample = transform(sample)
@@ -357,7 +363,7 @@ class NestedTransform:
             # Mismatch between structure - return unchanged
             return sample
 
-    def __call__(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
+    def forward(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
         """Apply transforms to the nested dictionary."""
         return self._apply_recursive(sample, self.transform_dict)
 
