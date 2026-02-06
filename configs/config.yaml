@@ -2,6 +2,7 @@ defaults:
   - dataset: cosmo_peakweather
   - split: default
   - dataloader: default
+  - model: oat
 
 seed: 42
 

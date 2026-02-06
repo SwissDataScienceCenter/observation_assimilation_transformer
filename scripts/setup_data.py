@@ -1,19 +1,22 @@
 from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 from oat.data_module.data_split import create_splits
+from oat.model_module import model
+from oat.data_module.transform import NestedTransform, Transform
 from omegaconf import DictConfig
 import hydra
 import torch
+from torch.utils.data import DataLoader
 import logging
 from pathlib import Path
 import pickle
+from typing import Tuple, Dict
 
-logging.basicConfig(level=logging.INFO)
-
-@hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
-def main(cfg: DictConfig) -> None:
-    # set global seed
-    torch.manual_seed(cfg.seed)
-    logger = logging.getLogger(__name__)
+def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> Tuple[CosmoPeakWeatherDataset, 
+                                                            DataLoader, 
+                                                            DataLoader, 
+                                                            DataLoader, 
+                                                            NestedTransform, 
+                                                            Transform]:
     logger.info("Setting up dataset and dataloaders...")
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     logger.info(f"Dataset size: {len(dataset)} samples")
@@ -21,27 +24,69 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Train size: {len(train_dataset)} samples")
     logger.info(f"Validation size: {len(val_dataset)} samples")
     logger.info(f"Test size: {len(test_dataset)} samples")
-    train_loader = torch.utils.data.DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
-    val_loader = torch.utils.data.DataLoader(val_dataset, shuffle=False, **cfg.dataloader)
-    test_loader = torch.utils.data.DataLoader(test_dataset, shuffle=False, **cfg.dataloader)
+    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
+    val_loader = DataLoader(val_dataset, shuffle=False, **cfg.dataloader)
+    test_loader = DataLoader(test_dataset, shuffle=False, **cfg.dataloader)
     logger.info(f"Train loader batches: {len(train_loader)}")
     logger.info(f"Validation loader batches: {len(val_loader)}")
     logger.info(f"Test loader batches: {len(test_loader)}")
     
     # TODO: Move the number somewhere to config
-    input_transform, output_transform = train_dataset.get_transform(num_data_points=cfg.dataset.data_points_for_stats,
+    input_transform, output_transform = train_dataset.get_transform(num_data_points=64,#cfg.dataset.data_points_for_stats,
                                                                     dataloader=train_loader)
     logger.info("Transforms set up successfully.")
-    
-    # Example: Visualize a sample from the training dataset
-    sample = train_dataset[0]
-    input_data = input_transform(sample)
-    output_data = output_transform(sample['observation_data']['obs'])
-    
-    logger.info(f"Input Data Keys: {input_data.keys()}")
-    logger.info(f"Output Data Keys: {output_data.shape}")
-    
-    
+    return dataset, train_loader, val_loader, test_loader, input_transform, output_transform
+
+
+def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OAT:
+    model_cfg = cfg.model
+    data_cfg = cfg.dataset
+    logger.info("Setting up model configs...")
+    global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
+    global_encoder_cfg = model.GlobalEncoderConfig(
+        **model_cfg.global_encoder, 
+        in_channels=global_input_chans,
+        field_extent_max=field_extent['max'],
+        field_extent_min=field_extent['min']
+        )
+    topography_encoder_cfg = model.TopographicEncoderConfig(
+        **model_cfg.topographic_encoder,
+        in_channels=len(data_cfg.topo_vars)
+        )
+    fusion_layer_cfg = model.FusionLayerConfig(
+        **model_cfg.fusion_layer,
+        out_channels=model_cfg.d_model)
+    masking_cfg = model.MaskingConfig(**model_cfg.masking)
+    transformer_cfg = model.TransformerConfig(
+        d_geo_bias=len(data_cfg.geo_vars),
+        d_model=model_cfg.d_model,
+        **model_cfg.transformer)
+    output_head_cfg = model.OutputHeadConfig(
+        target_features=len(data_cfg.obs_vars),
+        in_features=model_cfg.d_model,
+        **model_cfg.output_head)
+    oat_config = model.OATConfig(
+        global_encoder=global_encoder_cfg,
+        topographic_encoder=topography_encoder_cfg,
+        fusion_layer=fusion_layer_cfg,
+        masking=masking_cfg,
+        transformer=transformer_cfg,
+        output_head=output_head_cfg,
+        num_samples=model_cfg.num_samples
+    )
+    logger.info("Initializing model...")
+    model_instance = model.OAT(oat_config)
+    return model_instance
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
+def main(cfg: DictConfig) -> None:
+    # set global seed
+    torch.manual_seed(cfg.seed)
+    dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     if cfg.get("save_transforms_fixtures", False):
         assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
 
@@ -60,7 +105,11 @@ def main(cfg: DictConfig) -> None:
         with open(out_file, "wb") as f:
             pickle.dump(output_transform, f)
 
+        
         logger.info(f"Saved output_transform object to {out_file}")
+    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
+    oat_model = setup_model(cfg, field_extent, logger)
+    logger.info("Model set up successfully.")
     
         batch = next(iter(train_loader))
         out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"

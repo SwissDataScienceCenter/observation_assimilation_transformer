@@ -1,0 +1,11 @@
+defaults:
+  - global_encoder: unet
+  - topographic_encoder: default
+  - fusion_layer: default
+  - masking: knn
+  - transformer: oat_block
+  - output_head: linear
+  
+d_model: 64
+num_samples: 100
+

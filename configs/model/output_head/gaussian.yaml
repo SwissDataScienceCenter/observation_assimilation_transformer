@@ -1,0 +1,4 @@
+in_features: 64 # should be defined by transfomer output
+#target_features: int = 4  # data dependent
+std_fn: softplus
+min_std_val: 1e-3

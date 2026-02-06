@@ -22,8 +22,10 @@ from oat.model_module import (
 @dataclass
 class GlobalEncoderConfig:
     """Configuration for global encoder (Eq. 1)."""
+    in_channels: int  # data dependent
+    field_extent_min: Tuple[float, float] #= (2255500., 840500.)    # data dependent
+    field_extent_max: Tuple[float, float] #= (2964500., 1479500.)   # data dependent
     type: str = "UNet"
-    in_channels: int = 8    # data dependent
     out_channels: int = 32
     spatial_dims: int = 2
     patch_size: int = 2
@@ -31,14 +33,13 @@ class GlobalEncoderConfig:
     channels: Tuple[int, ...] = (16, 32, 64, 128)
     strides: Tuple[int, ...] = (1, 1, 1)
     num_res_units: int = 2
-    field_extent_min: Tuple[float, float] = (2255500., 840500.)    # data dependent
-    field_extent_max: Tuple[float, float] = (2964500., 1479500.)   # data dependent
+
 
 
 @dataclass
 class TopographicEncoderConfig:
     """Configuration for topographic encoder (Eq. 4-5)."""
-    in_channels: int = 5   # data dependent
+    in_channels: int  # data dependent
     out_channels: int = 64
     n_layers: int = 3
     initial_hw: Tuple[int, int] = (32, 32)
@@ -60,6 +61,7 @@ class FusionLayerConfig:
 @dataclass
 class TransformerConfig:
     """Configuration for OAT transformer block (Eq. 17-25)."""
+    d_geo_bias: int
     d_model: int = 64
     nhead: int = 4
     num_encoder_layers: int = 2
@@ -68,7 +70,6 @@ class TransformerConfig:
     dropout: float = 0.1
     activation: str = "GELU"
     sparse_attn: bool = True
-    d_geo_bias: int = 3   # data dependent
     dim_geo_bias_feedforward: int = 16
     activation_geo_bias: str = "ReLU"
 
@@ -85,8 +86,9 @@ class MaskingConfig:
 @dataclass
 class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
+    target_features: int
+    type: str
     in_features: int = 64
-    target_features: int = 4  # data dependent
     loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
     min_std_val: float = 1e-3
@@ -214,11 +216,14 @@ class OAT(nn.Module):
         )
         
         # Output head for innovation computation (Eq. 8-12)
-        self.output_head = output_head.LinearOutputHead(
-            in_features=config.output_head.in_features,
-            target_features=config.output_head.target_features,
-            loss_fn=config.output_head.loss_fn,
-        )
+        if config.output_head.type == "linear":
+            self.output_head = output_head.LinearOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                loss_fn=config.output_head.loss_fn,
+            )
+        else:
+            raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear'.")
         self.num_samples = config.num_samples
         
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
