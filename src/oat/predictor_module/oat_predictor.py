@@ -14,7 +14,6 @@ class OATPredictor(pl.LightningModule):
                  input_transform: Transform,
                  output_transform: Transform,
                  lr: float = 1e-3,
-                 training_stations_split: float = 0.2,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
                  scheduler_class: Type[LRScheduler] | None = None,
@@ -26,7 +25,6 @@ class OATPredictor(pl.LightningModule):
         self.save_hyperparameters(ignore=['oat_model', 'input_transform', 'output_transform'])
         self.hparams.update({'model_cfg': oat_model.config})
 
-        self.training_stations_split = training_stations_split
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
 

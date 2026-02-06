@@ -25,6 +25,7 @@ monai = "^1.5.1"
 einops = "^0.8.1"
 torch-cluster = {version = "1.6.3", source = "torch-wheels"}
 peakweather = {git = "https://github.com/MeteoSwiss/PeakWeather.git", tag = "v0.2.0"}
+wandb = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=24.0"

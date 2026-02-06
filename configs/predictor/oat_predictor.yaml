@@ -1,0 +1,9 @@
+lr: 1e-4
+kwargs:
+  lr: 1e-3
+  optimizer_class: "torch.optim.Adam"
+  optimizer_params:
+    weight_decay: 0.01
+  scheduler_class: "torch.optim.lr_scheduler.CosineAnnealingLR"
+  scheduler_params:
+    T_max: ${trainer.max_epochs}

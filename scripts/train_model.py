@@ -2,14 +2,24 @@ from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 from oat.data_module.data_split import create_splits
 from oat.model_module import model
 from oat.data_module.transform import NestedTransform, Transform
+from oat.predictor_module import OATPredictor
 from omegaconf import DictConfig
 import hydra
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 import logging
 from pathlib import Path
 import pickle
 from typing import Tuple, Dict
+from omegaconf import OmegaConf
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateMonitor
+)
+from pytorch_lightning.loggers import WandbLogger
 
 def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> Tuple[CosmoPeakWeatherDataset, 
                                                             DataLoader, 
@@ -78,6 +88,33 @@ def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> 
     model_instance = model.OAT(oat_config)
     return model_instance
 
+def setup_predictor(model: nn.Module, transforms: tuple[Transform], cfg: DictConfig):
+
+    from importlib import import_module
+    
+    # optimizer
+    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
+    module = import_module(module_path)
+    optim_cls = getattr(module, class_name)
+    
+    # scheduler
+    module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+    module = import_module(module_path)
+    sched_cls = getattr(module, class_name)
+    
+
+    predictor = OATPredictor(
+        oat_model=model,
+        input_transform=transforms[0],
+        output_transform=transforms[1],
+        lr=cfg.predictor.lr,
+        optimizer_class=optim_cls,
+        optimizer_params=cfg.predictor.kwargs.optimizer_params,
+        scheduler_class=sched_cls,
+        scheduler_params=cfg.predictor.kwargs.scheduler_params
+    )
+    
+    return predictor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -85,6 +122,7 @@ logger = logging.getLogger(__name__)
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # set global seed
+    OmegaConf.resolve(cfg) # for referenced fields
     torch.manual_seed(cfg.seed)
     dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     if cfg.get("save_transforms_fixtures", False):
@@ -118,6 +156,44 @@ def main(cfg: DictConfig) -> None:
     oat_model = setup_model(cfg, field_extent, logger)
     logger.info("Model set up successfully.")
     
+    
+    
+    predictor = setup_predictor(model=oat_model,
+                                transforms=[input_transform, output_transform],
+                                cfg=cfg)
+    # Callbacks
+    
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        verbose=True,
+        dirpath="checkpoints/",
+        filename="best-model-{epoch:02d}-{val_loss:.4f}"
+    )
+    # NOTE maybe use cfg for patience
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        mode="min",
+        verbose=True
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+    
+    # Logger 
+    wandb_logger = WandbLogger(name='first_run',
+                         project='oat',
+                         experiment='first_experiment',
+                         log_model=False)
+    
+    trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,
+                                                early_stop_callback,
+                                                lr_monitor],
+                                    logger=wandb_logger)
+
+    trainer.fit(model=predictor,
+                train_dataloaders=train_loader,
+                val_dataloaders=val_loader)
                 
 if __name__ == "__main__":
     # Usage:

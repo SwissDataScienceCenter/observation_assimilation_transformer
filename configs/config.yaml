@@ -3,6 +3,8 @@ defaults:
   - split: default
   - dataloader: default
   - model: oat
+  - trainer: default
+  - predictor: oat_predictor
 
 seed: 42
 
