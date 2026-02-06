@@ -12,6 +12,7 @@ env/
 data/processed/
 data/raw/
 notebooks/wip/
+outputs
 
 # Jupyter
 .ipynb_checkpoints/

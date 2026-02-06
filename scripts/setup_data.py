@@ -4,6 +4,8 @@ from omegaconf import DictConfig
 import hydra
 import torch
 import logging
+from pathlib import Path
+import pickle
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,5 +41,24 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Input Data Keys: {input_data.keys()}")
     logger.info(f"Output Data Keys: {output_data.shape}")
     
+    if cfg.get("save_transforms_fixtures", False):
+        logger.info("Saving examples of transforms as fixtures ...")
+        ROOT = Path(__file__).resolve().parents[1]
+        out_file = ROOT / "test" / "oat_test" / f"input_transform.pickle"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(out_file, "wb") as f:
+            pickle.dump(input_transform, f)
+
+        logger.info(f"Saved input_transform object to {out_file}")
+        
+        out_file = ROOT / "test" / "oat_test" / f"output_transform.pickle"
+        
+        with open(out_file, "wb") as f:
+            pickle.dump(output_transform, f)
+
+        logger.info(f"Saved output_transform object to {out_file}")
+    
 if __name__ == "__main__":
+    # Usage python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10
     main()
