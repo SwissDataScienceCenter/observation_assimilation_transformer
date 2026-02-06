@@ -56,3 +56,5 @@ cache_dir: ".cache_constant_inputs"
 clear_cache: false
 
 dtype: float32
+
+data_points_for_stats: 4096

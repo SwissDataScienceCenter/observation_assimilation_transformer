@@ -144,7 +144,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # Time axis
         all_times = pd.to_datetime(self.nwp_ds.dates).tz_localize('UTC')
-        
+
         # Filter by date range if specified
         if self.config.start_date is not None or self.config.end_date is not None:
             start = pd.to_datetime(self.config.start_date).tz_localize('UTC') if self.config.start_date else all_times.min()
@@ -161,6 +161,13 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         else:
             self.times = all_times
             self.time_indices = np.arange(len(all_times))
+            
+        
+        missing_dates = self.nwp_ds.missing
+        if missing_dates is not None and len(missing_dates) > 0:
+            missing_idx = np.isin(self.time_indices, np.asarray(missing_dates))
+            self.times = self.times[~missing_idx]
+            self.time_indices = self.time_indices[~missing_idx]
         
     def _setup_spatial_grids(self) -> None:
         """Setup coordinate systems and KDTree for NWP regridding"""

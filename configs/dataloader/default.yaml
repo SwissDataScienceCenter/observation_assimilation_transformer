@@ -1,4 +1,4 @@
-batch_size: 32
+batch_size: 64
 num_workers: 4
 prefetch_factor: 2
 persistent_workers: true
