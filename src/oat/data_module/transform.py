@@ -189,7 +189,7 @@ class LogTransform(Transform):
     """Applies logarithmic transformation to the input data."""
 
     def __init__(self, 
-                 offset: float = 0., 
+                 offset: float = 1e-4, 
                  feature_dim: int = -1,
                  apply_to: list[int] | None = None) -> None:
         """
