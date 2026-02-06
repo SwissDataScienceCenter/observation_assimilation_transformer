@@ -41,10 +41,13 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Input Data Keys: {input_data.keys()}")
     logger.info(f"Output Data Keys: {output_data.shape}")
     
+    
     if cfg.get("save_transforms_fixtures", False):
+        assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
+
         logger.info("Saving examples of transforms as fixtures ...")
         ROOT = Path(__file__).resolve().parents[1]
-        out_file = ROOT / "test" / "oat_test" / f"input_transform.pickle"
+        out_file = ROOT / "test" / "oat_test" / f"input_transform_fixture.pickle"
         out_file.parent.mkdir(parents=True, exist_ok=True)
         
         with open(out_file, "wb") as f:
@@ -52,13 +55,22 @@ def main(cfg: DictConfig) -> None:
 
         logger.info(f"Saved input_transform object to {out_file}")
         
-        out_file = ROOT / "test" / "oat_test" / f"output_transform.pickle"
+        out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
         
         with open(out_file, "wb") as f:
             pickle.dump(output_transform, f)
 
         logger.info(f"Saved output_transform object to {out_file}")
     
+        batch = next(iter(train_loader))
+        out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
+        with open(out_file, "wb") as f:
+                pickle.dump(batch, f)
+                
+        logger.info(f"Saved batch fixture object to {out_file}")
+                
 if __name__ == "__main__":
-    # Usage python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10
+    # Usage:
+    # python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10
+    # python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10 ++dataloader.batch_size=1
     main()
