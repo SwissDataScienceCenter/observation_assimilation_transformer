@@ -10,9 +10,9 @@ from pytorch_lightning.loggers.logger import DummyLogger
     reason="Skipped on CI (requires local datasets)"
 )
 @pytest.mark.parametrize("compute_loss", [True, False])
-def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss):
+def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss, model_cfg_fixture):
 
-    model = OAT()
+    model = OAT(model_cfg_fixture)
     
     input_transform, output_transform = transform_fixture
     
@@ -32,9 +32,9 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     os.getenv("CI") == "true",
     reason="Skipped on CI (requires local datasets)"
 )    
-def test_simple_predictor_train_step(batch_fixture, transform_fixture):
-    
-    model = OAT()
+def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture):
+
+    model = OAT(model_cfg_fixture)
     input_transform, output_transform = transform_fixture
     
     pred = OATPredictor(oat_model=model,

@@ -3,6 +3,15 @@ from pathlib import Path
 import torch
 import pickle
 
+from oat.model_module.model import (
+    GlobalEncoderConfig,
+    TopographicEncoderConfig,
+    FusionLayerConfig,
+    MaskingConfig,
+    TransformerConfig,
+    OutputHeadConfig,
+    OATConfig
+)
 from oat.data_module.transform import Transform
 
 @pytest.fixture
@@ -13,7 +22,41 @@ def batch_fixture() -> dict[str, dict[str, torch.Tensor]]:
     batch_fixture_file = Path(__file__).resolve().parent / "example_batch_fixture.pickle"
     with open(batch_fixture_file, "rb") as f:
         batch = pickle.load(f)
-    return batch 
+    return batch
+
+@pytest.fixture
+def model_cfg_fixture(batch_fixture):
+    global_enc_cfg = GlobalEncoderConfig(
+        in_channels=batch_fixture['global_data']['global_field'].shape[1],
+        field_extent_min= [2255500.0, 840500.0],
+        field_extent_max= [2964500.0, 1479500.0]
+    )
+    
+    topography_enc_cfg = TopographicEncoderConfig(
+        in_channels=batch_fixture['observation_data']['topo'].shape[2]
+    )
+    
+    fusion_layer_cfg = FusionLayerConfig()
+    masking_cfg = MaskingConfig()
+    transformer_cfg = TransformerConfig(
+        d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1]
+    )
+    output_head_cfg = OutputHeadConfig(
+        target_features=batch_fixture['observation_data']['obs'].shape[-1],
+        type='linear'
+    )
+    
+    oat_cfg = OATConfig(
+        global_encoder=global_enc_cfg,
+        topographic_encoder=topography_enc_cfg,
+        fusion_layer=fusion_layer_cfg,
+        transformer=transformer_cfg,
+        masking=masking_cfg,
+        output_head=output_head_cfg,
+        num_samples=100
+    )
+    
+    return oat_cfg
 
 @pytest.fixture
 def transform_fixture() -> tuple[Transform, Transform]:
