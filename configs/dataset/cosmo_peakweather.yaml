@@ -52,7 +52,7 @@ patch_size:
 use_time_embedding: true
 
 # Cache settings
-cache_dir: ".cache_constant_inputs"
+cache_dir: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/cache_constant_inputs"
 clear_cache: false
 
 dtype: float32

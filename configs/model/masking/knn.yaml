@@ -1,0 +1,3 @@
+mode: knn
+k: 4
+max_num_neighbors: 32
