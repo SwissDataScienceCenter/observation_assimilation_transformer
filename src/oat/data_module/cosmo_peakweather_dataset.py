@@ -88,6 +88,19 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Load observations
         self._load_observations()
         
+        self._mark_shared_memory()
+        
+    def _mark_shared_memory(self) -> None:
+        """Mark tensors for sharing across workers"""
+        if hasattr(self, 'topo_field'):
+            self.topo_field.share_memory_()
+        if hasattr(self, 'topo_on_nwp_grid'):
+            self.topo_on_nwp_grid.share_memory_()
+        if hasattr(self, 'station_coords'):
+            self.station_coords.share_memory_()
+        if hasattr(self, 'station_geo'):
+            self.station_geo.share_memory_()
+        
     def _load_datasets(self) -> None:
         """Load NWP, topography, and station data"""
         from anemoi.datasets import open_dataset
@@ -262,6 +275,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         topo_interp = np.nan_to_num(topo_interp, nan=0.0)
         self.topo_on_nwp_grid = torch.from_numpy(topo_interp).to(dtype_map[self.config.dtype])
+        topo_subset = self.topo_data[self.topo_var_idx].copy()
+        self.topo_field = torch.from_numpy(topo_subset).to(
+            dtype_map[self.config.dtype]
+        )
         
     def _load_observations(self) -> None:
         """Load station observations for entire time period"""
@@ -367,10 +384,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # obs_values[~obs_mask] = 0  # Set missing values to NaN for masking
         
         # Extract topographic patches at station locations
-        topo_field = torch.from_numpy(
-            self.topo_data[self.topo_var_idx]
-        ).to(dtype_map[self.config.dtype])
-        
+        # topo_field = torch.from_numpy(
+        #     self.topo_data[self.topo_var_idx]
+        # ).to(dtype_map[self.config.dtype])
+        topo_field = self.topo_field  # No loading, no conversion
         topo_patches = self._extract_patches(
             self.station_coords,
             topo_field,

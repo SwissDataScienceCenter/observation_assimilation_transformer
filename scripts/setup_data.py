@@ -27,7 +27,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Test loader batches: {len(test_loader)}")
     
     # TODO: Move the number somewhere to config
-    input_transform, output_transform = train_dataset.get_transform(num_data_points=64,
+    input_transform, output_transform = train_dataset.get_transform(num_data_points=256,
                                                                     dataloader=train_loader)
     logger.info("Transforms set up successfully.")
     

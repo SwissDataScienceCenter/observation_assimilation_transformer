@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
     reason="Skipped on CI (requires local datasets)"
 )
 def test_with_local_data() -> None:
-    data_config = OmegaConf.load('configs/data/wind_data.yaml')
+    data_config = OmegaConf.load('configs/dataset/windgust.yaml')
     dataset = factory.create_dataset(data_config)
     loader = DataLoader(
         dataset,
