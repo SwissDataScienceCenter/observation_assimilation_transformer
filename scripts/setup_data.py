@@ -107,16 +107,17 @@ def main(cfg: DictConfig) -> None:
 
         
         logger.info(f"Saved output_transform object to {out_file}")
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    oat_model = setup_model(cfg, field_extent, logger)
-    logger.info("Model set up successfully.")
-    
         batch = next(iter(train_loader))
         out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
         with open(out_file, "wb") as f:
                 pickle.dump(batch, f)
                 
         logger.info(f"Saved batch fixture object to {out_file}")
+
+    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
+    oat_model = setup_model(cfg, field_extent, logger)
+    logger.info("Model set up successfully.")
+    
                 
 if __name__ == "__main__":
     # Usage:
