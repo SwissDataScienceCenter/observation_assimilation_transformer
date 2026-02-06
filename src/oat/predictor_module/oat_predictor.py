@@ -41,7 +41,7 @@ class OATPredictor(pl.LightningModule):
         # TODO implement
         return self.input_transform(batch)
 
-    def _unnormalize_prediction(self, y_hat: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> torch.Tensor:
         """
         Given the model's prediction, de-normalizes the predicted samples
         and return them.
@@ -52,9 +52,24 @@ class OATPredictor(pl.LightningModule):
         Returns:
            The tensor with de-normalized samples.
         """
-        return self.output_transform(y_hat['samples'])
+        return self.output_transform.inverse(y_hat['samples']), self.output_transform.inverse(y_true)
 
     def forward(self, batch, query_locations = None, return_loss_and_targets = False):
+        """
+        Forward pass for the OATPredictor.
+        It expects the input data to be normalized. The user should prefer using
+        training_step, validation_step, test_step or predict_step over this method
+        directly.
+
+        Args:
+            batch : The input data batch
+            query_locations : Location of query stations. When not provided, the input batch is expected
+            to already have a key "query_data". This parameter should be used during inference.
+            return_loss_and_targets: Whether loss, target and target mask should be returned.
+
+        Returns:
+            The prediction as well as loss, target and target mask when return_loss_and_targets is True.
+        """
 
         if query_locations is None:
             # If no query locations are given, we assume that they are given by the dataloader
@@ -64,7 +79,7 @@ class OATPredictor(pl.LightningModule):
             target_obs = batch['query_data'].pop('obs', None)
             target_mask_obs = batch['query_data'].pop('mask_obs', None)
         else:
-            # TODO implement
+            # TODO implement 
             pass
 
         if not return_loss_and_targets:
@@ -91,7 +106,9 @@ class OATPredictor(pl.LightningModule):
 
         # y_hat_unorm shape: [batch,station,sample,feature]
         # target_obs shape: [batch,station,feature]
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        # NOTE should we add nograd here?
+        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat, 
+                                                                   y_true=target_obs)
         # TODO targets are to be unormalized too
         
         # TODO log metrics with unorm value
@@ -105,7 +122,7 @@ class OATPredictor(pl.LightningModule):
 
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
 
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        y_hat_unorm = self._unnormalize_pred_and_target(y_hat)
         # TODO log metrics with unorm value
 
         return loss
@@ -116,7 +133,7 @@ class OATPredictor(pl.LightningModule):
 
         self.log("test_loss", loss)
 
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        y_hat_unorm = self._unnormalize_pred_and_target(y_hat)
         # TODO log metrics with unorm value
 
         return loss
@@ -126,7 +143,7 @@ class OATPredictor(pl.LightningModule):
 
         y_hat = self(batch, return_loss=False)
 
-        return self._unnormalize_prediction(y_hat)
+        return self._unnormalize_pred_and_target(y_hat)
 
     def configure_optimizers(self):
 

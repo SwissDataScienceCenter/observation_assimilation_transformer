@@ -24,9 +24,9 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
                         training_stations_split=0.3)
 
     if not compute_loss:
-        out = pred(batch_fixture,return_loss=False)
+        out = pred(batch_fixture,return_loss_and_targets=False)
     else:
-        out, loss = pred.forward(batch_fixture, return_loss_and_targets=True)
+        out, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
 
 @pytest.mark.skipif(
     os.getenv("CI") == "true",
