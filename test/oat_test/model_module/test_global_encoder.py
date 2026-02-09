@@ -75,7 +75,9 @@ def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, 
 
 def test_global_encoder_initialization(encoder: object, field_extent: Dict[str, torch.Tensor]) -> None:
     assert encoder.model is not None
-    assert encoder.field_extent == field_extent
+
+    assert (encoder.field_min == field_extent['min']).all()
+    assert (encoder.field_max == field_extent['max']).all()
 
 
 def test_pad_forward(encoder: BaseGlobalEncoder, img: torch.Tensor) -> None:
