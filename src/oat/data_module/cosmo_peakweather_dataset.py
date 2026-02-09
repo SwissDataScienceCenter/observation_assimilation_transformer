@@ -192,7 +192,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         missing_dates = self.nwp_ds.missing
         if missing_dates is not None and len(missing_dates) > 0:
-            missing_idx = np.isin(self.time_indices, np.asarray(missing_dates))
+            missing_arr = np.asarray([n for n in missing_dates])
+            missing_idx = np.isin(self.time_indices, missing_arr)
             self.times = self.times[~missing_idx]
             self.time_indices = self.time_indices[~missing_idx]
         
