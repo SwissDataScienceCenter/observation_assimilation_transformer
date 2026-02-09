@@ -91,7 +91,7 @@ def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> 
     model_instance = model.OAT(oat_config)
     return model_instance
 
-def setup_predictor(model: nn.Module, transforms: tuple[Transform], cfg: DictConfig):
+def setup_predictor(model: model.OAT, transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
     from importlib import import_module
     
