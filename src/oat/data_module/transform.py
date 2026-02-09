@@ -280,7 +280,7 @@ class ComposedTransform(Transform):
             transforms (list): List of Transform instances to concatenate.
         """
         super().__init__()
-        self.transforms = transforms
+        self.transforms = nn.ModuleList(transforms)
 
     def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Apply all transformations in sequence to the sample."""
@@ -309,7 +309,7 @@ class ComposedTransform(Transform):
         chain = " -> ".join(t.__class__.__name__ for t in self.transforms)
         return f"{self.__class__.__name__}({chain})"
     
-class NestedTransform(nn.Module):
+class NestedTransform(Transform):
     """Applies transforms to a nested dictionary of tensors.
     
     The transform_dict should mirror the structure of the data dictionary.
@@ -324,56 +324,47 @@ class NestedTransform(nn.Module):
                            Values are either Transform instances or nested dicts of transforms.
         """
         super().__init__()
-        self.transform_dict = transform_dict
-
-    def _apply_recursive(self, sample: dict | torch.Tensor, transform_spec: dict | Transform) -> dict | torch.Tensor:
-        """Recursively apply transforms to nested structure."""
-        if isinstance(transform_spec, Transform):
-            # Base case: apply transform to tensor
-            return transform_spec(sample)
-        elif isinstance(transform_spec, dict) and isinstance(sample, dict):
-            # Recursive case: process nested dictionary
-            result = {}
-            for key, value in sample.items():
-                if key in transform_spec:
-                    result[key] = self._apply_recursive(value, transform_spec[key])
-                else:
-                    # No transform for this key, pass through unchanged
-                    result[key] = value
-            return result
-        else:
-            # Mismatch between structure - return unchanged
-            return sample
-
-    def _apply_inverse_recursive(self, sample: dict | torch.Tensor, transform_spec: dict | Transform) -> dict | torch.Tensor:
-        """Recursively apply inverse transforms to nested structure."""
-        if isinstance(transform_spec, Transform):
-            # Base case: apply inverse transform to tensor
-            return transform_spec.inverse(sample)
-        elif isinstance(transform_spec, dict) and isinstance(sample, dict):
-            # Recursive case: process nested dictionary
-            result = {}
-            for key, value in sample.items():
-                if key in transform_spec:
-                    result[key] = self._apply_inverse_recursive(value, transform_spec[key])
-                else:
-                    # No transform for this key, pass through unchanged
-                    result[key] = value
-            return result
-        else:
-            # Mismatch between structure - return unchanged
-            return sample
+        self.transform_dict = nn.ModuleDict(self._build(transform_dict))
+        
+    def _build(self, d: dict[str, Transform | dict]) -> dict[str, Transform]:
+        built = {}
+        
+        for k,v in d.items():
+            if isinstance(v, Transform):
+                built[k] = v
+            elif isinstance(v, dict):
+                built[k] = NestedTransform(v)
+            else:
+                raise TypeError()
+        return built
 
     def forward(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
         """Apply transforms to the nested dictionary."""
-        return self._apply_recursive(sample, self.transform_dict)
+        # return self._apply_recursive(sample, self.transform_dict)
+        
+        out = {}
+        for k,v in sample.items():
+            if k in self.transform_dict:
+                out[k] = self.transform_dict[k](v)
+            else:
+                out[k] = v
+        return out
 
     def inverse(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
         """Apply inverse transforms to the nested dictionary."""
-        return self._apply_inverse_recursive(sample, self.transform_dict)
+        # return self._apply_inverse_recursive(sample, self.transform_dict)
+        
+        out = {}
+        for k,v in sample.items():
+            if k in self.transform_dict:
+                out[k] = self.transform_dict[k].inverse(v)
+            else:
+                out[k] = v
+        return out
 
     def _dict_to_serializable(self, d: dict) -> dict:
         """Convert nested dict of transforms to serializable format."""
+        #TODO check
         result = {}
         for key, value in d.items():
             if isinstance(value, Transform):
@@ -386,6 +377,7 @@ class NestedTransform(nn.Module):
 
     def _dict_from_serializable(self, d: dict) -> dict:
         """Convert serializable format back to nested dict of transforms."""
+        #TODO check
         result = {}
         for key, value in d.items():
             if isinstance(value, dict) and "type" in value:
@@ -399,6 +391,7 @@ class NestedTransform(nn.Module):
         return result
 
     def to_dict(self) -> dict[str, Any]:
+        # TODO check
         return {
             "type": "NestedTransform",
             "transform_dict": self._dict_to_serializable(self.transform_dict)
@@ -406,24 +399,26 @@ class NestedTransform(nn.Module):
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> 'NestedTransform':
+        #TODO check
         instance = cls({})
         instance.transform_dict = instance._dict_from_serializable(d["transform_dict"])
         return instance
     
     def __repr__(self) -> str:
-            def render(d: dict, indent: int = 0) -> list[str]:
-                lines = []
-                pad = "  " * indent
-                for key, value in d.items():
-                    if isinstance(value, Transform):
-                        lines.append(f"{pad}{key}: {repr(value)}")
-                    elif isinstance(value, dict):
-                        lines.append(f"{pad}{key}:")
-                        lines.extend(render(value, indent + 1))
-                return lines
+        def render(td: nn.ModuleDict, indent: int = 0) -> list[str]:
+            lines = []
+            pad = "  " * indent
+            for key, value in td.items():
+                if isinstance(value, NestedTransform):
+                    lines.append(f"{pad}{key}:")
+                    lines.extend(render(value.transform_dict, indent + 1))
+                else:
+                    # leaf Transform
+                    lines.append(f"{pad}{key}: {repr(value)}")
+            return lines
 
-            body = "\n".join(render(self.transform_dict))
-            return f"{self.__class__.__name__}(\n{body}\n)"
+        body = "\n".join(render(self.transform_dict))
+        return f"{self.__class__.__name__}(\n{body}\n)"
 
 def transform_dict_to_yaml(transform_dict: dict[str, Transform]) -> str:
     transform_dicts = {key: tr.to_dict() for key, tr in transform_dict.items()}
