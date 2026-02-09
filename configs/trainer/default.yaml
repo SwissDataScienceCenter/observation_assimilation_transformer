@@ -9,4 +9,4 @@ enable_progress_bar: true
 accumulate_grad_batches: 1
 gradient_clip_val: 1.0
 gradient_clip_algorithm: "norm"
-deterministic: true
+deterministic: "warn"

@@ -5,6 +5,7 @@ defaults:
   - model: oat
   - trainer: default
   - predictor: oat_predictor
+  - logging: default
 
 seed: 42
 
