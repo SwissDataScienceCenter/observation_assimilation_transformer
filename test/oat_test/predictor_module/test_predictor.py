@@ -31,7 +31,8 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     os.getenv("CI") == "true",
     reason="Skipped on CI (requires local datasets)"
 )    
-def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture):
+@pytest.mark.parametrize("compile", [True, False])
+def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile):
 
     model = OAT(model_cfg_fixture)
     input_transform, output_transform = transform_fixture
@@ -41,5 +42,8 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
                         output_transform=output_transform,
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
+    
+    if compile:
+        pred = torch.compile(pred)
     
     pred.training_step(batch=batch_fixture, batch_idx=None)
