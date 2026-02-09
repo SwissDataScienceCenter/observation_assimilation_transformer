@@ -1,3 +1,6 @@
+import os
+from datetime import datetime
+
 from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 from oat.data_module.data_split import create_splits
 from oat.model_module import model
@@ -181,9 +184,13 @@ def main(cfg: DictConfig) -> None:
     lr_monitor = LearningRateMonitor(logging_interval="step")
     
     # Logger 
-    wandb_logger = WandbLogger(name='first_run',
-                         project='oat',
-                         experiment='first_experiment',
+    base_name = cfg.logging.run_name_prefix
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+    run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
+    wandb_logger = WandbLogger(name=run_name,
+                         project=cfg.logging.project,
+                         group=cfg.logging.group,
                          log_model=False)
     
     trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,

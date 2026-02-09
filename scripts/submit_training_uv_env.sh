@@ -18,7 +18,36 @@
 #SBATCH --error=slurm_logs/oat_training/oat_training_%j.err
 
 
-source .venv/bin/activate
+ENV="poetry"  # default
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --env)
+        ENV="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        *)
+        echo "Unknown argument: $1"
+        shift
+        ;;
+    esac
+done
+
+echo "Using environment: $ENV"
+
+if [ "$ENV" = "uv" ]; then
+    echo "Activating UV venv"
+    source .venv/bin/activate
+elif [ "$ENV" = "poetry" ]; then
+    echo "Activating Poetry environment"
+    VENV_PATH=$(poetry env info --path)
+    source "$VENV_PATH/bin/activate"
+else
+    echo "Unknown environment: $ENV"
+    exit 1
+fi
+
 
 
 echo "CUDA_VISIBLE_DEVICES = $CUDA_VISIBLE_DEVICES"
