@@ -90,6 +90,32 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         self._mark_shared_memory()
         
+    @property
+    def variable_names(self) -> dict[str, dict[str, Optional[list[str]]]]:
+        return {
+            'global_data': {
+                'global_field': self.config.nwp_vars + self.config.topo_vars,
+                'time_emb': ['sin_day', 'cos_day', 'sin_year', 'cos_year'] if self.config.use_time_embedding else None,
+            },
+            'observation_data': {
+                'coords': self.config.coord_vars,
+                'geo': self.config.geo_vars,
+                'topo': self.config.topo_vars,
+                'obs': self.config.obs_vars,
+                'mask_obs': self.config.obs_vars, 
+            }
+        }
+
+    @property
+    def station_names(self) -> list[str]:
+        """Return list of station names in the dataset"""
+        return self.stations.tolist()
+    
+    @property
+    def station_info(self) -> pd.DataFrame:
+        """Return station metadata as DataFrame"""
+        return self.obs_ds.stations_table.loc[self.stations]
+        
     def _mark_shared_memory(self) -> None:
         """Mark tensors for sharing across workers"""
         if hasattr(self, 'topo_field'):
@@ -144,11 +170,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # Time axis
         all_times = pd.to_datetime(self.nwp_ds.dates).tz_localize('UTC')
-
+        start_time = max(all_times.min(), self.obs_ds.observations.index.min())
+        end_time = min(all_times.max(), self.obs_ds.observations.index.max())
         # Filter by date range if specified
         if self.config.start_date is not None or self.config.end_date is not None:
-            start = pd.to_datetime(self.config.start_date).tz_localize('UTC') if self.config.start_date else all_times.min()
-            end = pd.to_datetime(self.config.end_date).tz_localize('UTC') if self.config.end_date else all_times.max()
+            start = pd.to_datetime(self.config.start_date).tz_localize('UTC') if self.config.start_date else start_time
+            end = pd.to_datetime(self.config.end_date).tz_localize('UTC') if self.config.end_date else end_time
             mask = (all_times >= start) & (all_times <= end)
             self.times = all_times[mask]
             if len(self.times) == 0:
@@ -298,10 +325,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             )
         self.obs_df, self.obs_mask = self.obs_ds.get_observations(
             first_date=self.times[0],
-            last_date=self.times[-1],
+            last_date=self.times[-1] + pd.Timedelta(hours=1),  # Include last time
             parameters=self.config.obs_vars,
             stations=self.stations,
-            return_mask=True
+            return_mask=True,
         )
         
         # Station metadata
