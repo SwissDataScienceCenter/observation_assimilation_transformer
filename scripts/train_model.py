@@ -37,8 +37,8 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> Tuple[C
     logger.info(f"Train size: {len(train_dataset)} samples")
     logger.info(f"Validation size: {len(val_dataset)} samples")
     logger.info(f"Test size: {len(test_dataset)} samples")
-    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
-    val_loader = DataLoader(val_dataset, shuffle=False, **cfg.dataloader)
+    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader, pin_memory=True)
+    val_loader = DataLoader(val_dataset, shuffle=True, **cfg.dataloader, pin_memory=True)
     test_loader = DataLoader(test_dataset, shuffle=False, **cfg.dataloader)
     logger.info(f"Train loader batches: {len(train_loader)}")
     logger.info(f"Validation loader batches: {len(val_loader)}")
@@ -192,6 +192,11 @@ def main(cfg: DictConfig) -> None:
                          project=cfg.logging.project,
                          group=cfg.logging.group,
                          log_model=False)
+    
+    wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+
+    # NOTE check if compiling model helps
+    # predictor = torch.compile(predictor)
     
     trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,
                                                 early_stop_callback,

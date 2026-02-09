@@ -6,6 +6,6 @@ defaults:
   - transformer: oat_block
   - output_head: linear
   
-d_model: 64
+d_model: 32
 num_samples: 100
 

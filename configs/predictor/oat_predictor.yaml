@@ -1,7 +1,6 @@
-lr: 1e-4
+lr: 1e-3
 kwargs:
-  lr: 1e-3
-  optimizer_class: "torch.optim.Adam"
+  optimizer_class: "torch.optim.AdamW"
   optimizer_params:
     weight_decay: 0.01
   scheduler_class: "torch.optim.lr_scheduler.CosineAnnealingLR"
