@@ -20,8 +20,7 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
                         input_transform=input_transform,
                         output_transform=output_transform,
                         lr=1e-3,
-                        optimizer_class=torch.optim.AdamW,
-                        training_stations_split=0.3)
+                        optimizer_class=torch.optim.AdamW)
 
     if not compute_loss:
         out = pred(batch_fixture,return_loss_and_targets=False)
@@ -41,7 +40,6 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
                         input_transform=input_transform,
                         output_transform=output_transform,
                         lr=1e-3,
-                        optimizer_class=torch.optim.AdamW,
-                        training_stations_split=0.3)
+                        optimizer_class=torch.optim.AdamW)
     
     pred.training_step(batch=batch_fixture, batch_idx=None)

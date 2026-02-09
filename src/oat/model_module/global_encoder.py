@@ -41,7 +41,9 @@ class UNetGlobalEncoder(BaseGlobalEncoder):
         self.model = nets.UNet(
             **unet_params
         )
-        self.field_extent = field_extent
+
+        self.register_buffer("field_min", field_extent['min'])
+        self.register_buffer("field_max", field_extent['max'])
         
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """
@@ -61,8 +63,8 @@ class UNetGlobalEncoder(BaseGlobalEncoder):
     
     def interpolate(self, output: torch.Tensor, local_data: Dict[str, Any]) -> torch.Tensor:
         pos_transformed = pos_transform(local_data['coords'], 
-                                self.field_extent['min'], 
-                                self.field_extent['max']).unsqueeze(2)
+                                self.field_min, 
+                                self.field_max).unsqueeze(2)
         emb = F.grid_sample(output, pos_transformed, align_corners=True, mode='bilinear', padding_mode='border')
         emb = emb.squeeze(-1).permute(0, 2, 1)
         return emb
@@ -82,7 +84,9 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
         self.model = nets.SwinUNETR(
             **swin_unetr_params
         )
-        self.field_extent = field_extent
+        self.register_buffer("field_min", field_extent['min'])
+        self.register_buffer("field_max", field_extent['max'])
+
         assert self.model.patch_size == 2, "This padding logic+monai only works for patch_size 2 currently."
         
     def _pad(self, img: torch.Tensor, padding_x: int, padding_y: int, unpad: bool=False) -> torch.Tensor:
@@ -114,8 +118,8 @@ class SwinUNETRGlobalEncoder(BaseGlobalEncoder):
         output = self._pad(output, padding_x, padding_y, unpad=True)
         # interpolation
         pos_transformed = pos_transform(local_data['coords'], 
-                                self.field_extent['min'], 
-                                self.field_extent['max']).unsqueeze(2)
+                                self.field_min, 
+                                self.field_max).unsqueeze(2)
         emb = F.grid_sample(output, pos_transformed, align_corners=True, mode='bilinear', padding_mode='border')
         emb = emb.squeeze(-1).permute(0, 2, 1)
         return emb
