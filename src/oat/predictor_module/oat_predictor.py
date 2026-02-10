@@ -6,6 +6,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
 from oat.data_module.transform import Transform
+from oat.predictor_module.functional_metrics import sample_mae, point_mae
 
 class OATPredictor(pl.LightningModule):
 
@@ -39,6 +40,11 @@ class OATPredictor(pl.LightningModule):
         self.output_var_names = output_var_names
         self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
         self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
+        
+        self.metrics_fn = {
+            'sample_mae': sample_mae,
+            'point_mae': point_mae
+        }
 
     def _normalize_batch(self, batch):
         return self.input_transform(batch)
@@ -114,6 +120,10 @@ class OATPredictor(pl.LightningModule):
                                                                    y_true=target_obs)
         # TODO log metrics with unorm value
 
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="train")
 
         return loss
 
@@ -126,6 +136,10 @@ class OATPredictor(pl.LightningModule):
         y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
                                                         y_true=target_obs)
         # TODO log metrics with unorm value
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="val")
 
         return loss
 
@@ -138,6 +152,10 @@ class OATPredictor(pl.LightningModule):
         y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
                                                         y_true=target_obs)
         # TODO log metrics with unorm value
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="test")
 
         return loss
 
@@ -147,6 +165,25 @@ class OATPredictor(pl.LightningModule):
         y_hat = self(batch, return_loss=False)
 
         return self.output_transform.inverse(y_hat['samples'])
+    
+    def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
+                                        y_true: torch.Tensor, 
+                                        mask: torch.Tensor,
+                                        prefix = "") -> None:
+        for metric_name, metric_fn in self.metrics_fn.items():
+            
+            metric_values = metric_fn(y_target=y_true,
+                                      y_hat=y_hat_samples,
+                                      mask=mask,
+                                      aggregation='variable')
+            
+            for i, metric_val in enumerate(metric_values):
+                var_name = self.indx_to_var[i]
+                
+                self.log(name=f'{prefix}_{metric_name}_{var_name}', 
+                         value=metric_val, 
+                         prog_bar=True, on_step=True, on_epoch=True)
+            
 
     def configure_optimizers(self):
 
