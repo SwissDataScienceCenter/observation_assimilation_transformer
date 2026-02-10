@@ -26,6 +26,7 @@ class ObservationAssimilationTransformer(nn.Module):
         layer_norm_eps: float = 1e-5,
         d_geo_bias: Optional[int] = None,
         dim_geo_bias_feedforward: int = 64,
+        activation_geo_bias: str = "ReLU",
         norm_first: bool = False,
         bias: bool = True,
         sparse_attn: bool = False,
@@ -46,7 +47,7 @@ class ObservationAssimilationTransformer(nn.Module):
             layer_norm_eps: The eps value in layer normalization components. Defaults to 1e-5.
             d_geo_bias: The dimension of the geometry bias. Defaults to None.
             dim_geo_bias_feedforward: The dimension of the feedforward network for geometry bias. Defaults to 64.
-            norm_first: If True, layer norm is done prior to attention and feedforward operations. Defaults to False.
+            activation_geo_bias: The activation function for geometry bias feedforward network. Defaults to "ReLU".
             bias: If True, adds bias to linear layers. Defaults to True.
             sparse_attn: If True, uses sparse attention mechanism. Defaults to False.
             device: The device to place the model on. Defaults to None.
@@ -66,6 +67,7 @@ class ObservationAssimilationTransformer(nn.Module):
             layer_norm_eps=layer_norm_eps,
             norm_first=norm_first,
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
+            activation_geo_bias=activation_geo_bias,
             sparse=sparse_attn,
             bias=bias,
             device=device,
@@ -88,6 +90,7 @@ class ObservationAssimilationTransformer(nn.Module):
             layer_norm_eps=layer_norm_eps,
             norm_first=norm_first,
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
+            activation_geo_bias=activation_geo_bias,
             sparse=sparse_attn,
             bias=bias,
             device=device,
@@ -296,6 +299,7 @@ class GeometryAwareEncoderLayer(nn.Module):
         layer_norm_eps: float = 1e-5,
         norm_first: bool = False,
         dim_geo_bias_feedforward: int = 64,
+        activation_geo_bias: str = "ReLU",
         sparse: bool = False,
         bias: bool = True,
         device: Optional[torch.device] = None,
@@ -313,6 +317,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             layer_norm_eps: The epsilon value in layer normalization components.
             norm_first: If True, layer norm is done prior to attention and feedforward operations (pre-norm). Otherwise it's done after (post-norm).
             dim_geo_bias_feedforward: The hidden dimension for the geometric bias feedforward network.
+            activation_geo_bias: The activation function for the geometry bias feedforward network.
             sparse: Whether to use sparse attention.
             bias: Whether to use bias in linear layers and layer normalization.
             device: The device to place the parameters on.
@@ -327,6 +332,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             dropout=dropout,
             d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
+            activation_geo_bias=activation_geo_bias,
             sparse=sparse,
             device=device,
             dtype=dtype,
@@ -404,6 +410,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         layer_norm_eps: float = 1e-5,
         norm_first: bool = False,
         dim_geo_bias_feedforward: int = 64,
+        activation_geo_bias: str = "ReLU",
         sparse: bool = False,
         bias: bool = True,
         device: Optional[torch.device] = None,
@@ -421,6 +428,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             layer_norm_eps: The eps value in layer normalization components.
             norm_first: If True, layer norm is done prior to self attention, multihead attention and feedforward operations.
             dim_geo_bias_feedforward: Hidden dimension for geometric bias feedforward network.
+            activation_geo_bias: The activation function for the geometry bias feedforward network.
             sparse: Whether to use sparse attention.
             bias: Whether to use bias in linear layers and layer normalization.
             device: The device to place the parameters on.
@@ -435,6 +443,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             dropout=dropout,
             d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
+            activation_geo_bias=activation_geo_bias,
             sparse=sparse,
             device=device,
             dtype=dtype,
@@ -445,6 +454,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             dropout=dropout,
             d_geo_bias=d_geo_bias,
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
+            activation_geo_bias=activation_geo_bias,
             sparse=sparse,
             device=device,
             dtype=dtype,

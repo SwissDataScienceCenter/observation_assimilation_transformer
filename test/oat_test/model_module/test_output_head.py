@@ -7,6 +7,7 @@ def test_linear_output_head() -> None:
     target_dim = 2
     input_dim = 10
     n_stations = 23
+    num_samples = 10
 
     target = torch.randn(batch_dim, n_stations, target_dim)
     input_tensor = torch.randn(batch_dim, n_stations, input_dim)
@@ -20,15 +21,19 @@ def test_linear_output_head() -> None:
         assert preds.shape == (batch_dim, n_stations, target_dim)  # Check output
         inno = linear_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
         assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-        loss = linear_output_head.loss(input_tensor, target, mask)  # Loss computation
+        _, loss = linear_output_head.loss(input_tensor, target, mask)  # Loss computation
         assert loss.dim() == 0  # Check that loss is a scalar
         assert loss >= 0.0  # Loss should be non-negative
+        samples = linear_output_head.sample(out, num_samples)  # Sampling from output distribution
+        assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)  # Check sample shape
+        assert torch.allclose(samples, preds.unsqueeze(-2).expand(-1, -1, num_samples, -1))  # Check that all samples match predictions
     
 def test_gaussian_output_head() -> None:
     batch_dim = 64
     target_dim = 2
     input_dim = 10
     n_stations = 23
+    num_samples = 10
 
     target = torch.randn(batch_dim, n_stations, target_dim)
     input_tensor = torch.randn(batch_dim, n_stations, input_dim)
@@ -42,15 +47,18 @@ def test_gaussian_output_head() -> None:
         assert out["std_pred"].shape == (batch_dim, n_stations, target_dim)  # Check std output shape
         inno = gaussian_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
         assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-        loss = gaussian_output_head.loss(input_tensor, target, mask)  # Loss computation
+        _, loss = gaussian_output_head.loss(input_tensor, target, mask)  # Loss computation
         assert loss.dim() == 0  # Check that loss is a scalar
+        samples = gaussian_output_head.sample(out, num_samples)  # Sampling from output distribution
+        assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)
     
 def test_quantile_output_head() -> None:
     batch_dim = 64
     target_dim = 2
     input_dim = 10
     n_stations = 23
-
+    num_samples = 10
+    
     target = torch.randn(batch_dim, n_stations, target_dim)
     input_tensor = torch.randn(batch_dim, n_stations, input_dim)
     mask = torch.randint(0, 2, (batch_dim, n_stations, target_dim)).bool()
@@ -63,14 +71,16 @@ def test_quantile_output_head() -> None:
     assert torch.diff(quantile_output_head.taus).min() > 0  # Check taus are increasing
     inno = quantile_output_head.compute_innovation(input_tensor, target, mask)  # Innovation computation
     assert inno.shape == (batch_dim, n_stations, target_dim)  # Check
-    loss = quantile_output_head.loss(input_tensor, target, mask)  # Loss computation
+    _, loss = quantile_output_head.loss(input_tensor, target, mask)  # Loss computation
     assert loss.dim() == 0  # Check that loss is a scalar
     assert loss >= 0.0  # Loss should be non-negative
     mask0 = torch.zeros(batch_dim, n_stations, target_dim).bool()  # All masked
-    loss_all_masked = quantile_output_head.loss(input_tensor, target, mask0)  # Loss computation
+    _, loss_all_masked = quantile_output_head.loss(input_tensor, target, mask0)  # Loss computation
     assert loss_all_masked.dim() == 0  # Check that loss is a scalar
     assert loss_all_masked == 0.0  # Loss should be zero when all values are masked
     mask1 = torch.ones(batch_dim, n_stations, target_dim).bool()  # None masked
-    loss_none_masked = quantile_output_head.loss(input_tensor, target, mask1)  # Loss computation
+    _, loss_none_masked = quantile_output_head.loss(input_tensor, target, mask1)  # Loss computation
     assert loss_none_masked.dim() == 0  # Check that loss is a scalar
     assert loss_none_masked >= 0.0  # Loss should be non-negative
+    samples = quantile_output_head.sample(out, num_samples)  # Sampling from output distribution
+    assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)

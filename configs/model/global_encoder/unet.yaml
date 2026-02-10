@@ -1,0 +1,14 @@
+type: UNet
+# in_channels, field_extent_min, field_extent_max must be set by data
+out_channels: 16
+spatial_dims: 2
+channels:
+  - 16
+  - 32
+  - 64
+  - 128
+strides:
+  - 1
+  - 1
+  - 1
+num_res_units: 2

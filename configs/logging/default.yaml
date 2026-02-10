@@ -1,0 +1,4 @@
+run_name_prefix: "oat_training"
+project: "oat"
+group: "debugging"
+entity: "sdsc-mch"

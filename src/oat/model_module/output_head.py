@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from abc import abstractmethod, ABC
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 class BaseOutputHead(nn.Module, ABC):
     
@@ -51,7 +51,7 @@ class BaseOutputHead(nn.Module, ABC):
         raise NotImplementedError()
     
     @abstractmethod
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Compute the loss between predictions and target, applying the mask.
         
@@ -61,9 +61,22 @@ class BaseOutputHead(nn.Module, ABC):
             mask: boolean mask indicating valid entries [..., target_features]
             
         Returns:
-            Loss value (scalar tensor)
+            Predictions dictionary and loss value (scalar tensor)
         """
         raise NotImplementedError()
+    
+    @abstractmethod
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
+        """
+        Generate samples from the output distribution.
+        
+        Args:
+            out: output dictionary from forward pass
+            num_samples: number of samples to generate
+        Returns:
+            Samples [..., num_samples, target_features]
+        """        
+        raise NotImplementedError("Sampling not implemented for this output head.")
     
     def loss_normalization_per_sample(self, loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
@@ -140,7 +153,7 @@ class LinearOutputHead(BaseOutputHead):
         innovation = target - pred  # [B, S, target_features]
         return mask * innovation
     
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """ Compute loss.
 
         Args:
@@ -155,7 +168,20 @@ class LinearOutputHead(BaseOutputHead):
         pred = out['val_pred']
         loss = self.loss_fn(pred, target, reduction='none')  # [num_valid]
         loss = self.loss_normalization_per_sample(loss, mask)
-        return loss
+        return out, loss
+    
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
+        """ Generate samples from the output distribution.
+
+        Args:
+            out: output dictionary from forward pass
+            num_samples: number of samples to generate
+        Returns:
+            Samples [B, S, num_samples, target_features]
+        """
+        pred = out['val_pred']  # [B, S, target_features]
+        samples = pred.unsqueeze(-2).expand(-1, -1, num_samples, -1)  # [B, S, num_samples, target_features]
+        return samples
     
 class GaussianOutputHead(BaseOutputHead):
     
@@ -220,7 +246,7 @@ class GaussianOutputHead(BaseOutputHead):
         innovation = (target - mean) / std  # [..., target_features]
         return mask * innovation
     
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """ Compute negative log-likelihood loss.
 
         Args:
@@ -237,7 +263,33 @@ class GaussianOutputHead(BaseOutputHead):
         nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
         #loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
         loss = self.loss_normalization_per_sample(nll, mask)
-        return loss
+        return preds, loss
+    
+    
+    def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
+        """ Generate samples from the output distribution.
+
+        Args:
+            out: output dictionary from forward pass
+            num_samples: number of samples to generate
+        Returns:
+            Samples [..., num_samples, target_features]
+        """
+        # TODO: Check that this is really sampling from the distribution
+        mean = out['mu_pred']  # [..., target_features]
+        std = out['std_pred']  # [..., target_features]
+        leading_shape = mean.shape[:-1]
+        F = mean.shape[-1]
+        
+        # Expand mean and std for sampling
+        mean = mean.unsqueeze(-2).expand(*leading_shape, num_samples, F)  # [..., num_samples, target_features]
+        std = std.unsqueeze(-2).expand(*leading_shape, num_samples, F)    # [..., num_samples, target_features]
+        
+        # Sample from Gaussian
+        eps = torch.randn_like(std)  # [..., num_samples, target_features]
+        samples = mean + eps * std   # [..., num_samples, target_features]
+        
+        return samples
     
     
 class QuantileOutputHead(BaseOutputHead):
@@ -385,8 +437,45 @@ class QuantileOutputHead(BaseOutputHead):
             coeffs
         )  # [..., Q, target_features]
         
-        return {"qval_pred": quantiles, "tau": tau}  # [..., Q, target_features]
+        return {
+            "qval_pred": quantiles,
+            "tau": tau,
+            "coeffs": coeffs,
+            "min_vals": min_vals,
+        }  # [..., Q, target_features]
+    
+    def _compute_inv_cdf(
+        self,
+        q: torch.Tensor,
+        coeffs: torch.Tensor,
+        min_vals: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Compute the inverse CDF (quantile function) for given quantiles and coefficients.
+        
+        Args:
+            q: Quantile levels [..., Q]
+            coeffs: Coefficients of Bernstein basis [..., degree+1, target_features]
+            min_vals: Optional minimum value offset [..., target_features] to be added
+                to the Bernstein polynomial sum, i.e.
+                    Q(tau) = min_vals + sum_i c_i * B_i(tau)
+        
+        Returns:
+            Quantile values [..., Q, target_features]
+        """
+        
+        basis = self._bernstein_basis(q)  # [..., Q, degree+1]
+        quantiles = torch.einsum(
+            "...qk,...kn->...qn",
+            basis,
+            coeffs,
+        )  # [..., Q, target_features]
 
+        if min_vals is not None:
+            # Broadcast min_vals [..., target_features] across the quantile dimension.
+            quantiles = quantiles + min_vals.unsqueeze(-2)
+        return quantiles
+    
     def compute_innovation(
         self, 
         x: torch.Tensor, 
@@ -434,7 +523,7 @@ class QuantileOutputHead(BaseOutputHead):
         x: torch.Tensor, 
         target: torch.Tensor, 
         mask: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Integrated quantile regression loss using trapezoidal integration.
         
@@ -480,4 +569,37 @@ class QuantileOutputHead(BaseOutputHead):
         # Normalize by number of valid observations
         #total_loss = integrated_loss.sum() / mask.sum().clamp(min=1.0)
         loss = self.loss_normalization_per_sample(integrated_loss, mask.squeeze(-2))
-        return loss
+        return out, loss
+    
+    
+    def sample(
+        self, 
+        out: Dict, 
+        num_samples: int
+    ) -> torch.Tensor:
+        """
+        Generate samples from the quantile function.
+
+        Args:
+            out: output dictionary from forward pass
+            num_samples: number of samples to generate
+        Returns:
+            Samples [..., num_samples, target_features]
+        """
+        
+        # TODO: Check that this is really sampling from the distribution
+        coeffs = out["coeffs"]  # [..., degree+1, target_features]
+        leading_shape = coeffs.shape[:-2]
+        
+        # Sample uniform quantile levels
+        q = torch.rand(
+            *leading_shape, 
+            num_samples, 
+            device=coeffs.device, 
+            dtype=coeffs.dtype
+        )  # [..., num_samples]
+        
+        # Compute quantile values for sampled quantiles
+        samples = self._compute_inv_cdf(q, coeffs)  # [..., num_samples, target_features]
+        
+        return samples

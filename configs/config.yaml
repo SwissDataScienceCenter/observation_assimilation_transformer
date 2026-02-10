@@ -1,5 +1,11 @@
 defaults:
-  - data: wind_data
+  - dataset: cosmo_peakweather
+  - split: default
+  - dataloader: default
+  - model: oat
+  - trainer: default
+  - predictor: oat_predictor
+  - logging: default
 
 seed: 42
 

@@ -5,6 +5,8 @@
 ![Ruff](https://img.shields.io/badge/ruff-0.4.0-red)
 ![mypy](https://img.shields.io/badge/mypy-1.8.0-blue)
 
+> NOTE: for uv use `uv pip install torch-cluster -f https://data.pyg.org/whl/torch-2.4.0+cu121.html`
+
 A production-ready Python project template with Dev Container support, pre-configured with:
 
 - 🛠️ Black for code formatting

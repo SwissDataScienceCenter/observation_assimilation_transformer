@@ -102,7 +102,7 @@ configs = [
 @pytest.mark.parametrize("cfg", configs)
 def test_cnn_with_batch_fixture(batch_fixture, cfg):
 
-    sample_input = batch_fixture['query_data']['topo']
+    sample_input = batch_fixture['observation_data']['topo']
 
     topo_enc = CNNTopographyEncoder(**cfg)
 

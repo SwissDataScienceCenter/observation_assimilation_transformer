@@ -9,6 +9,7 @@ from oat.data_module.transform import (
     MinMaxTransform,
     LogTransform,
     ComposedTransform,
+    NestedTransform,
     transform_dict_to_yaml,
     transform_dict_from_yaml,
     TRANSFORM_REGISTRY,
@@ -138,7 +139,7 @@ class TestLogTransform:
     def test_log_serialization(self) -> None:
         transform = LogTransform(offset=0.5)
         d = transform.to_dict()
-        assert d == {"type": "LogTransform", "offset": 0.5}
+        assert d == {"type": "LogTransform", "offset": 0.5, "feature_dim": -1, "apply_to": None}
         restored = LogTransform.from_dict(d)
         assert restored.offset == 0.5
 
@@ -170,6 +171,49 @@ class TestComposedTransform:
         assert len(restored.transforms) == 2
         assert isinstance(restored.transforms[0], IdentityTransform)
         assert isinstance(restored.transforms[1], LogTransform)
+        
+        
+class TestNestedTransform:
+    
+    def test_nested_transform_forward(self) -> None:
+        
+        t_dict = {
+            'a': IdentityTransform(),
+            'b': {
+                'b1': IdentityTransform(),
+                'b2': TranslateScaleTransform(torch.tensor([1.0]), torch.tensor([2.0]))
+            }
+        }
+        
+        t = NestedTransform(t_dict)
+        
+        sample = {
+            'a': torch.tensor([-1.0, -2.0]),
+            'b': {
+                'b1': torch.tensor([42.0, 123.0]),
+                'b2': torch.tensor([1.0, 2.0])
+            }
+        }
+        out = t(sample)
+        
+        
+        out_inv = t.inverse(out)
+        
+        def dicts_equal(d1, d2) -> bool:
+            if d1.keys() != d2.keys():
+                return False
+            for k in d1:
+                v1, v2 = d1[k], d2[k]
+                if isinstance(v1, dict) and isinstance(v2, dict):
+                    if not dicts_equal(v1, v2):
+                        return False
+                else:
+                    if (v1 != v2).any():
+                        return False
+            return True
+        
+        assert dicts_equal(sample, out_inv)
+        
 
 
 class TestYAMLSerialization:
