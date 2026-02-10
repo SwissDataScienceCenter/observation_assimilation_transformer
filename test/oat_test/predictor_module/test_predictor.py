@@ -40,6 +40,7 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
     pred = OATPredictor(oat_model=model,
                         input_transform=input_transform,
                         output_transform=output_transform,
+                        output_var_names=[str(i) for i in range(model.config.output_head.target_features)],
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     

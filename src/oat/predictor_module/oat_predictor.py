@@ -1,4 +1,4 @@
-from typing import Type, Optional
+from typing import Type, Optional, List
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
@@ -13,6 +13,7 @@ class OATPredictor(pl.LightningModule):
                  oat_model: nn.Module,
                  input_transform: Transform,
                  output_transform: Transform,
+                 output_var_names: List,
                  lr: float = 1e-3,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
@@ -34,6 +35,10 @@ class OATPredictor(pl.LightningModule):
         self.model = oat_model
         self.input_transform = input_transform
         self.output_transform = output_transform
+        
+        self.output_var_names = output_var_names
+        self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
+        self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
 
     def _normalize_batch(self, batch):
         return self.input_transform(batch)

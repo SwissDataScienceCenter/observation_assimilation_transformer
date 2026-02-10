@@ -1,4 +1,7 @@
+from typing import Literal
+
 import torch
+
 
 METRICS = {}
 def register_metric(name=None):
@@ -17,44 +20,80 @@ def assert_prediction_matches_target(y_hat, y_target):
     assert y_hat.shape[-1] == y_target.shape[-1], "Feature size mismatch"
 
 @register_metric()
-def sample_mae(y_target, y_hat, mask):
-    # y_hat_unorm shape: [batch,station,sample,feature]
-    # target_obs shape: [batch,station,feature]
-    # mask shape: [batch,station,feature]
+def sample_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] = "all"):
+    """
+    Mean Absolute Error over all samples.
+
+    Args:
+        y_target: [batch, station, feature]
+        y_hat: [batch, station, sample, feature]
+        mask: [batch, station, feature] or None
+        aggregation: "all" -> single MAE, "variable" -> MAE per feature
+    """
+
     assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
-    
+
     if mask is None:
         mask = torch.ones_like(y_target)
-    
-    abs_errors = torch.abs(y_target.unsqueeze(-2) - y_hat)
-    abs_errors *= mask.unsqueeze(-2)
-    
-    denom = (mask.unsqueeze(-2).sum() * y_hat.shape[-2])
-    if denom == 0:
-        return torch.tensor(0.0, device=y_hat.device)
-    
-    return abs_errors.sum() / denom
+
+    y_target_exp = y_target.unsqueeze(-2)   # [batch, station, 1, feature]
+    mask_exp = mask.unsqueeze(-2).float()   # [batch, station, 1, feature]
+
+    abs_errors = torch.abs(y_target_exp - y_hat) * mask_exp  # [batch, station, sample, feature]
+
+    if aggregation == "all":
+        # Sum over all dimensions
+        num = abs_errors.sum()
+        denom = mask_exp.sum() * y_hat.shape[-2]
+        if denom.item() == 0:
+            return torch.tensor(0.0, device=y_hat.device)
+        return num / denom
+
+    elif aggregation == "variable":
+        # keep feature dimension
+        num = abs_errors.sum(dim=[0, 1, 2])      # [feature]
+        denom = (mask_exp.sum(dim=[0, 1, 2]) * y_hat.shape[-2])  # [feature]
+
+        return torch.where(denom > 0, num / denom, torch.zeros_like(num))
+
+    raise ValueError(f"Invalid aggregation: {aggregation}")
 
 @register_metric()
-def point_mae(y_target, y_hat, mask):
-    # y_hat_unorm shape: [batch,station,sample,feature]
-    # target_obs shape: [batch,station,feature]
-    # mask shape: [batch,station,feature]
-    assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
+def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] = "all"):
+    """
+    Mean Absolute Error using the median of samples.
+
+    Args:
+        y_target: [batch, station, feature]
+        y_hat: [batch, station, sample, feature]
+        mask: [batch, station, feature] or None
+        aggregation: "all" -> single MAE, "variable" -> MAE per feature
+    """
     
+    # Ensure shapes match
+    assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
+
     if mask is None:
         mask = torch.ones_like(y_target)
-    
+
+    # Take median over samples
     median = torch.median(y_hat, dim=-2).values
-    abs_errors = torch.abs(y_target - median)
-    
-    abs_errors *= mask
-    
-    denom = mask.sum()
-    if denom == 0:
-        return torch.tensor(0.0, device=y_hat.device)
-    
-    return abs_errors.sum() / denom
-    
-    
+
+    abs_errors = torch.abs(y_target - median) * mask.float()
+
+    if aggregation == "all":
+        num = abs_errors.sum()
+        denom = mask.sum()
+        if denom.item() == 0:
+            return torch.tensor(0.0, device=y_hat.device)
+        return num / denom
+
+    elif aggregation == "variable":
+        num = abs_errors.sum(dim=[0,1])
+        denom = mask.sum(dim=[0,1])
+
+        return torch.where(denom > 0, num / denom, torch.zeros_like(num))
+
+    raise ValueError(f"Invalid aggregation: {aggregation}")
+
     
