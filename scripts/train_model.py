@@ -191,6 +191,7 @@ def main(cfg: DictConfig) -> None:
     wandb_logger = WandbLogger(name=run_name,
                          project=cfg.logging.project,
                          group=cfg.logging.group,
+                         entity=cfg.logging.entity,
                          log_model=False)
     
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))

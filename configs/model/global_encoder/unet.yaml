@@ -1,6 +1,6 @@
 type: UNet
 # in_channels, field_extent_min, field_extent_max must be set by data
-out_channels: 32
+out_channels: 16
 spatial_dims: 2
 channels:
   - 16

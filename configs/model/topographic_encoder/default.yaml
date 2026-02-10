@@ -1,5 +1,5 @@
 # in_channels must be set from data
-out_channels: 64
+out_channels: 16
 n_layers: 3
 initial_hw:
   - 32
