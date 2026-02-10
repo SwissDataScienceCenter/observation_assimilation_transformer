@@ -318,11 +318,6 @@ class EvalDataset(Dataset[Dict[str, Any]]):
             eval_data[key] = observation_data[key][self.eval_indices]
             observed_data[key] = observation_data[key][self.observed_indices]
             
-        eval_data['station_index'] = self.eval_indices
-        observed_data['station_index'] = self.observed_indices
-        eval_data['stations_names'] = self.dataset.stations[self.eval_indices].to_numpy()
-        observed_data['stations_names'] = self.dataset.stations[self.observed_indices].to_numpy()
-        
         split_data = data | {
             'observation_data': observed_data,
             'query_data': eval_data
