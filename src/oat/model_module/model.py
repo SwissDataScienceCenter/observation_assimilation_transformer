@@ -289,6 +289,8 @@ class OAT(nn.Module):
                 'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
                 'geo': (B, N_q, D) - query coordinates
             }
+            num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            return_pre_oat_output: If True, also returns output before final output head for analysis.
         
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
