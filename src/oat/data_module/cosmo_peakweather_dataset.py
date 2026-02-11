@@ -159,7 +159,11 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Station observations
         self.obs_ds = PeakWeatherDataset(
             root=self.config.obs_path,
-            station_type='meteo_station'
+            station_type='meteo_station',
+            freq="1h",
+            aggregation_methods={
+                k: "mean" for k in self.config.obs_vars
+            },
         )
         
         # Set stations (all if not specified)
