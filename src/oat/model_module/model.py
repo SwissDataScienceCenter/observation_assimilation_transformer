@@ -341,7 +341,8 @@ class OAT(nn.Module):
         out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
         if self.config.pre_oat_loss_weight > 0:
             _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
-            loss = (1 - self.config.pre_oat_loss_weight) * loss + self.config.pre_oat_loss_weight * pre_loss
+            pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
+            loss = (1 - pre_weight) * loss + pre_weight * pre_loss
         
         with torch.no_grad():
             if num_samples is None:
