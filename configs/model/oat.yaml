@@ -1,5 +1,5 @@
 defaults:
-  - global_encoder: swinunetr
+  - global_encoder: unet
   - topographic_encoder: default
   - fusion_layer: default
   - masking: knn
