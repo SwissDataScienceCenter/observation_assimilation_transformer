@@ -324,6 +324,7 @@ class OAT(nn.Module):
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
         num_samples: int | None = None,    
+        return_pre_oat_output: bool = False
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
@@ -345,11 +346,21 @@ class OAT(nn.Module):
             _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
             pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
             loss = (1 - pre_weight) * loss + pre_weight * pre_loss
+            
         
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
             samples = self.output_head.sample(out, num_samples=num_samples)
+        
+        if return_pre_oat_output:
+            with torch.no_grad():
+                pre_oat_output = self.output_head(pre_oat_out)
+                if num_samples is None:
+                    num_samples = self.num_samples
+                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            pre_oat_output['samples'] = pre_oat_samples
+            out['pre_oat_output'] = pre_oat_output
             
         out['samples'] = samples
         
