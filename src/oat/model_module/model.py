@@ -4,7 +4,7 @@ Observation Assimilation Transformer (OAT) for Neural Downscaling.
 Following architecture from Neural Downscaling with Station Observation.
 """
 
-from typing import Dict, Tuple, Optional, Union
+from typing import Dict, Tuple, Optional, Any
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
@@ -266,8 +266,9 @@ class OAT(nn.Module):
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
-        num_samples: int | None = None
-    ) -> Dict[str, torch.Tensor]:
+        num_samples: int | None = None,
+        return_pre_oat_output: bool = False
+    ) -> Dict[str, Any]:
         """
         Forward pass through OAT model.
         
@@ -301,6 +302,15 @@ class OAT(nn.Module):
                 num_samples = self.num_samples
             samples = self.output_head.sample(out, num_samples=num_samples)          
         out['samples'] = samples
+        
+        if return_pre_oat_output:
+            pre_oat_output = self.output_head(pre_oat_out)
+            if num_samples is None:
+                num_samples = self.num_samples
+            pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            pre_oat_output['samples'] = pre_oat_samples
+            out['pre_oat_output'] = pre_oat_output
+            
         return out
     
     def forward_with_loss(
