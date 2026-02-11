@@ -293,7 +293,7 @@ class OAT(nn.Module):
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
             
-        oat_out = self._forward(global_data, observation_data, query_data)
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out = self.output_head(oat_out)
         
         with torch.no_grad():
