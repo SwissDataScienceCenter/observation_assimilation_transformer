@@ -46,7 +46,7 @@ class OATPredictor(pl.LightningModule):
             'point_mae': point_mae
         }
 
-    def _normalize_batch(self, batch):
+    def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return self.input_transform(batch)
 
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -63,7 +63,7 @@ class OATPredictor(pl.LightningModule):
         """
         return self.output_transform.inverse(y_hat['samples']), self.output_transform.inverse(y_true)
 
-    def forward(self, batch, query_locations = None, return_loss_and_targets = False):
+    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass for the OATPredictor.
         It expects the input data to be normalized. The user should prefer using
@@ -107,7 +107,7 @@ class OATPredictor(pl.LightningModule):
 
         return out, loss, target_obs, target_mask_obs
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
 
@@ -127,7 +127,7 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
@@ -143,7 +143,7 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
@@ -159,7 +159,7 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
         batch = self._normalize_batch(batch)
 
         y_hat = self(batch, return_loss=False)
@@ -169,7 +169,7 @@ class OATPredictor(pl.LightningModule):
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 
                                         mask: torch.Tensor,
-                                        prefix = "") -> None:
+                                        prefix: str = "") -> None:
         for metric_name, metric_fn in self.metrics_fn.items():
             
             metric_values = metric_fn(y_target=y_true,
@@ -185,7 +185,7 @@ class OATPredictor(pl.LightningModule):
                          prog_bar=True, on_step=True, on_epoch=True)
             
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> dict[str, Optimizer] | dict[str, Optimizer | dict[str, LRScheduler]] | Optimizer:
 
             optimizer = self.optimizer_class(self.parameters(), **self.optimizer_params)
 
