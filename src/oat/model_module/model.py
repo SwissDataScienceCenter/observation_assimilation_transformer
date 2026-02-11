@@ -307,7 +307,8 @@ class OAT(nn.Module):
             pre_oat_output = self.output_head(pre_oat_out)
             if num_samples is None:
                 num_samples = self.num_samples
-            pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            with torch.no_grad():
+                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
             pre_oat_output['samples'] = pre_oat_samples
             out['pre_oat_output'] = pre_oat_output
             
