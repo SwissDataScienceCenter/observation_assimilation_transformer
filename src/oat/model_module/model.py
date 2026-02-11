@@ -343,7 +343,7 @@ class OAT(nn.Module):
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
         if self.config.pre_oat_loss_weight > 0:
-            pre_out_output, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
             pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
             loss = (1 - pre_weight) * loss + pre_weight * pre_loss
             
