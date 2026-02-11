@@ -106,6 +106,7 @@ class OATConfig:
     masking: MaskingConfig
     output_head: OutputHeadConfig
     num_samples: int = 100
+    pre_oat_loss_weight: float = 0.0
     
     @classmethod
     def default(cls) -> 'OATConfig':
@@ -309,7 +310,7 @@ class OAT(nn.Module):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None
+        num_samples: int | None = None,    
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
@@ -325,8 +326,11 @@ class OAT(nn.Module):
             loss: Scalar loss tensor
         """
         
-        oat_out = self._forward(global_data, observation_data, query_data)
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        if self.config.pre_oat_loss_weight > 0:
+            _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            loss = (1 - self.config.pre_oat_loss_weight) * loss + self.config.pre_oat_loss_weight * pre_loss
         
         with torch.no_grad():
             if num_samples is None:
@@ -334,6 +338,7 @@ class OAT(nn.Module):
             samples = self.output_head.sample(out, num_samples=num_samples)
             
         out['samples'] = samples
+        
         return out, loss
 
     def _forward(
@@ -341,7 +346,7 @@ class OAT(nn.Module):
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Core forward pass implementing the architecture.
         
@@ -425,7 +430,7 @@ class OAT(nn.Module):
             dist_memory=dist_memory
         )
         
-        return updated_query_token
+        return updated_query_token, query_token
     
     @staticmethod
     def _compute_pairwise_distance(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
