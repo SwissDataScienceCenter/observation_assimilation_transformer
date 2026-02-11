@@ -4,7 +4,7 @@ Observation Assimilation Transformer (OAT) for Neural Downscaling.
 Following architecture from Neural Downscaling with Station Observation.
 """
 
-from typing import Dict, Tuple, Optional, Union
+from typing import Dict, Tuple, Optional, Any
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
@@ -106,6 +106,7 @@ class OATConfig:
     masking: MaskingConfig
     output_head: OutputHeadConfig
     num_samples: int = 100
+    pre_oat_loss_weight: float = 0.0
     
     @classmethod
     def default(cls) -> 'OATConfig':
@@ -265,8 +266,9 @@ class OAT(nn.Module):
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
-        num_samples: int | None = None
-    ) -> Dict[str, torch.Tensor]:
+        num_samples: int | None = None,
+        return_pre_oat_output: bool = False
+    ) -> Dict[str, Any]:
         """
         Forward pass through OAT model.
         
@@ -287,12 +289,14 @@ class OAT(nn.Module):
                 'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
                 'geo': (B, N_q, D) - query coordinates
             }
+            num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            return_pre_oat_output: If True, also returns output before final output head for analysis.
         
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
             
-        oat_out = self._forward(global_data, observation_data, query_data)
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out = self.output_head(oat_out)
         
         with torch.no_grad():
@@ -300,6 +304,16 @@ class OAT(nn.Module):
                 num_samples = self.num_samples
             samples = self.output_head.sample(out, num_samples=num_samples)          
         out['samples'] = samples
+        
+        if return_pre_oat_output:
+            pre_oat_output = self.output_head(pre_oat_out)
+            if num_samples is None:
+                num_samples = self.num_samples
+            with torch.no_grad():
+                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            pre_oat_output['samples'] = pre_oat_samples
+            out['pre_oat_output'] = pre_oat_output
+            
         return out
     
     def forward_with_loss(
@@ -309,7 +323,7 @@ class OAT(nn.Module):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None
+        num_samples: int | None = None,    
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
@@ -325,8 +339,12 @@ class OAT(nn.Module):
             loss: Scalar loss tensor
         """
         
-        oat_out = self._forward(global_data, observation_data, query_data)
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        if self.config.pre_oat_loss_weight > 0:
+            _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
+            loss = (1 - pre_weight) * loss + pre_weight * pre_loss
         
         with torch.no_grad():
             if num_samples is None:
@@ -334,6 +352,7 @@ class OAT(nn.Module):
             samples = self.output_head.sample(out, num_samples=num_samples)
             
         out['samples'] = samples
+        
         return out, loss
 
     def _forward(
@@ -341,7 +360,7 @@ class OAT(nn.Module):
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Core forward pass implementing the architecture.
         
@@ -425,7 +444,7 @@ class OAT(nn.Module):
             dist_memory=dist_memory
         )
         
-        return updated_query_token
+        return updated_query_token, query_token
     
     @staticmethod
     def _compute_pairwise_distance(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
