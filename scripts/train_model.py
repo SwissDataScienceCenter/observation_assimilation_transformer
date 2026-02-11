@@ -91,7 +91,9 @@ def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> 
     model_instance = model.OAT(oat_config)
     return model_instance
 
-def setup_predictor(model: model.OAT, transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
+def setup_predictor(model: model.OAT, 
+                    var_names: str,
+                    transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
     from importlib import import_module
     
@@ -110,6 +112,7 @@ def setup_predictor(model: model.OAT, transforms: tuple[Transform], cfg: DictCon
         oat_model=model,
         input_transform=transforms[0],
         output_transform=transforms[1],
+        output_var_names=var_names,
         lr=cfg.predictor.lr,
         optimizer_class=optim_cls,
         optimizer_params=cfg.predictor.kwargs.optimizer_params,
@@ -160,8 +163,9 @@ def main(cfg: DictConfig) -> None:
     logger.info("Model set up successfully.")
     
     
-    
+    var_names = dataset.config.obs_vars
     predictor = setup_predictor(model=oat_model,
+                                var_names = var_names,
                                 transforms=[input_transform, output_transform],
                                 cfg=cfg)
     # Callbacks
