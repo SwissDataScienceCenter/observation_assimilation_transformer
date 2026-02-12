@@ -2,6 +2,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from typing import Any, Dict
+from oat.data_module import transform, statistics
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+import pandas as pd
 
 def create_splits(dataset: Dataset[Dict[str, Any]],
                   val_fraction: float = 0.2,
@@ -88,6 +92,21 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         return len(self.dataset)
     
     @property
+    def station_names(self) -> list[str]:
+        """Return list of station names in the training set"""
+        return self.stations.tolist()
+    
+    @property
+    def station_info(self) -> pd.DataFrame:
+        """Return station metadata for training stations as DataFrame"""
+        return self.dataset.obs_ds.stations_table.loc[self.stations]
+    
+    @property
+    def variable_names(self) -> dict[str, Any]:
+        """Return list of variable names in the dataset"""
+        return self.dataset.variable_names
+    
+    @property
     def num_stations(self) -> int:
         return len(self.train_indices)
     
@@ -115,13 +134,99 @@ class TrainDataset(Dataset[Dict[str, Any]]):
             key_data[key] = observation_data[key][key_indices]
             query_data[key] = observation_data[key][query_indices]
             
+        key_data['station_index'] = key_indices
+        query_data['station_index'] = query_indices
+        
         split_data = data | {
             'observation_data': key_data,
             'query_data': query_data,
-            'key_indices': key_indices,
-            'query_indices': query_indices
         }
         return split_data
+    
+    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None) -> tuple[transform.NestedTransform, transform.Transform]:
+        """
+        Compute data-driven transforms (log, standardization) from random samples.
+            num_data_points: Number of random data points to sample for statistics
+        Returns: NestedTransform to apply to batches, and output_transform for obs-only.
+        """
+        apply_log = ['wind_gust', 'wind_speed']
+        log_indices = [i for i, var in enumerate(self.dataset.config.obs_vars) if var in apply_log]
+
+        # Create pre-transform with log
+        log_transform = transform.LogTransform(apply_to=log_indices, 
+                                               feature_dim=-1, 
+                                               offset=1)
+        pre_transform = transform.NestedTransform({
+            'observation_data': {
+                'obs': log_transform
+            }
+        })
+        
+        # Initialize statistics gatherers
+        stats_dict = {
+            'observation_data': {
+                'obs': statistics.RunningFeatureStats(
+                    num_features=len(self.dataset.config.obs_vars),
+                    feature_dim=-1,
+                ),
+                'topo': statistics.RunningFeatureStats(
+                    num_features=len(self.dataset.config.topo_vars),
+                    feature_dim=-3,
+                ),
+                'geo': statistics.RunningFeatureStats(
+                    num_features=len(self.dataset.config.geo_vars),
+                    feature_dim=-1,
+                ),
+            },
+            'global_data': {
+                'global_field': statistics.RunningFeatureStats(
+                    num_features=len(self.dataset.config.nwp_vars) + len(self.dataset.config.topo_vars),
+                    feature_dim=-3,
+                )
+            
+            }
+        }
+        # Gather statistics
+        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
+            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
+                stats_gatherer.update(sample)
+            elif isinstance(stats_gatherer, dict):
+                for key, stat in stats_gatherer.items():
+                    gather_stats(sample[key], stat)
+                    
+        if dataloader is not None:
+            bs = dataloader.batch_size
+            for i, batch in tqdm(enumerate(dataloader), total=num_data_points // bs, desc="Gathering dataset statistics"):
+                if i * bs >= num_data_points:
+                    break
+                pre_transformed_batch = pre_transform(batch)
+                gather_stats(pre_transformed_batch, stats_dict)
+        else:
+            rand_indices = torch.randperm(len(self))[:num_data_points]
+            for idx in tqdm(rand_indices, desc="Gathering dataset statistics"):
+                sample = self[int(idx)]
+                pre_transformed_sample = pre_transform(sample)
+                gather_stats(pre_transformed_sample, stats_dict)
+        
+        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
+            
+        transform_dict = {
+            'observation_data': {
+                'obs':output_transform,
+                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            },
+            'query_data': {
+                'obs':output_transform,
+                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            },
+            'global_data': {
+                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+            }
+        }
+        post_transform = transform.NestedTransform(transform_dict)
+        return post_transform, output_transform
     
     
 class EvalDataset(Dataset[Dict[str, Any]]):
@@ -172,6 +277,27 @@ class EvalDataset(Dataset[Dict[str, Any]]):
         return len(self.dataset)
     
     @property
+    def station_names(self) -> dict[str, list[str]]:
+        """Return dict with station names for eval and observed subsets"""
+        return {
+            'eval': self.eval_stations.tolist(),
+            'observed': self.observed_stations.tolist()
+        }
+        
+    @property
+    def station_info(self) -> dict[str, pd.DataFrame]:
+        """Return dict with station metadata DataFrames for eval and observed subsets"""
+        return {
+            'eval': self.dataset.obs_ds.stations_table.loc[self.eval_stations],
+            'observed': self.dataset.obs_ds.stations_table.loc[self.observed_stations]
+        }
+        
+    @property
+    def variable_names(self) -> dict[str, Any]:
+        """Return variable names from the underlying dataset"""
+        return self.dataset.variable_names
+    
+    @property
     def num_stations(self) -> int:
         return len(self.eval_indices) + len(self.observed_indices)
     
@@ -191,7 +317,7 @@ class EvalDataset(Dataset[Dict[str, Any]]):
         for key in observation_data:
             eval_data[key] = observation_data[key][self.eval_indices]
             observed_data[key] = observation_data[key][self.observed_indices]
-        
+            
         split_data = data | {
             'observation_data': observed_data,
             'query_data': eval_data

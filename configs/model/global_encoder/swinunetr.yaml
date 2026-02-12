@@ -1,0 +1,6 @@
+type: SwinUNETR
+# in_channels, field_extent_min, field_extent_max must be set by data
+out_channels: 32
+spatial_dims: 2
+patch_size: 2
+window_size: 7

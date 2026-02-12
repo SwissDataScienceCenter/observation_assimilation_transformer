@@ -1,59 +1,74 @@
 import pytest
-import pandas as pd
 from pathlib import Path
 import torch
+import pickle
 
-# Path to the table containing the shapes and dtypes.
-TABLE_PATH = Path(__file__).resolve().parent / "batch_shapes.pickle"
-
-def generate_batch_from_table() -> dict[str, dict[str, torch.Tensor]]:
-    """
-    Reconstructs a batch dict example from batch_shapes.pickle.
-    All float tensors are filled with random values.
-    Non-float tensors are filled with zeros.
-    """
-    try:
-        df = pd.read_pickle(TABLE_PATH)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"Could not open batch shapes table at '{TABLE_PATH}'.\n"
-            "Make sure the file exists and has been generated "
-            "by running: python -m scripts.create_batch_fixture_shapes"
-        ) from e
-    except Exception as e:
-        raise RuntimeError(
-            f"Unexpected error while loading batch shapes table at '{TABLE_PATH}'.\n"
-        ) from e
-
-    batch: dict[str, dict[str, torch.Tensor]] = {}
-    for group_name in df['group'].unique():
-        batch[group_name] = {}
-        group_df = df[df['group'] == group_name]
-        for _, row in group_df.iterrows():
-            shape = tuple(row['shape'])
-
-            if isinstance(row['dtype'], torch.dtype):
-                dtype = row['dtype']
-            elif isinstance(row['dtype'], str):
-                dtype = getattr(torch, row['dtype']) if hasattr(torch, row['dtype']) else torch.float32
-            else:
-                dtype = torch.float32
-
-            if getattr(dtype, "is_floating_point", False):
-                tensor = torch.randn(shape, dtype=dtype)
-            elif row['key'] == 'index':
-                tensor = torch.randperm(shape[0])
-            else:
-                # Fallback for non-floating dtypes: use zeros to avoid torch.randn errors.
-                tensor = torch.zeros(shape, dtype=dtype)
-
-            if group_name != row['key']:
-                batch[group_name][row['key']] = tensor
-            else:
-                batch[group_name] = tensor
-    return batch
+from oat.model_module.model import (
+    GlobalEncoderConfig,
+    TopographicEncoderConfig,
+    FusionLayerConfig,
+    MaskingConfig,
+    TransformerConfig,
+    OutputHeadConfig,
+    OATConfig
+)
+from oat.data_module.transform import Transform
 
 @pytest.fixture
 def batch_fixture() -> dict[str, dict[str, torch.Tensor]]:
     """Provides a dummy batch based on the saved batch_shapes.pickle table."""
-    return generate_batch_from_table()
+    # return generate_batch_from_table()
+    
+    batch_fixture_file = Path(__file__).resolve().parent / "example_batch_fixture.pickle"
+    with open(batch_fixture_file, "rb") as f:
+        batch = pickle.load(f)
+    return batch
+
+@pytest.fixture
+def model_cfg_fixture(batch_fixture):
+    global_enc_cfg = GlobalEncoderConfig(
+        in_channels=batch_fixture['global_data']['global_field'].shape[1],
+        field_extent_min= [2255500.0, 840500.0],
+        field_extent_max= [2964500.0, 1479500.0]
+    )
+    
+    topography_enc_cfg = TopographicEncoderConfig(
+        in_channels=batch_fixture['observation_data']['topo'].shape[2]
+    )
+    
+    fusion_layer_cfg = FusionLayerConfig()
+    masking_cfg = MaskingConfig()
+    transformer_cfg = TransformerConfig(
+        d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1]
+    )
+    output_head_cfg = OutputHeadConfig(
+        target_features=batch_fixture['observation_data']['obs'].shape[-1],
+        type='linear'
+    )
+    
+    oat_cfg = OATConfig(
+        global_encoder=global_enc_cfg,
+        topographic_encoder=topography_enc_cfg,
+        fusion_layer=fusion_layer_cfg,
+        transformer=transformer_cfg,
+        masking=masking_cfg,
+        output_head=output_head_cfg,
+        num_samples=100
+    )
+    
+    return oat_cfg
+
+@pytest.fixture
+def transform_fixture() -> tuple[Transform, Transform]:
+    """Provides a dummy transform."""
+    
+    in_pickle_file = Path(__file__).resolve().parent / "input_transform_fixture.pickle"
+    out_pickle_file = Path(__file__).resolve().parent / "output_transform_fixture.pickle"
+    
+    with open(in_pickle_file, "rb") as f:
+        in_transform = pickle.load(f) 
+        
+    with open(out_pickle_file, "rb") as f:
+        out_transform = pickle.load(f) 
+        
+    return in_transform, out_transform

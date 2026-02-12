@@ -1,16 +1,21 @@
-from typing import Type, Optional
+from typing import Type, Optional, List
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
+from oat.data_module.transform import Transform
+from oat.predictor_module.functional_metrics import sample_mae, point_mae
+
 class OATPredictor(pl.LightningModule):
 
     def __init__(self,
                  oat_model: nn.Module,
+                 input_transform: Transform,
+                 output_transform: Transform,
+                 output_var_names: List,
                  lr: float = 1e-3,
-                 training_stations_split: float = 0.2,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
                  scheduler_class: Type[LRScheduler] | None = None,
@@ -19,10 +24,9 @@ class OATPredictor(pl.LightningModule):
         super().__init__()
 
         # Ignore the model itself in hparams but update manually with its cfg
-        self.save_hyperparameters(ignore=['oat_model'])
+        self.save_hyperparameters(ignore=['oat_model', 'input_transform', 'output_transform'])
         self.hparams.update({'model_cfg': oat_model.config})
 
-        self.training_stations_split = training_stations_split
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
 
@@ -30,108 +34,184 @@ class OATPredictor(pl.LightningModule):
         self.scheduler_params = scheduler_params or {}
 
         self.model = oat_model
-
-    def _normalize_batch(self, batch):
-        # TODO implement
-        pass
-
-    def _unnormalize_prediction(self, pred):
-        # TODO implement
-        pass
-
-
-    def _split_queries_key_values(self, batch):
-        assert batch['observation_data']['obs'] is not None
-
-        n_stations = batch['observation_data']['coords'].shape[1]
-        n_select = int(self.training_stations_split * n_stations)
-
-        q_station_idx = torch.randperm(n_stations)[:n_select]
-        kv_station_idx = torch.randperm(n_stations)[n_select:]
-
-        all_data = batch['observation_data']
-        # select key-value stations
-        batch['observation_data'] = {
-                k: v.index_select(1, kv_station_idx) if v.shape[1]  == n_stations else v
-                for k,v in all_data.items()
-        }
-        # select query stations and drop observational keys (which will be targets)
-        batch['query_data'] = {
-                k: v.index_select(1, q_station_idx) if v.shape[1]  == n_stations else v
-                for k,v in all_data.items() 
+        self.input_transform = input_transform
+        self.output_transform = output_transform
+        
+        self.output_var_names = output_var_names
+        self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
+        self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
+        
+        self.metrics_fn = {
+            'sample_mae': sample_mae,
+            'point_mae': point_mae
         }
 
-        target_obs = batch['query_data'].pop('obs', None)
-        target_mask_obs = batch['query_data'].pop('mask_obs', None)
+    def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return self.input_transform(batch)
 
-        return batch, target_obs, target_mask_obs
+    def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Given the model's prediction and normalized targets, de-normalizes the predicted samples
+        and and target and return them.
 
-    def forward(self, batch, query_locations = None, return_loss = False):
+        Args:
+            y_hat: the model's prediction containing samples
+            y_true: the normalized target
+
+        Returns:
+           The de-normalized samples and de-normalized targets
+        """
+        return self.output_transform.inverse(y_hat['samples']), self.output_transform.inverse(y_true)
+
+    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass for the OATPredictor.
+        It expects the input data to be normalized. The user should prefer using
+        training_step, validation_step, test_step or predict_step over this method
+        directly.
+
+        Args:
+            batch : The input data batch
+            query_locations : Location of query stations. When not provided, the input batch is expected
+            to already have a key "query_data". This parameter should be used during inference.
+            return_loss_and_targets: Whether loss, target and target mask should be returned.
+
+        Returns:
+            The prediction as well as loss, target and target mask when return_loss_and_targets is True.
+        """
 
         if query_locations is None:
-            # If no query locations are given, a subset of the batch is used as query
-            batch, target_obs, target_mask_obs = self._split_queries_key_values(batch=batch)
+            # If no query locations are given, we assume that they are given by the dataloader
+            assert "query_data" in batch.keys(), "Batch does not contain query data and no query\
+                locations have been provided"
+
+            target_obs = batch['query_data'].pop('obs', None)
+            target_mask_obs = batch['query_data'].pop('mask_obs', None)
         else:
-            # TODO implement
+            # TODO implement 
             pass
 
-        if not return_loss:
+        if not return_loss_and_targets:
             out = self.model.forward(global_data=batch['global_data'],
                                observation_data=batch['observation_data'],
-                               query_data=batch['query_data'])
+                               query_data=batch['query_data'],
+                               return_pre_oat_output=True)
 
             return out
-        else:
-            assert query_locations is None, "Can not compute loss for unlabelled queries."
-            out, loss = self.model.forward_with_loss(global_data=batch['global_data'],
-                                                     observation_data=batch['observation_data'],
-                                                     query_data=batch['query_data'],
-                                                     target_obs=target_mask_obs,
-                                                     target_mask_obs=target_mask_obs)
 
-            return out, loss
+        assert query_locations is None, "Can not compute loss for unlabelled queries."
+        out, loss = self.model.forward_with_loss(global_data=batch['global_data'],
+                                                    observation_data=batch['observation_data'],
+                                                    query_data=batch['query_data'],
+                                                    target_obs=target_obs,
+                                                    target_mask_obs=target_mask_obs,
+                                                    return_pre_oat_output=True)
 
-    def training_step(self, batch, batch_idx):
+        return out, loss, target_obs, target_mask_obs
+
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
 
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        # y_hat_unorm shape: [batch,station,sample,feature]
+        # target_obs shape: [batch,station,feature]
+        # NOTE should we add nograd here?
+        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat, 
+                                                                   y_true=target_obs)
         # TODO log metrics with unorm value
+
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="train")
+        
+        # pre_oat logging
+        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                        y_true=target_obs)
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="train_pre_oat")
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
 
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
+                                                        y_true=target_obs)
         # TODO log metrics with unorm value
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="val")
+
+        # pre_oat logging
+        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                        y_true=target_obs)
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="val_pre_oat")
 
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss = self(batch, return_loss=True)
+        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("test_loss", loss)
 
-        y_hat_unorm = self._unnormalize_prediction(y_hat)
+        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
+                                                        y_true=target_obs)
         # TODO log metrics with unorm value
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="test")
+        
+        # pre_oat logging
+        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                        y_true=target_obs)
+        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                  y_true=y_true_unnorm,
+                                  mask=target_mask_obs,
+                                  prefix="test_pre_oat")
 
         return loss
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
         batch = self._normalize_batch(batch)
 
         y_hat = self(batch, return_loss=False)
 
-        return self._unnormalize_prediction(y_hat)
+        return self.output_transform.inverse(y_hat['samples'])
+    
+    def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
+                                        y_true: torch.Tensor, 
+                                        mask: torch.Tensor,
+                                        prefix: str = "") -> None:
+        for metric_name, metric_fn in self.metrics_fn.items():
+            
+            metric_values = metric_fn(y_target=y_true,
+                                      y_hat=y_hat_samples,
+                                      mask=mask,
+                                      aggregation='variable')
+            
+            for i, metric_val in enumerate(metric_values):
+                var_name = self.indx_to_var[i]
+                
+                self.log(name=f'{prefix}_{metric_name}_{var_name}', 
+                         value=metric_val, 
+                         prog_bar=True, on_step=True, on_epoch=True)
+            
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Optimizer:
 
             optimizer = self.optimizer_class(self.parameters(), **self.optimizer_params)
 

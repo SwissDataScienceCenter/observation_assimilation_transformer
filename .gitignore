@@ -12,6 +12,11 @@ env/
 data/processed/
 data/raw/
 notebooks/wip/
+outputs
+
+# logs
+slurm_logs
+wandb
 
 # Jupyter
 .ipynb_checkpoints/

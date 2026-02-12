@@ -4,7 +4,7 @@ Observation Assimilation Transformer (OAT) for Neural Downscaling.
 Following architecture from Neural Downscaling with Station Observation.
 """
 
-from typing import Dict, Tuple, Optional, Union
+from typing import Dict, Tuple, Optional, Any
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
@@ -22,19 +22,24 @@ from oat.model_module import (
 @dataclass
 class GlobalEncoderConfig:
     """Configuration for global encoder (Eq. 1)."""
-    in_channels: int = 8    # data dependent
+    in_channels: int  # data dependent
+    field_extent_min: Tuple[float, float] #= (2255500., 840500.)    # data dependent
+    field_extent_max: Tuple[float, float] #= (2964500., 1479500.)   # data dependent
+    type: str = "UNet"
     out_channels: int = 32
     spatial_dims: int = 2
     patch_size: int = 2
     window_size: int = 7
-    field_extent_min: Tuple[float, float] = (2255500., 840500.)    # data dependent
-    field_extent_max: Tuple[float, float] = (2964500., 1479500.)   # data dependent
+    channels: Tuple[int, ...] = (16, 32, 64, 128)
+    strides: Tuple[int, ...] = (1, 1, 1)
+    num_res_units: int = 2
+
 
 
 @dataclass
 class TopographicEncoderConfig:
     """Configuration for topographic encoder (Eq. 4-5)."""
-    in_channels: int = 5   # data dependent
+    in_channels: int  # data dependent
     out_channels: int = 64
     n_layers: int = 3
     initial_hw: Tuple[int, int] = (32, 32)
@@ -56,6 +61,7 @@ class FusionLayerConfig:
 @dataclass
 class TransformerConfig:
     """Configuration for OAT transformer block (Eq. 17-25)."""
+    d_geo_bias: int
     d_model: int = 64
     nhead: int = 4
     num_encoder_layers: int = 2
@@ -64,7 +70,6 @@ class TransformerConfig:
     dropout: float = 0.1
     activation: str = "GELU"
     sparse_attn: bool = True
-    d_geo_bias: int = 2   # data dependent
     dim_geo_bias_feedforward: int = 16
     activation_geo_bias: str = "ReLU"
 
@@ -81,8 +86,9 @@ class MaskingConfig:
 @dataclass
 class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
+    target_features: int
+    type: str
     in_features: int = 64
-    target_features: int = 1  # data dependent
     loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
     min_std_val: float = 1e-3
@@ -99,6 +105,8 @@ class OATConfig:
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
+    num_samples: int = 100
+    pre_oat_loss_weight: float = 0.0
     
     @classmethod
     def default(cls) -> 'OATConfig':
@@ -110,7 +118,8 @@ class OATConfig:
             fusion_layer=FusionLayerConfig(out_channels=d_model),
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
-            output_head=OutputHeadConfig(in_features=d_model)
+            output_head=OutputHeadConfig(in_features=d_model),
+            num_samples=100
         )
 
 
@@ -154,19 +163,37 @@ class OAT(nn.Module):
         d_topo = config.topographic_encoder.out_channels
         
         # Global encoder (Eq. 1)
-        self.global_encoder = global_encoder.SwinUNETRGlobalEncoder(
-            swin_unetr_params={
-                'in_channels': config.global_encoder.in_channels,
-                'out_channels': config.global_encoder.out_channels,
-                'spatial_dims': config.global_encoder.spatial_dims,
-                'patch_size': config.global_encoder.patch_size,
-                'window_size': config.global_encoder.window_size,
-            },
-            field_extent={
-                'min': torch.tensor(config.global_encoder.field_extent_min),
-                'max': torch.tensor(config.global_encoder.field_extent_max)
-            }
-        )
+        if config.global_encoder.type == "UNet":
+            self.global_encoder = global_encoder.UNetGlobalEncoder(
+                unet_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'channels': config.global_encoder.channels,
+                    'strides': config.global_encoder.strides,
+                    'num_res_units': config.global_encoder.num_res_units,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        elif config.global_encoder.type == "SwinUNETR":
+            self.global_encoder = global_encoder.SwinUNETRGlobalEncoder(
+                swin_unetr_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'patch_size': config.global_encoder.patch_size,
+                    'window_size': config.global_encoder.window_size,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        else:
+            raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet' and 'SwinUNETR'.")
         
         # Topographic encoder (Eq. 4-5)
         self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(
@@ -190,11 +217,15 @@ class OAT(nn.Module):
         )
         
         # Output head for innovation computation (Eq. 8-12)
-        self.output_head = output_head.LinearOutputHead(
-            in_features=config.output_head.in_features,
-            target_features=config.output_head.target_features,
-            loss_fn=config.output_head.loss_fn,
-        )
+        if config.output_head.type == "linear":
+            self.output_head = output_head.LinearOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                loss_fn=config.output_head.loss_fn,
+            )
+        else:
+            raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear'.")
+        self.num_samples = config.num_samples
         
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
@@ -234,8 +265,10 @@ class OAT(nn.Module):
         self,
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
-        query_data: Dict[str, torch.Tensor]
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        query_data: Dict[str, torch.Tensor],
+        num_samples: int | None = None,
+        return_pre_oat_output: bool = False
+    ) -> Dict[str, Any]:
         """
         Forward pass through OAT model.
         
@@ -256,12 +289,32 @@ class OAT(nn.Module):
                 'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
                 'geo': (B, N_q, D) - query coordinates
             }
+            num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            return_pre_oat_output: If True, also returns output before final output head for analysis.
         
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
-        out = self._forward(global_data, observation_data, query_data)
-        return self.output_head(out)
+            
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
+        out = self.output_head(oat_out)
+        
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)          
+        out['samples'] = samples
+        
+        if return_pre_oat_output:
+            pre_oat_output = self.output_head(pre_oat_out)
+            if num_samples is None:
+                num_samples = self.num_samples
+            with torch.no_grad():
+                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            pre_oat_output['samples'] = pre_oat_samples
+            out['pre_oat_output'] = pre_oat_output
+            
+        return out
     
     def forward_with_loss(
         self,
@@ -269,7 +322,9 @@ class OAT(nn.Module):
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
-        target_mask_obs: torch.Tensor
+        target_mask_obs: torch.Tensor,
+        num_samples: int | None = None,    
+        return_pre_oat_output: bool = False
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass with loss computation.
@@ -284,15 +339,39 @@ class OAT(nn.Module):
             predictions: Dict with model outputs
             loss: Scalar loss tensor
         """
-        out = self._forward(global_data, observation_data, query_data)
-        return self.output_head.loss(out, target_obs, target_mask_obs)
+        
+        oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
+        out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        if self.config.pre_oat_loss_weight > 0:
+            _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
+            loss = (1 - pre_weight) * loss + pre_weight * pre_loss
+            
+        
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)
+        
+        if return_pre_oat_output:
+            with torch.no_grad():
+                pre_oat_output = self.output_head(pre_oat_out)
+                if num_samples is None:
+                    num_samples = self.num_samples
+                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+            pre_oat_output['samples'] = pre_oat_samples
+            out['pre_oat_output'] = pre_oat_output
+            
+        out['samples'] = samples
+        
+        return out, loss
 
     def _forward(
         self,
         global_data: Dict[str, torch.Tensor],
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Core forward pass implementing the architecture.
         
@@ -361,7 +440,7 @@ class OAT(nn.Module):
             g_src=observation_data['geo'],  # Geometric bias for stations
             g_tgt=query_data['geo']         # Geometric bias for queries
         )
-        return updated_query_token
+        return updated_query_token, query_token
     
     def _create_uninformed_tokens(
         self,
