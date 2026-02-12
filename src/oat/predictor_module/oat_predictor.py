@@ -24,7 +24,7 @@ class OATPredictor(pl.LightningModule):
         super().__init__()
 
         # Ignore the model itself in hparams but update manually with its cfg
-        self.save_hyperparameters(ignore=['oat_model', 'input_transform', 'output_transform'])
+        self.save_hyperparameters(ignore=['oat_model'])
         self.hparams.update({'model_cfg': oat_model.config})
 
         self.optimizer_class = optimizer_class
