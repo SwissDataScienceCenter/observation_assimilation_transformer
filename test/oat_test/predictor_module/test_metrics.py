@@ -27,13 +27,18 @@ def test_sample_mae(metric_fn, aggregation):
         assert metrics.ndim == 1
         assert metrics.shape[0] == 4
         
-        
+    # Test with samples and predictions all being different 
+    # by a scale of 2
     y_pred_samples = torch.ones(32,18,100,4)
     y_true = torch.ones(32,18,4) * 2
 
     metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=mask, aggregation=aggregation)
     
     if aggregation == 'all':
-        assert metrics.item() == 1.0
+        if metric_fn.__name__ == 'mc_crps':
+            expected = torch.norm(y_pred_samples[0,0,0,:] - y_true[0,0,:])
+        else:
+            expected = 1.0
+        assert metrics.item() == expected
     else:
         assert (metrics == 1.0).all()
