@@ -102,9 +102,13 @@ def mc_crps(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] 
     Computes the Monte Carlo estimation of CRPS. 
     If aggregation = "all", this function effectively computes the Energy Score (multivariate CRPS)
     """
+    
+    if mask is None:
+        mask = torch.ones_like(y_target)
 
     # y_target.shape = [batch,station,features]
     # y_hat.shape = [batch,station,samples, features]
+    # mask.shape = [batch,station,features]
     assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
     
     mc_samples = y_hat.shape[-2]
@@ -112,7 +116,7 @@ def mc_crps(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] 
         mask_exp = mask.unsqueeze(-2)
         
         # First term E(||X-y||)
-        smpls_to_tgt_dist = y_hat - y_target.unsqueeze(-2) * mask_exp
+        smpls_to_tgt_dist = (y_hat - y_target.unsqueeze(-2)) * mask_exp
         eucl_distance = torch.norm(smpls_to_tgt_dist, dim=-1)
         first_term = eucl_distance.mean(dim=-1)
         
@@ -149,6 +153,7 @@ def mc_crps(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] 
         second_term = smpls_to_smpls_abs_diff.sum(dim=(-3, -2)) / (mc_samples * (mc_samples - 1))
         
         score = first_term - 0.5 * second_term 
-        masked_score = score * mask
-        return masked_score.sum(dim=(0,1)) / mask.sum(dim=(0,1))
-        # return (first_term - 0.5 * second_term).mean(dim=(0,1))
+
+        return score.sum(dim=(0,1)) / mask.sum(dim=(0,1))
+    
+    raise ValueError(f"Invalid aggregation: {aggregation}")
