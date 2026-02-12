@@ -14,8 +14,12 @@ def test_sample_mae(metric_fn, aggregation):
     
     y_pred_samples = torch.randn(32,18,100,4)
     y_true = torch.randn(32,18,4)
+    
+    mask = torch.ones(32,18,4)
+    mask_p = torch.rand_like(y_true)
+    mask[mask_p < 0.2] = 0
 
-    metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=None, aggregation=aggregation)
+    metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=mask, aggregation=aggregation)
     
     if aggregation == 'all':
         assert metrics.ndim == 0
@@ -27,7 +31,7 @@ def test_sample_mae(metric_fn, aggregation):
     y_pred_samples = torch.ones(32,18,100,4)
     y_true = torch.ones(32,18,4) * 2
 
-    metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=None, aggregation=aggregation)
+    metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=mask, aggregation=aggregation)
     
     if aggregation == 'all':
         assert metrics.item() == 1.0
