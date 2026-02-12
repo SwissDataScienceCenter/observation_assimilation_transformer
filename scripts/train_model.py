@@ -85,7 +85,8 @@ def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> 
         masking=masking_cfg,
         transformer=transformer_cfg,
         output_head=output_head_cfg,
-        num_samples=model_cfg.num_samples
+        num_samples=model_cfg.num_samples,
+        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight
     )
     logger.info("Initializing model...")
     model_instance = model.OAT(oat_config)
