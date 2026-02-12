@@ -223,8 +223,23 @@ class OAT(nn.Module):
                 target_features=config.output_head.target_features,
                 loss_fn=config.output_head.loss_fn,
             )
+        elif config.output_head.type == "gaussian":
+            self.output_head = output_head.GaussianOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                std_fn=config.output_head.std_fn,
+                min_std_val=config.output_head.min_std_val,
+            )
+        elif config.output_head.type == "quantile":
+            train_taus = torch.linspace(0.0, 1.0, config.output_head.num_train_taus + 2)[1:-1]
+            self.output_head = output_head.QuantileOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                degree=config.output_head.degree,
+                train_taus=train_taus,
+            )
         else:
-            raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear'.")
+            raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear', 'Gaussian', 'Quantile'.")
         self.num_samples = config.num_samples
         
         # Fusion layer 2: Uninformed token + Innovation → Initial station token

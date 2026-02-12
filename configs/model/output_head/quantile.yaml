@@ -1,4 +1,5 @@
-in_features: 64 # should be set by transformer
+#in_features: 64 # should be set by transformer
 # target_features: int = 4  # data dependent
+type: quantile
 degree: 20
 num_train_taus: 10
