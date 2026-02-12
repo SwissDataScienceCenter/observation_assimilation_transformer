@@ -31,7 +31,7 @@ class TestSpatialNeighborSearchInit:
     
     def test_init_invalid_mode_raises_error(self) -> None:
         """Test that invalid mode raises ValueError"""
-        with pytest.raises(ValueError, match="mode must be 'radius' or 'knn'"):
+        with pytest.raises(ValueError, match="mode must be 'radius', 'knn', or 'full', got invalid"):
             SpatialNeighborSearch(mode='invalid')
     
     def test_init_custom_max_num_neighbors(self) -> None:
