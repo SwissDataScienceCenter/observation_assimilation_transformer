@@ -21,14 +21,14 @@ class SpatialNeighborSearch(nn.Module):
     
     def __init__(
         self,
-        mode: Literal['radius', 'knn'] = 'knn',
+        mode: Literal['radius', 'knn', 'full'] = 'knn',
         radius: Optional[float] = None,
         k: Optional[int] = None,
         max_num_neighbors: int = 32,
     ) -> None:
         """
         Args:
-            mode: 'radius' or 'knn'
+            mode: 'radius', 'knn', or 'full'
             radius: Distance threshold for radius mode
             k: Number of neighbors for knn mode
             max_num_neighbors: Max neighbors per point in radius mode
@@ -49,7 +49,7 @@ class SpatialNeighborSearch(nn.Module):
         elif mode == 'full':
             pass  # no additional parameters needed
         else:
-            raise ValueError(f"mode must be 'radius' or 'knn', got {mode}")
+            raise ValueError(f"mode must be 'radius', 'knn', or 'full', got {mode}")
     
     def forward(
         self,
