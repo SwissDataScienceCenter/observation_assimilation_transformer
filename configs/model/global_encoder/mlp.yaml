@@ -1,0 +1,6 @@
+type: MLP
+out_channels: 32
+act_fn: ReLU
+hidden_dims:
+   - 32
+
