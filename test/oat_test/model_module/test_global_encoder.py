@@ -1,7 +1,7 @@
 import os
 import pytest
 import torch
-from oat.model_module.global_encoder import SwinUNETRGlobalEncoder, UNetGlobalEncoder, BaseGlobalEncoder
+from oat.model_module.global_encoder import SwinUNETRGlobalEncoder, UNetGlobalEncoder, BaseGlobalEncoder, MLPGlobalEncoder
 from typing import Any, Dict
 
 
@@ -21,6 +21,15 @@ def unet_params() -> Dict[str, Any]:
         'strides': (1, 1, 1),
         'num_res_units': 2,
     }
+    
+
+def mlp_params() -> Dict[str, Any]:
+    return {
+        'in_channels': 4,
+        'hidden_dims': [16, 32],
+        'out_channels': 4,
+        'act_fn': 'ReLU'
+    }
 
 
 @pytest.fixture
@@ -38,7 +47,7 @@ def img(request: pytest.FixtureRequest) -> torch.Tensor:
     return torch.randn(*request.param)
 
 
-@pytest.fixture(params=["swin_unetr", "unet"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
 def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -47,15 +56,22 @@ def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dic
             swin_unetr_params=params,
             field_extent=field_extent
         )
-    else:
+    elif request.param == "unet":
         params = unet_params()
         params['in_channels'] = img.shape[-3]
         return UNetGlobalEncoder(
             unet_params=params,
             field_extent=field_extent
         )
+    elif request.param == "mlp":
+        params = mlp_params()
+        params['in_channels'] = img.shape[-3]
+        return MLPGlobalEncoder(
+            mlp_params=params,
+            field_extent=field_extent
+        )
 
-@pytest.fixture(params=["swin_unetr", "unet"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
 def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -64,11 +80,18 @@ def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, 
             swin_unetr_params=params,
             field_extent=field_extent
         )
-    else:
+    elif request.param == "unet":
         params = unet_params()
         params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
         return UNetGlobalEncoder(
             unet_params=params,
+            field_extent=field_extent
+        )
+    elif request.param == "mlp":
+        params = mlp_params()
+        params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+        return MLPGlobalEncoder(
+            mlp_params=params,
             field_extent=field_extent
         )
 
