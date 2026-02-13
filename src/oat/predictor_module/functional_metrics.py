@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 
@@ -97,19 +97,27 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
     raise ValueError(f"Invalid aggregation: {aggregation}")
 
 @register_metric()
-def mc_crps(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] = "all"):
+def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Tensor] = None, 
+            aggregation: Literal["all", "variable"] = "all") -> torch.Tensor:
     """
     Computes the Monte Carlo estimation of CRPS. 
     If aggregation = "all", this function computes the average CRPS 
-    for each variable, not the Energy Score.
+    across all variable, not the Energy Score.
     
     y_target.shape = [batch,station,features]
     y_hat.shape = [batch,station,samples, features]
     mask.shape = [batch,station,features]
+    
+    If aggregation = "all", output is a 0-dimensional tensor containing the averaged
+    metric.
+    If aggregation = "variable", output is 1-dimensional, with one value per variable.
     """
     
     if mask is None:
         mask = torch.ones_like(y_target)
+        
+    if mask.sum() == 0.0:
+        raise ValueError("Mask does not contain any valid values.")
 
     
     assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
