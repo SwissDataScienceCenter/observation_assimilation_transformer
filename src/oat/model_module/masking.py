@@ -21,14 +21,14 @@ class SpatialNeighborSearch(nn.Module):
     
     def __init__(
         self,
-        mode: Literal['radius', 'knn'] = 'knn',
+        mode: Literal['radius', 'knn', 'full'] = 'knn',
         radius: Optional[float] = None,
         k: Optional[int] = None,
         max_num_neighbors: int = 32,
     ) -> None:
         """
         Args:
-            mode: 'radius' or 'knn'
+            mode: 'radius', 'knn', or 'full'
             radius: Distance threshold for radius mode
             k: Number of neighbors for knn mode
             max_num_neighbors: Max neighbors per point in radius mode
@@ -46,27 +46,30 @@ class SpatialNeighborSearch(nn.Module):
             if k is None:
                 raise ValueError("k must be specified for mode='knn'")
             self.k = k
+        elif mode == 'full':
+            pass  # no additional parameters needed
         else:
-            raise ValueError(f"mode must be 'radius' or 'knn', got {mode}")
+            raise ValueError(f"mode must be 'radius', 'knn', or 'full', got {mode}")
     
     def forward(
         self,
         coords_1: torch.Tensor,
         coords_2: Optional[torch.Tensor] = None,
+        return_full_mask: bool = False,
     ) -> torch.Tensor:
         """
-        Compute binary mask based on spatial neighbors.
+        Compute edges of flattened batch point clouds and return edges
         
         Args:
             coords_1: [B, N_1, D] first set of coordinates
-            coords_2: [B, N_2, D] second set of coordinates
-        
+            coords_2: [B, N_2, D] second set of coordinates (if None, use coords_1 for both)
+            return_full_mask: If True, return a dense boolean mask of shape [B, N_1, N_2] instead of edge indices.
         Returns:
-            mask: [B, N_1, N_2] binary mask indicating neighbors
+            If return_full_mask is False:
+                edge_index: [2, E] edge indices in flattened batch space
+            If return_full_mask is True:
+                mask: [B, N_1, N_2] boolean mask where True indicates a neighbor relationship between points in coords_1 and coords_2.
         """
-        
-        
-        
         if coords_2 is None:
             coords_2 = coords_1
 
@@ -99,16 +102,45 @@ class SpatialNeighborSearch(nn.Module):
                 batch_x=batch_x,
                 batch_y=batch_y,
             )
+        elif self.mode == 'full':
+            edge_index_per_point = torch.stack(torch.meshgrid(
+                torch.arange(N2, device=coords_1.device),
+                torch.arange(N1, device=coords_1.device),
+                indexing='ij'
+            ), dim=0).reshape(2, -1)  # [2, N1*N2]
+            edge_index = []
+            for b in range(B):
+                batch_offset_1 = b * N1
+                batch_offset_2 = b * N2
+                edge_index.append(edge_index_per_point.clone())
+                edge_index[-1][0] += batch_offset_2  # coords_2 indices
+                edge_index[-1][1] += batch_offset_1  # coords_1 indices
+            edge_index = torch.cat(edge_index, dim=1)  # [2, B*N1*N2]
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
-
-        # Initialize dense mask [B, N1, N2]
+        if return_full_mask:
+            return self.create_full_mask_from_edges(edge_index, B, N1, N2)
+        else:
+            return edge_index  # [2, E] edge indices in flattened batch space
+        
+        
+    def create_full_mask_from_edges(self, edge_index: torch.Tensor, B: int, N1: int, N2: int) -> torch.Tensor:
+        """
+        Create a dense boolean mask from edge indices.
+        Args:
+            edge_index: [2, E] edge indices in flattened batch space
+            B: Batch size
+            N1: Number of points in coords_1
+            N2: Number of points in coords_2
+        Returns:
+            mask: [B, N1, N2] boolean mask where True indicates a neighbor relationship between points in coords_1 and coords_2.
+        """
+        # Create a dense boolean mask from edge_index
         mask = torch.zeros(
             (B, N1, N2),
             dtype=torch.bool,
-            device=coords_1.device,
         )
-
+        batch_x = torch.arange(B).repeat_interleave(N1)
         # edge_index[1] indexes coords_1_flat (source), edge_index[0] indexes coords_2_flat (target)
         src_flat = edge_index[1]
         tgt_flat = edge_index[0]
@@ -123,5 +155,3 @@ class SpatialNeighborSearch(nn.Module):
         # Fill mask in a vectorized way
         mask[b_idx, i1, i2] = True
         return mask  # [B, N_1, N_2]
-        
-        

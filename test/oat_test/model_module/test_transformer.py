@@ -20,10 +20,22 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
     mask_src = torch.rand(B, N_kv, N_kv) < 0.2
     mask_tgt = torch.rand(B, N_q, N_q) < 0.2
     mask_memory = torch.rand(B, N_q, N_kv) < 0.6  # 60% density
-
-    dist_src = torch.abs(torch.randn(B, N_kv, N_kv, d_geo_bias))
-    dist_tgt = torch.abs(torch.randn(B, N_q, N_q, d_geo_bias))
-    dist_memory = torch.abs(torch.randn(B, N_q, N_kv, d_geo_bias))
+    edges_list_src, edges_list_tgt, edges_list_memory = [], [], []
+    for b in range(B):
+        # For memory edges
+        q_flat_mem, k_flat_mem = torch.nonzero(~mask_memory[b], as_tuple=True)
+        edges_list_memory.append(torch.stack([q_flat_mem + b * N_q, k_flat_mem + b * N_kv], dim=0))
+        # For target and source self-attention edges
+        q_flat_tgt, k_flat_tgt = torch.nonzero(~mask_tgt[b], as_tuple=True)
+        edges_list_tgt.append(torch.stack([q_flat_tgt + b * N_q, k_flat_tgt + b * N_q], dim=0))
+        q_flat_src, k_flat_src = torch.nonzero(~mask_src[b], as_tuple=True)
+        edges_list_src.append(torch.stack([k_flat_src + b * N_kv, q_flat_src + b * N_kv], dim=0))
+    edges_src = torch.cat(edges_list_src, dim=1)  # [2, E]
+    edges_tgt = torch.cat(edges_list_tgt, dim=1)  # [2, E]
+    edges_memory = torch.cat(edges_list_memory, dim=1)  # [2, E]
+    
+    g_src = torch.randn(B, N_kv, d_geo_bias)
+    g_tgt = torch.randn(B, N_q, d_geo_bias)
 
     data = {
         "B": B,
@@ -36,14 +48,84 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
         "norm_first": norm_first,
         "Z_kv": Z_kv,
         "Z_q": Z_q,
-        "mask_src": mask_src,
-        "mask_tgt": mask_tgt,
-        "mask_memory": mask_memory,
-        "dist_src": dist_src,
-        "dist_tgt": dist_tgt,
-        "dist_memory": dist_memory,
+        "g_src": g_src,
+        "g_tgt": g_tgt,
+        "edges_src": edges_src,
+        "edges_tgt": edges_tgt,
+        "edges_memory": edges_memory,
     }
     return data
+
+
+def test_oat_sparse(setup_data: Dict[str, Any]) -> None:
+    B = setup_data["B"]
+    N_q = setup_data["N_q"]
+    D = setup_data["D"]
+    num_heads = setup_data["num_heads"]
+    d_geo_bias = setup_data["d_geo_bias"]
+    Z_kv = setup_data["Z_kv"]
+    Z_q = setup_data["Z_q"]
+    edges_src = setup_data["edges_src"]
+    edges_tgt = setup_data["edges_tgt"]
+    edges_memory = setup_data["edges_memory"]
+    g_src = setup_data["g_src"]
+    g_tgt = setup_data["g_tgt"]
+    dropout = setup_data["dropout"]
+    norm_first = setup_data["norm_first"]
+
+    oat = transformer.ObservationAssimilationTransformer(
+        d_model=D,
+        nhead=num_heads,
+        d_geo_bias=d_geo_bias,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        dim_feedforward=64,
+        dropout=dropout,
+        norm_first=norm_first,
+    )
+    oat_sparse = transformer.ObservationAssimilationTransformer(
+        d_model=D,
+        nhead=num_heads,
+        d_geo_bias=d_geo_bias,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        dim_feedforward=64,
+        dropout=dropout,
+        norm_first=norm_first,
+        sparse_attn=True,
+    )
+    
+    dense_params = oat.state_dict()
+    oat_sparse.load_state_dict(dense_params)
+
+    oat_out = oat(
+        Z_kv,
+        Z_q,
+        src_mask_edges=edges_src,
+        tgt_mask_edges=edges_tgt,
+        memory_mask_edges=edges_memory,
+        g_src=g_src,
+        g_tgt=g_tgt,
+    )
+    
+    oat_sparse_out = oat_sparse(
+        Z_kv,
+        Z_q,
+        src_mask_edges=edges_src,
+        tgt_mask_edges=edges_tgt,
+        memory_mask_edges=edges_memory,
+        g_src=g_src,
+        g_tgt=g_tgt,
+    )
+
+    assert oat_out.shape == (B, N_q, D)
+    assert oat_sparse_out.shape == (B, N_q, D)
+    
+    if dropout == 0.0:
+        assert torch.allclose(oat_out, oat_sparse_out, atol=1e-5)
+    
+    
+    
     
 def test_oat_forward(setup_data: Dict[str, Any]) -> None:
     B = setup_data["B"]
@@ -53,12 +135,11 @@ def test_oat_forward(setup_data: Dict[str, Any]) -> None:
     d_geo_bias = setup_data["d_geo_bias"]
     Z_kv = setup_data["Z_kv"]
     Z_q = setup_data["Z_q"]
-    mask_src = setup_data["mask_src"]
-    mask_tgt = setup_data["mask_tgt"]
-    mask_memory = setup_data["mask_memory"]
-    dist_src = setup_data["dist_src"]
-    dist_tgt = setup_data["dist_tgt"]
-    dist_memory = setup_data["dist_memory"]
+    edges_src = setup_data["edges_src"]
+    edges_tgt = setup_data["edges_tgt"]
+    edges_memory = setup_data["edges_memory"]
+    g_src = setup_data["g_src"]
+    g_tgt = setup_data["g_tgt"]
     dropout = setup_data["dropout"]
     norm_first = setup_data["norm_first"]
 
@@ -76,15 +157,15 @@ def test_oat_forward(setup_data: Dict[str, Any]) -> None:
     oat_out = oat(
         Z_kv,
         Z_q,
-        src_mask=mask_src,
-        tgt_mask=mask_tgt,
-        memory_mask=mask_memory,
-        dist_src=dist_src,
-        dist_tgt=dist_tgt,
-        dist_memory=dist_memory,
+        src_mask_edges=edges_src,
+        tgt_mask_edges=edges_tgt,
+        memory_mask_edges=edges_memory,
+        g_src=g_src,
+        g_tgt=g_tgt,
     )
 
     assert oat_out.shape == (B, N_q, D)
+
     
 def test_geometry_aware_encoder_layer(setup_data: Dict[str, Any]) -> None:
     B = setup_data["B"]
@@ -93,8 +174,8 @@ def test_geometry_aware_encoder_layer(setup_data: Dict[str, Any]) -> None:
     num_heads = setup_data["num_heads"]
     d_geo_bias = setup_data["d_geo_bias"]
     Z_kv = setup_data["Z_kv"]
-    mask_src = setup_data["mask_src"]
-    dist_src = setup_data["dist_src"]
+    edges_src = setup_data["edges_src"]
+    g_src = setup_data["g_src"]
     dropout = setup_data["dropout"]
 
     encoding_layer = transformer.GeometryAwareEncoderLayer(
@@ -105,9 +186,8 @@ def test_geometry_aware_encoder_layer(setup_data: Dict[str, Any]) -> None:
         dropout=dropout,
     )
 
-    enc_out = encoding_layer(Z_kv, src_mask=mask_src, dist_src=dist_src)
+    enc_out = encoding_layer(Z_kv, src_mask_edges=edges_src, g_src=g_src)
     assert enc_out.shape == (B, N_kv, D)
-    
     
 def test_geometry_aware_decoder_layer(setup_data: Dict[str, Any]) -> None:
     B = setup_data["B"]
@@ -117,10 +197,10 @@ def test_geometry_aware_decoder_layer(setup_data: Dict[str, Any]) -> None:
     d_geo_bias = setup_data["d_geo_bias"]
     Z_kv = setup_data["Z_kv"]
     Z_q = setup_data["Z_q"]
-    mask_tgt = setup_data["mask_tgt"]
-    mask_memory = setup_data["mask_memory"]
-    dist_tgt = setup_data["dist_tgt"]
-    dist_memory = setup_data["dist_memory"]
+    edges_tgt = setup_data["edges_tgt"]
+    edges_memory = setup_data["edges_memory"]
+    g_tgt = setup_data["g_tgt"]
+    g_src = setup_data["g_src"]
     dropout = setup_data["dropout"]
 
     decoding_layer = transformer.GeometryAwareDecoderLayer(
@@ -134,9 +214,9 @@ def test_geometry_aware_decoder_layer(setup_data: Dict[str, Any]) -> None:
     dec_out = decoding_layer(
         Z_q,
         Z_kv,
-        tgt_mask=mask_tgt,
-        memory_mask=mask_memory,
-        dist_tgt=dist_tgt,
-        dist_memory=dist_memory,
+        tgt_mask_edges=edges_tgt,
+        memory_mask_edges=edges_memory,
+        g_tgt=g_tgt,
+        g_src=g_src,
     )
     assert dec_out.shape == (B, N_q, D)
