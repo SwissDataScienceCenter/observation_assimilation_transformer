@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 
@@ -96,4 +96,86 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
 
     raise ValueError(f"Invalid aggregation: {aggregation}")
 
+@register_metric()
+def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Tensor] = None, 
+            aggregation: Literal["all", "variable"] = "all") -> torch.Tensor:
+    """
+    Computes the Monte Carlo estimation of CRPS. 
+    If aggregation = "all", this function computes the average CRPS 
+    across all variable, not the Energy Score.
     
+    y_target.shape = [batch,station,features]
+    y_hat.shape = [batch,station,samples, features]
+    mask.shape = [batch,station,features]
+    
+    If aggregation = "all", output is a 0-dimensional tensor containing the averaged
+    metric.
+    If aggregation = "variable", output is 1-dimensional, with one value per variable.
+    """
+    
+    if mask is None:
+        mask = torch.ones_like(y_target)
+        
+    if mask.sum() == 0.0:
+        raise ValueError("Mask does not contain any valid values.")
+
+    
+    assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
+    
+    mc_samples = y_hat.shape[-2]
+    mask_exp = mask.unsqueeze(-2)
+
+    # First term E(||X-y||)
+    smpls_to_tgt_abs_diff = torch.abs(y_hat - y_target.unsqueeze(-2)) * mask_exp
+    first_term = smpls_to_tgt_abs_diff.mean(dim=-2)
+    
+    # Second term: E(||X-X'||)
+    xj = y_hat.unsqueeze(-2)
+    xi = y_hat.unsqueeze(-3)
+    
+    smpls_to_smpls_abs_diff = torch.abs(xi - xj) * mask.unsqueeze(-2).unsqueeze(-2)
+    
+    # normalization is mc_samples * (mc_samples - 1) and not mc_samples**2
+    # because the diagonal of smpls_to_smpls_abs_diff is 0s.
+    # It contains the difference between the same samples and should not be counted to avoid
+    # biasing the estimation.
+    second_term = smpls_to_smpls_abs_diff.sum(dim=(-3, -2)) / (mc_samples * (mc_samples - 1))
+    
+    score = first_term - 0.5 * second_term 
+
+    if aggregation == "variable":
+        return score.sum(dim=(0,1)) / mask.sum(dim=(0,1))
+    elif aggregation == "all":
+        return score.sum() / mask.sum()
+    
+    raise ValueError(f"Invalid aggregation: {aggregation}")
+
+
+
+# TODO 
+# Energy Score code, to be tested
+# def energy_score(y_target, y_hat, mask=None):
+    # mask_exp = mask.unsqueeze(-2)
+            
+    # # First term E(||X-y||)
+    # smpls_to_tgt_dist = (y_hat - y_target.unsqueeze(-2)) * mask_exp
+    # eucl_distance = torch.norm(smpls_to_tgt_dist, dim=-1)
+    # first_term = eucl_distance.mean(dim=-1)
+
+    # # Second term: E(||X-X'||)
+    # xj = y_hat.unsqueeze(-2)
+    # xi = y_hat.unsqueeze(-3)
+
+
+    # smpls_diff = (xi - xj) * mask.unsqueeze(-2).unsqueeze(-2)
+    # smpls_to_smpls_dist = torch.norm(smpls_diff, dim=-1)
+    # # divide by n*(n-1) because the diagonal of smpls_to_smpls_dist is 0
+    # second_term = smpls_to_smpls_dist.sum(dim=(-1,-2)) /  (mc_samples * (mc_samples -1))
+
+    # # E(||X-y||) - 0.5 E(||X-X'||)
+
+    # # TODO check this normalization
+    # # valid is valid if at least one feature was preset
+    # valid_locations = (mask.sum(dim=-1) > 0).float()
+    # score = first_term - 0.5 * second_term
+    # return (score * valid_locations).sum() / valid_locations.sum()

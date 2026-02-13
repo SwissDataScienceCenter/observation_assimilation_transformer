@@ -6,7 +6,11 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
 from oat.data_module.transform import Transform
-from oat.predictor_module.functional_metrics import sample_mae, point_mae
+from oat.predictor_module.functional_metrics import (
+    sample_mae, 
+    point_mae,
+    mc_crps
+)
 
 class OATPredictor(pl.LightningModule):
 
@@ -41,9 +45,11 @@ class OATPredictor(pl.LightningModule):
         self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
         self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
         
+        # NOTE perhaps make this configurable?
         self.metrics_fn = {
             'sample_mae': sample_mae,
-            'point_mae': point_mae
+            'point_mae': point_mae,
+            'crps': mc_crps,
         }
 
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
