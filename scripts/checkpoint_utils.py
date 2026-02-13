@@ -23,7 +23,4 @@ def load_checkpoint(predictor_cls: Type[pl.LightningModule], checkpoint_file_pat
     
     predictor = predictor_cls.load_from_checkpoint(path)
     
-    print(predictor)
-    print(cfg)
-    
     return predictor, cfg
