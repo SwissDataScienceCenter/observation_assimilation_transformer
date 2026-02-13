@@ -135,6 +135,10 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
     
     smpls_to_smpls_abs_diff = torch.abs(xi - xj) * mask.unsqueeze(-2).unsqueeze(-2)
     
+    # normalization is mc_samples * (mc_samples - 1) and not mc_samples**2
+    # because the diagonal of smpls_to_smpls_abs_diff is 0s.
+    # It contains the difference between the same samples and should not be counted to avoid
+    # biasing the estimation.
     second_term = smpls_to_smpls_abs_diff.sum(dim=(-3, -2)) / (mc_samples * (mc_samples - 1))
     
     score = first_term - 0.5 * second_term 
