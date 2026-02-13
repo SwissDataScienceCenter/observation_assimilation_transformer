@@ -448,6 +448,26 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             'observation_data': observation_data,
         }
         
+    def get_query(self, query_coords: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Get query data (topo, geo) for given station coordinates"""
+        topo_query = self._extract_patches(
+            query_coords,
+            self.topo_field,
+            self.topo_grid,
+            self.topo_extent
+        )
+        
+        # For geo, we can use nearest neighbor lookup since it's just station metadata
+        tree = cKDTree(self.station_coords.numpy())
+        _, indices = tree.query(query_coords.numpy())
+        geo_query = self.station_geo[indices]
+        
+        return {
+            'coords': query_coords,
+            'topo': topo_query,
+            'geo': geo_query
+        }
+        
     def _extract_patches(
         self,
         positions: torch.Tensor,
