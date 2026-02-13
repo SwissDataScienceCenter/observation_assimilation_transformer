@@ -4,6 +4,7 @@ from torch import nn
 
 from oat.model_module.global_encoder import InterpolationGlobalEncoder
 from typing import Dict, Any
+from dataclasses import dataclass
 
 @dataclass
 class InterpolaterBaselineConfig:
@@ -16,8 +17,6 @@ class InterpolaterBaseline(nn.Module):
     
     def __init__(self, config: InterpolaterBaselineConfig) -> None:
         super().__init__()
-        self.register_buffer("field_min", torch.tensor(config.field_extent['min']))
-        self.register_buffer("field_max", torch.tensor(config.field_extent['max']))
         interpolation_params = {
                 'mode': config.mode,
                 'padding_mode': config.padding_mode

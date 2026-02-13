@@ -37,8 +37,8 @@ class InterpolationGlobalEncoder(BaseGlobalEncoder):
             field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
         super().__init__()
-        self.register_buffer("field_min", field_extent['min'])
-        self.register_buffer("field_max", field_extent['max'])
+        self.register_buffer("field_min", torch.tensor(field_extent['min']))
+        self.register_buffer("field_max", torch.tensor(field_extent['max']))
         if interpolation_params is None:
             interpolation_params = {}
         self._interpolation_params = interpolation_params

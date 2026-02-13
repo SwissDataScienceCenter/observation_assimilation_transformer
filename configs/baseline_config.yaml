@@ -1,0 +1,16 @@
+defaults:
+  - dataset: cosmo_peakweather
+  - split: default
+  - dataloader: default
+  - model: baseline
+  - trainer: default
+  - logging: baseline
+
+seed: 42
+
+hydra:
+  run:
+    dir: outputs/${hydra:runtime.choices.model}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+paths:
+  run_root: ${hydra:run.dir}
