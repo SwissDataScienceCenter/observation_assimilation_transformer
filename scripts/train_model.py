@@ -51,7 +51,7 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> Tuple[C
     return dataset, train_loader, val_loader, test_loader, input_transform, output_transform
 
 
-def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OAT:
+def setup_model_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
@@ -88,11 +88,10 @@ def setup_model(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> 
         num_samples=model_cfg.num_samples,
         pre_oat_loss_weight=model_cfg.pre_oat_loss_weight
     )
-    logger.info("Initializing model...")
-    model_instance = model.OAT(oat_config)
-    return model_instance
+    logger.info("Initialized model cfg...")
+    return oat_config
 
-def setup_predictor(model: model.OAT, 
+def setup_predictor(model_cfg: model.OATConfig, 
                     var_names: str,
                     transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
@@ -110,7 +109,7 @@ def setup_predictor(model: model.OAT,
     
 
     predictor = OATPredictor(
-        oat_model=model,
+        oat_model_cfg=model_cfg,
         input_transform=transforms[0],
         output_transform=transforms[1],
         output_var_names=var_names,
@@ -160,25 +159,17 @@ def main(cfg: DictConfig) -> None:
         logger.info(f"Saved batch fixture object to {out_file}")
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    oat_model = setup_model(cfg, field_extent, logger)
+    oat_model_cfg = setup_model_cfg(cfg, field_extent, logger)
     logger.info("Model set up successfully.")
     
     
     var_names = dataset.config.obs_vars
-    predictor = setup_predictor(model=oat_model,
+    predictor = setup_predictor(model_cfg=oat_model_cfg,
                                 var_names = var_names,
                                 transforms=[input_transform, output_transform],
                                 cfg=cfg)
     # Callbacks
     
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
-        mode="min",
-        save_top_k=1,
-        verbose=True,
-        dirpath="checkpoints/",
-        filename="best-model-{epoch:02d}-{val_loss:.4f}"
-    )
     # NOTE maybe use cfg for patience
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
@@ -193,6 +184,21 @@ def main(cfg: DictConfig) -> None:
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
     run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
+    checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
+    
+    # Each run has their own folder. Save the cfg as yaml file in there.
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
+    
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        verbose=True,
+        dirpath=checkpoint_dir,
+        filename="best-model-{epoch:02d}-{val_loss:.4f}"
+    )
+    
     wandb_logger = WandbLogger(name=run_name,
                          project=cfg.logging.project,
                          group=cfg.logging.group,
