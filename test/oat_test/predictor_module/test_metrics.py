@@ -35,10 +35,6 @@ def test_sample_mae(metric_fn, aggregation):
     metrics = metric_fn(y_target=y_true, y_hat=y_pred_samples, mask=mask, aggregation=aggregation)
     
     if aggregation == 'all':
-        if metric_fn.__name__ == 'mc_crps':
-            expected = torch.norm(y_pred_samples[0,0,0,:] - y_true[0,0,:])
-        else:
-            expected = 1.0
-        assert metrics.item() == expected
+        assert metrics.item() == 1.0
     else:
         assert (metrics == 1.0).all()
