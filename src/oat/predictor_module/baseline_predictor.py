@@ -26,12 +26,13 @@ class BaselinePredictor(pl.LightningModule):
         
     def forward(self, batch: Dict[str, Any], query_locations: Optional[torch.Tensor] = None) -> torch.Tensor:
         if query_locations is None:
-            target_obs = batch['query_data'].pop('obs', None)
-            target_mask_obs = batch['query_data'].pop('mask_obs', None)
+            target_obs = batch['query_data'].get('obs', None)
+            target_mask_obs = batch['query_data'].get('mask_obs', None)
+            query_data = {k: v for k, v in batch['query_data'].items() if k not in ('obs', 'mask_obs')}
         else:
-            # TODO implement 
-            pass
-        out = self.model(batch['global_data'], batch['observation_data'], batch['query_data'])
+            # TODO implement
+            raise NotImplementedError("Custom query_locations not yet supported")
+        out = self.model(batch['global_data'], batch['observation_data'], query_data)
         return out, target_obs, target_mask_obs
     
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:

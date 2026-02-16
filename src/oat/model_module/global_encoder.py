@@ -109,9 +109,6 @@ class UNetGlobalEncoder(InterpolationGlobalEncoder):
         self.model = nets.UNet(
             **unet_params
         )
-
-        self.register_buffer("field_min", field_extent['min'])
-        self.register_buffer("field_max", field_extent['max'])
         
     def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
         """

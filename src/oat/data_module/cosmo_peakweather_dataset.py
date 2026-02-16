@@ -629,7 +629,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # transform that precomputes relevant NWP variables for each obs variable, so they can be directly interpolated
         def baseline_pre_transform(sample: dict[str, Any]) -> dict[str, Any]:
-            nwp_fields = sample['global_data'].pop('global_field')  # (C_nwp + C_topo, H, W)
+            nwp_fields = sample['global_data']['global_field']  # (C_nwp + C_topo, H, W)
             nwp_dict = {var: nwp_fields[...,i,:,:] for i, var in enumerate(self.config.nwp_vars)}
             
             baseline_nwp = []
@@ -650,8 +650,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     raise ValueError(f"Unsupported case for obs variable {obs_var}")
             
             new_field = torch.stack(baseline_nwp, dim=-3)  # (C_obs, H, W)
-            sample['global_data']['global_field'] = new_field
-            return sample
+            new_global_data = {**sample['global_data'], 'global_field': new_field}
+            return {**sample, 'global_data': new_global_data}
         
         nwp_model = BaselinePredictor(config=interpolation_params,
                                       output_var_names=self.config.obs_vars,
