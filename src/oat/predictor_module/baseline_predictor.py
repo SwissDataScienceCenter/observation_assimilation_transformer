@@ -8,11 +8,11 @@ from oat.predictor_module.functional_metrics import sample_mae, point_mae
 class BaselinePredictor(pl.LightningModule):
     
     def __init__(self, 
-                 config: baseline.InterpolaterBaselineConfig,
+                 config: baseline.InterpolatorBaselineConfig,
                  output_var_names: List,
                  input_transform: Callable | None = None) -> None:
         super().__init__()
-        self.model = baseline.InterpolaterBaseline(config)
+        self.model = baseline.InterpolatorBaseline(config)
         self.hparams.update(self.model.interpolater._interpolation_params)
         self.input_transform = input_transform
         
@@ -84,7 +84,7 @@ class BaselinePredictor(pl.LightningModule):
 
 
 def create_baseline_predictor(
-    config: baseline.InterpolaterBaselineConfig,
+    config: baseline.InterpolatorBaselineConfig,
     obs_vars: List[str],
     pre_transform: Callable | None = None,
 ) -> BaselinePredictor:

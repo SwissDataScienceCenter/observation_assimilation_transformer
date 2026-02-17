@@ -181,10 +181,10 @@ def main(cfg: DictConfig) -> None:
     wandb_logger = setup_wandb_logger(cfg)
 
     if model_type == "baseline":
-        from oat.model_module.baseline import InterpolaterBaselineConfig
+        from oat.model_module.baseline import InterpolatorBaselineConfig
         from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-        baseline_config = InterpolaterBaselineConfig(
+        baseline_config = InterpolatorBaselineConfig(
             field_extent=field_extent,
             **cfg.model
         )
