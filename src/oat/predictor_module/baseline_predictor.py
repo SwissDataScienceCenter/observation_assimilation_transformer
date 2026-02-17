@@ -13,7 +13,7 @@ class BaselinePredictor(pl.LightningModule):
                  input_transform: Callable | None = None) -> None:
         super().__init__()
         self.model = baseline.InterpolatorBaseline(config)
-        self.hparams.update(self.model.interpolater._interpolation_params)
+        self.hparams.update(self.model.interpolator._interpolation_params)
         self.input_transform = input_transform
         
         self.metrics_fn = {
