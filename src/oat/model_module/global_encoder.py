@@ -74,8 +74,10 @@ class MLPGlobalEncoder(InterpolationGlobalEncoder):
         Args:
             mlp_params: Parameters for the MLP applied after interpolation. Should contain 'hidden_dims' key with list of hidden dimensions, 'in_channels' key for the input dimension of the first layer, 'out_channels' key for the output dimension, and 'act_fn' key for the activation function.
         """
-        assert 'out_channels' in mlp_params, "mlp_params must contain 'out_channels' key for the output dimension."
-        assert 'in_channels' in mlp_params, "mlp_params must contain 'in_channels' key for the input dimension of the first layer."
+        if 'out_channels' not in mlp_params:
+            raise KeyError("mlp_params must contain 'out_channels' key for the output dimension.")
+        if 'in_channels' not in mlp_params:
+            raise KeyError("mlp_params must contain 'in_channels' key for the input dimension of the first layer.")
         super().__init__(interpolation_params=mlp_params.get('interpolation_params', None), field_extent=field_extent, **kwargs)
         hidden_dims = mlp_params.get('hidden_dims', [])
         input_dim = mlp_params['in_channels']  # Optional input dimension for the first layer, if different from interpolation output dimension
