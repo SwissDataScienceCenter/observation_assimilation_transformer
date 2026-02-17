@@ -4,9 +4,7 @@ from pathlib import Path
 import pytorch_lightning as pl
 from omegaconf import OmegaConf, DictConfig
 
-from oat.predictor_module import OATPredictor
-
-def load_checkpoint(predictor_cls: Type[pl.LightningModule], checkpoint_file_path: str)-> Tuple[OATPredictor, DictConfig]:
+def load_checkpoint(predictor_cls: Type[pl.LightningModule], checkpoint_file_path: str)-> Tuple[pl.LightningModule, DictConfig]:
     """
     Load and return the Predictor and its config from a checkpoint file.
     

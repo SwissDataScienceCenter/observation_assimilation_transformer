@@ -122,6 +122,33 @@ def setup_predictor(model_cfg: model.OATConfig,
     
     return predictor
 
+def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig):
+    assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
+
+    logger.info("Saving examples of transforms as fixtures ...")
+    ROOT = Path(__file__).resolve().parents[1]
+    out_file = ROOT / "test" / "oat_test" / f"input_transform_fixture.pickle"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(out_file, "wb") as f:
+        pickle.dump(input_transform, f)
+
+    logger.info(f"Saved input_transform object to {out_file}")
+    
+    out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
+    
+    with open(out_file, "wb") as f:
+        pickle.dump(output_transform, f)
+
+    
+    logger.info(f"Saved output_transform object to {out_file}")
+    batch = next(iter(train_loader))
+    out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
+    with open(out_file, "wb") as f:
+            pickle.dump(batch, f)
+            
+    logger.info(f"Saved batch fixture object to {out_file}")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -131,32 +158,13 @@ def main(cfg: DictConfig) -> None:
     OmegaConf.resolve(cfg) # for referenced fields
     torch.manual_seed(cfg.seed)
     dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
-    if cfg.get("save_transforms_fixtures", False):
-        assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
-
-        logger.info("Saving examples of transforms as fixtures ...")
-        ROOT = Path(__file__).resolve().parents[1]
-        out_file = ROOT / "test" / "oat_test" / f"input_transform_fixture.pickle"
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(out_file, "wb") as f:
-            pickle.dump(input_transform, f)
-
-        logger.info(f"Saved input_transform object to {out_file}")
-        
-        out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
-        
-        with open(out_file, "wb") as f:
-            pickle.dump(output_transform, f)
-
-        
-        logger.info(f"Saved output_transform object to {out_file}")
-        batch = next(iter(train_loader))
-        out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
-        with open(out_file, "wb") as f:
-                pickle.dump(batch, f)
-                
-        logger.info(f"Saved batch fixture object to {out_file}")
+    
+    if cfg.get("save_fixtures", False):
+        save_fixtures_for_tests(input_transform=input_transform,
+                                output_transform=output_transform,
+                                train_loader=train_loader,
+                                cfg=cfg)
+        return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
     oat_model_cfg = setup_model_cfg(cfg, field_extent, logger)
@@ -221,6 +229,6 @@ def main(cfg: DictConfig) -> None:
                 
 if __name__ == "__main__":
     # Usage:
-    # python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10
-    # python -m scripts.setup_data +save_transforms_fixtures=true ++dataset.data_points_for_stats=10 ++dataloader.batch_size=1
+    # python -m scripts.setup_data +save_fixtures=true ++dataset.data_points_for_stats=10
+    # python -m scripts.setup_data +save_fixtures=true ++dataset.data_points_for_stats=10 ++dataloader.batch_size=1
     main()
