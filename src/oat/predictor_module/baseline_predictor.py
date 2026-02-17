@@ -62,24 +62,35 @@ class BaselinePredictor(pl.LightningModule):
         y_pred, _, _ = self(batch)
         return y_pred
         
-    def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
-                                        y_true: torch.Tensor, 
+    def _log_instant_metrics(self, y_hat_samples: torch.Tensor,
+                                        y_true: torch.Tensor,
                                         mask: torch.Tensor,
                                         prefix: str = "") -> None:
         for metric_name, metric_fn in self.metrics_fn.items():
-            
+
             metric_values = metric_fn(y_target=y_true,
                                       y_hat=y_hat_samples,
                                       mask=mask,
                                       aggregation='variable')
-            
+
             for i, metric_val in enumerate(metric_values):
                 var_name = self.indx_to_var[i]
-                
-                self.log(name=f'{prefix}_{metric_name}_{var_name}', 
-                         value=metric_val, 
-                         prog_bar=True, 
-                         on_step=True, 
+
+                self.log(name=f'{prefix}_{metric_name}_{var_name}',
+                         value=metric_val,
+                         prog_bar=True,
+                         on_step=True,
                          on_epoch=True)
-    
-        
+
+
+def create_baseline_predictor(
+    config: baseline.InterpolaterBaselineConfig,
+    obs_vars: List[str],
+    pre_transform: Callable | None = None,
+) -> BaselinePredictor:
+    """Build a BaselinePredictor from a config and dataset-provided pre-transform."""
+    return BaselinePredictor(
+        config=config,
+        output_var_names=obs_vars,
+        input_transform=pre_transform,
+    )

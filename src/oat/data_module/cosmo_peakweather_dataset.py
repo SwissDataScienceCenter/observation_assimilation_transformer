@@ -7,7 +7,7 @@ Matches architecture from Neural_Downscaling_with_Station_Observation.pdf
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Callable, Dict, Optional, Any
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,6 @@ from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
 from torch.utils.data import Dataset
 from oat.data_module import transform, statistics
-from oat.predictor_module.baseline_predictor import BaselinePredictor
 
 dtype_map = {
     "float32": torch.float32,
@@ -604,15 +603,20 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         post_transform = transform.NestedTransform(transform_dict)
         return post_transform, output_transform
 
-    def get_baseline_predictor(self, interpolation_params: dict[str, Any]) -> 'BaselinePredictor':
-        
+    def get_baseline_pre_transform(self) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        """Return a pre-transform that maps NWP fields to observation variables.
+
+        This encapsulates data-specific knowledge (which NWP variables correspond
+        to which observation variables, unit conversions, etc.) without knowing
+        about the baseline predictor construction.
+        """
         obs_nwp_matching = {
             'temperature': ['T_2M'],
             'wind_u': ['U_10M'],
             'wind_v': ['V_10M'],
-            'wind_speed': ['U_10M', 'V_10M'],  # Will compute from u/v}
+            'wind_speed': ['U_10M', 'V_10M'],
         }
-        
+
         for obs_var in self.config.obs_vars:
             if obs_var not in obs_nwp_matching:
                 raise ValueError(
@@ -626,16 +630,18 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     f"be included in config.nwp_vars: {nwp_var}. Currently included "
                     f"NWP variables are: {self.config.nwp_vars}"
                 )
-        
-        # transform that precomputes relevant NWP variables for each obs variable, so they can be directly interpolated
+
+        nwp_vars = list(self.config.nwp_vars)
+        obs_vars = list(self.config.obs_vars)
+
         def baseline_pre_transform(sample: dict[str, Any]) -> dict[str, Any]:
             nwp_fields = sample['global_data']['global_field']  # (C_nwp + C_topo, H, W)
-            nwp_dict = {var: nwp_fields[...,i,:,:] for i, var in enumerate(self.config.nwp_vars)}
-            
+            nwp_dict = {var: nwp_fields[..., i, :, :] for i, var in enumerate(nwp_vars)}
+
             baseline_nwp = []
-            for obs_var in self.config.obs_vars:
+            for obs_var in obs_vars:
                 matching_nwp_vars = obs_nwp_matching[obs_var]
-                    
+
                 if len(matching_nwp_vars) == 1:
                     if obs_var == 'temperature':
                         baseline_nwp.append(nwp_dict[matching_nwp_vars[0]] - 273.15)
@@ -648,15 +654,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     baseline_nwp.append(speed)
                 else:
                     raise ValueError(f"Unsupported case for obs variable {obs_var}")
-            
+
             new_field = torch.stack(baseline_nwp, dim=-3)  # (C_obs, H, W)
             new_global_data = {**sample['global_data'], 'global_field': new_field}
             return {**sample, 'global_data': new_global_data}
-        
-        nwp_model = BaselinePredictor(config=interpolation_params,
-                                      output_var_names=self.config.obs_vars,
-                                      input_transform=baseline_pre_transform)
-        return nwp_model
+
+        return baseline_pre_transform
 # Example usage
 if __name__ == "__main__":
     config = CosmoPeakWeatherConfig(
