@@ -5,6 +5,7 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
+from oat.model_module.model import OATConfig, OAT
 from oat.data_module.transform import Transform
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
@@ -15,7 +16,7 @@ from oat.predictor_module.functional_metrics import (
 class OATPredictor(pl.LightningModule):
 
     def __init__(self,
-                 oat_model: nn.Module,
+                 oat_model_cfg: OATConfig,
                  input_transform: Transform,
                  output_transform: Transform,
                  output_var_names: List,
@@ -28,8 +29,7 @@ class OATPredictor(pl.LightningModule):
         super().__init__()
 
         # Ignore the model itself in hparams but update manually with its cfg
-        self.save_hyperparameters(ignore=['oat_model', 'input_transform', 'output_transform'])
-        self.hparams.update({'model_cfg': oat_model.config})
+        self.save_hyperparameters()
 
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
@@ -37,7 +37,7 @@ class OATPredictor(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_params = scheduler_params or {}
 
-        self.model = oat_model
+        self.model = OAT(oat_model_cfg)
         self.input_transform = input_transform
         self.output_transform = output_transform
         
@@ -126,7 +126,6 @@ class OATPredictor(pl.LightningModule):
         # NOTE should we add nograd here?
         y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat, 
                                                                    y_true=target_obs)
-        # TODO log metrics with unorm value
 
         self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
                                   y_true=y_true_unnorm,
@@ -175,7 +174,7 @@ class OATPredictor(pl.LightningModule):
 
         y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
                                                         y_true=target_obs)
-        # TODO log metrics with unorm value
+
         self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
                                   y_true=y_true_unnorm,
                                   mask=target_mask_obs,
