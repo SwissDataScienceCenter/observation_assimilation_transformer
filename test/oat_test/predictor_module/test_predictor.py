@@ -8,10 +8,7 @@ import os
 import pytest
 from pytorch_lightning.loggers.logger import DummyLogger
 
-@pytest.mark.skipif(
-    os.getenv("CI") == "true",
-    reason="Skipped on CI (too heavy)"
-)
+
 @pytest.mark.parametrize("compute_loss", [True, False])
 def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss, model_cfg_fixture):
     
@@ -29,10 +26,7 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     else:
         out, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
 
-@pytest.mark.skipif(
-    os.getenv("CI") == "true",
-    reason="Skipped on CI (too heavy)"
-)
+
 @pytest.mark.parametrize("compile", [True, False])
 def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile):
 
