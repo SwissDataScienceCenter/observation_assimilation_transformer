@@ -29,19 +29,26 @@ def model_cfg_fixture(batch_fixture):
     global_enc_cfg = GlobalEncoderConfig(
         in_channels=batch_fixture['global_data']['global_field'].shape[1],
         field_extent_min= [2255500.0, 840500.0],
-        field_extent_max= [2964500.0, 1479500.0]
+        field_extent_max= [2964500.0, 1479500.0],
+        out_channels=4,
+        channels=(4,8)
     )
     
     topography_enc_cfg = TopographicEncoderConfig(
-        in_channels=batch_fixture['observation_data']['topo'].shape[2]
+        in_channels=batch_fixture['observation_data']['topo'].shape[2],
+        out_channels=4
     )
     
-    fusion_layer_cfg = FusionLayerConfig()
+    fusion_layer_cfg = FusionLayerConfig(out_channels=4, hidden_channels=4)
     masking_cfg = MaskingConfig()
     transformer_cfg = TransformerConfig(
-        d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1]
+        d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1],
+        dim_feedforward=4,
+        d_model=4,
+        dim_geo_bias_feedforward=4
     )
     output_head_cfg = OutputHeadConfig(
+        in_features=4,
         target_features=batch_fixture['observation_data']['obs'].shape[-1],
         type='linear'
     )
@@ -53,7 +60,7 @@ def model_cfg_fixture(batch_fixture):
         transformer=transformer_cfg,
         masking=masking_cfg,
         output_head=output_head_cfg,
-        num_samples=100
+        num_samples=10
     )
     
     return oat_cfg
