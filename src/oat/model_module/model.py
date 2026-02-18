@@ -124,8 +124,265 @@ class OATConfig:
             num_samples=100
         )
 
+@dataclass
+class UninformedOATConfig:
+    global_encoder: GlobalEncoderConfig
+    topographic_encoder: TopographicEncoderConfig
+    fusion_layer: FusionLayerConfig
+    output_head: OutputHeadConfig
+    num_samples: int = 100
+    
+    @classmethod
+    def default(cls) -> 'UninformedOATConfig':
+        """Create default configuration."""
+        d_model = 64
+        return cls(
+            global_encoder=GlobalEncoderConfig(out_channels=32),
+            topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
+            fusion_layer=FusionLayerConfig(out_channels=d_model),
+            output_head=OutputHeadConfig(in_features=d_model),
+            num_samples=100
+        )
+     
+class UninformedOAT(nn.Module):
+    """
+    Base class for Observation Assimilation Transformer for neural downscaling.
+    This class implements the "uninformed" computations for OAT, i.e it does not
+    implement any conditioning on station measurements.
+    This model can be used as a baseline that does not assimilate observations that
+    learns to correct pointwise corrections of NWP systematic errors 
+    (known as statistical postprocessing).
+    """
+    
+    def __init__(self, config: Optional[UninformedOATConfig] = None) -> None:
+        super().__init__()
+        
+        if config is None:
+            config = UninformedOATConfig.default()
+        self.config = config
 
-class OAT(nn.Module):
+        d_global = config.global_encoder.out_channels
+        d_topo = config.topographic_encoder.out_channels
+        
+        self.global_encoder = self._init_global_encoder(config=config)
+        self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(
+            in_channels=config.topographic_encoder.in_channels,
+            out_channels=config.topographic_encoder.out_channels,
+            n_layers=config.topographic_encoder.n_layers,
+            initial_hw=config.topographic_encoder.initial_hw,
+            kernel_sizes=config.topographic_encoder.kernel_sizes,
+            act_fn=config.topographic_encoder.act_fn,
+            use_batchnorm=config.topographic_encoder.use_batchnorm,
+        )
+        self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
+            in_channels=[d_global, d_topo],
+            out_channels=config.fusion_layer.out_channels,
+            hidden_channels=config.fusion_layer.hidden_channels,
+            cond_dim=config.fusion_layer.cond_dim,
+            dropout_p=config.fusion_layer.dropout_p,
+            norm_layer=config.fusion_layer.norm_layer,
+        )
+        self.output_head = self._init_output_head(config=config)
+        
+        self.num_samples = config.num_samples
+      
+        
+    def _init_global_encoder(self, config):
+        if config.global_encoder.type == "UNet":
+            return global_encoder.UNetGlobalEncoder(
+                unet_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'channels': config.global_encoder.channels,
+                    'strides': config.global_encoder.strides,
+                    'num_res_units': config.global_encoder.num_res_units,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        elif config.global_encoder.type == "SwinUNETR":
+            return global_encoder.SwinUNETRGlobalEncoder(
+                swin_unetr_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'spatial_dims': config.global_encoder.spatial_dims,
+                    'patch_size': config.global_encoder.patch_size,
+                    'window_size': config.global_encoder.window_size,
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        elif config.global_encoder.type == "MLP":
+            return global_encoder.MLPGlobalEncoder(
+                mlp_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'hidden_dims': config.global_encoder.hidden_dims,
+                    'act_fn': config.global_encoder.act_fn
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
+        
+        raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', and 'MLP'.")
+    
+    def _init_output_head(self, config):
+        # Output head for innovation computation (Eq. 8-12)
+        if config.output_head.type == "linear":
+            return output_head.LinearOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                loss_fn=config.output_head.loss_fn,
+            )
+        elif config.output_head.type == "gaussian":
+            return output_head.GaussianOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                std_fn=config.output_head.std_fn,
+                min_std_val=config.output_head.min_std_val,
+            )
+        elif config.output_head.type == "quantile":
+            train_taus = torch.linspace(0.0, 1.0, config.output_head.num_train_taus + 2)[1:-1]
+            return output_head.QuantileOutputHead(
+                in_features=config.output_head.in_features,
+                target_features=config.output_head.target_features,
+                degree=config.output_head.degree,
+                train_taus=train_taus,
+            )
+        raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear', 'Gaussian', 'Quantile'.")
+    
+    def forward(
+        self,
+        global_data: Dict[str, torch.Tensor],
+        query_data: Dict[str, torch.Tensor],
+        num_samples: int | None = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass.
+        
+        Args:
+            global_data: {
+                'nwp': (B, C, H_lr, W_lr) - NWP fields
+                'time_emb': (B, D_time) - time embeddings
+            }
+            query_data: {
+                'coords': (B, N_q, 2) - query coordinates
+                'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'geo': (B, N_q, D) - query coordinates
+            }
+            num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+        
+        Returns:
+            Predictions at query locations: (B, N_q, C_y) or dict with distribution params
+        """
+
+        query_token = self._create_uninformed_tokens(
+            global_data=global_data,
+            local_data=query_data
+        )
+        out = self.output_head(query_token)
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)          
+        out['samples'] = samples
+        
+        return out
+    
+    def forward_with_loss(
+        self,
+        global_data: Dict[str, torch.Tensor],
+        query_data: Dict[str, torch.Tensor],
+        target_obs: torch.Tensor,
+        target_mask_obs: torch.Tensor,
+        num_samples: int | None = None
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+        """
+        Forward pass.
+        
+        Args:
+            global_data: {
+                'nwp': (B, C, H_lr, W_lr) - NWP fields
+                'time_emb': (B, D_time) - time embeddings
+            }
+            query_data: {
+                'coords': (B, N_q, 2) - query coordinates
+                'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'obs': (B, N_q, C_y) - ground truth observations
+                'mask_obs': (B, N_q, C_y) - observation mask
+                'geo': (B, N_q, D) - query coordinates
+            }
+            num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+        
+        Returns:
+            predictions: Dict with model outputs
+            loss: Scalar loss tensor
+        """
+
+        query_token = self._create_uninformed_tokens(
+            global_data=global_data,
+            local_data=query_data
+        )
+        out, loss = self.output_head.loss(query_token, target_obs, target_mask_obs)
+        
+        with torch.no_grad():
+            if num_samples is None:
+                num_samples = self.num_samples
+            samples = self.output_head.sample(out, num_samples=num_samples)
+
+        out['samples'] = samples
+        
+        return out, loss
+    
+    def _create_uninformed_tokens(
+        self,
+        global_data: Dict[str, torch.Tensor],
+        local_data: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Create uninformed tokens from global and local information.
+        
+        Implements Eq. 1-7:
+        1. Z_nwp = G(U_nwp, τ)  - Global encoding
+        2. Z_nwp_x = R(Z_nwp, x)  - Spatial readout
+        3. Z_ξ = E_ξ(ξ)  - Topographic encoding
+        4. Z = F([Z_nwp || Z_ξ], τ)  - Fusion
+        
+        Args:
+            global_data: Global NWP fields and time embeddings
+            local_data: Local coordinates and topographic patches
+        
+        Returns:
+            Uninformed tokens: (B, N, D_model)
+        """
+        # Global encoding and readout (Eq. 1-3)
+        global_token = self.global_encoder(global_data, local_data)
+        
+        # Topographic encoding (Eq. 4-5)
+        topo_token = self.topographic_encoder(local_data['topo'])
+        
+        # Fusion (Eq. 6-7)
+        batch_size = global_token.shape[0]
+        n_points = global_token.shape[1]
+        cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_points, -1)
+        uninformed_token = self.fusion_layer1(
+            global_token,
+            topo_token,
+            cond=cond
+        )
+        
+        return uninformed_token
+    
+    
+
+class OAT(UninformedOAT):
     """
     Observation Assimilation Transformer for neural downscaling.
     
@@ -153,7 +410,12 @@ class OAT(nn.Module):
         Args:
             config: Model configuration. If None, uses default config.
         """
-        super().__init__()
+        
+        super().__init__(config=UninformedOATConfig(global_encoder=config.global_encoder,
+                                                    topographic_encoder=config.topographic_encoder,
+                                                    fusion_layer=config.fusion_layer,
+                                                    output_head=config.output_head,
+                                                    num_samples=config.num_samples))
         
         if config is None:
             config = OATConfig.default()
@@ -161,101 +423,6 @@ class OAT(nn.Module):
         
         # Extract dimensions
         d_model = config.transformer.d_model
-        d_global = config.global_encoder.out_channels
-        d_topo = config.topographic_encoder.out_channels
-        
-        # Global encoder (Eq. 1)
-        if config.global_encoder.type == "UNet":
-            self.global_encoder = global_encoder.UNetGlobalEncoder(
-                unet_params={
-                    'in_channels': config.global_encoder.in_channels,
-                    'out_channels': config.global_encoder.out_channels,
-                    'spatial_dims': config.global_encoder.spatial_dims,
-                    'channels': config.global_encoder.channels,
-                    'strides': config.global_encoder.strides,
-                    'num_res_units': config.global_encoder.num_res_units,
-                },
-                field_extent={
-                    'min': torch.tensor(config.global_encoder.field_extent_min),
-                    'max': torch.tensor(config.global_encoder.field_extent_max)
-                }
-            )
-        elif config.global_encoder.type == "SwinUNETR":
-            self.global_encoder = global_encoder.SwinUNETRGlobalEncoder(
-                swin_unetr_params={
-                    'in_channels': config.global_encoder.in_channels,
-                    'out_channels': config.global_encoder.out_channels,
-                    'spatial_dims': config.global_encoder.spatial_dims,
-                    'patch_size': config.global_encoder.patch_size,
-                    'window_size': config.global_encoder.window_size,
-                },
-                field_extent={
-                    'min': torch.tensor(config.global_encoder.field_extent_min),
-                    'max': torch.tensor(config.global_encoder.field_extent_max)
-                }
-            )
-        elif config.global_encoder.type == "MLP":
-            self.global_encoder = global_encoder.MLPGlobalEncoder(
-                mlp_params={
-                    'in_channels': config.global_encoder.in_channels,
-                    'out_channels': config.global_encoder.out_channels,
-                    'hidden_dims': config.global_encoder.hidden_dims,
-                    'act_fn': config.global_encoder.act_fn
-                },
-                field_extent={
-                    'min': torch.tensor(config.global_encoder.field_extent_min),
-                    'max': torch.tensor(config.global_encoder.field_extent_max)
-                }
-            )
-        else:
-            raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', and 'MLP'.")
-        
-        # Topographic encoder (Eq. 4-5)
-        self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(
-            in_channels=config.topographic_encoder.in_channels,
-            out_channels=config.topographic_encoder.out_channels,
-            n_layers=config.topographic_encoder.n_layers,
-            initial_hw=config.topographic_encoder.initial_hw,
-            kernel_sizes=config.topographic_encoder.kernel_sizes,
-            act_fn=config.topographic_encoder.act_fn,
-            use_batchnorm=config.topographic_encoder.use_batchnorm,
-        )
-        
-        # Fusion layer 1: Global + Topographic → Uninformed tokens (Eq. 6-7)
-        self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
-            in_channels=[d_global, d_topo],
-            out_channels=config.fusion_layer.out_channels,
-            hidden_channels=config.fusion_layer.hidden_channels,
-            cond_dim=config.fusion_layer.cond_dim,
-            dropout_p=config.fusion_layer.dropout_p,
-            norm_layer=config.fusion_layer.norm_layer,
-        )
-        
-        # Output head for innovation computation (Eq. 8-12)
-        if config.output_head.type == "linear":
-            self.output_head = output_head.LinearOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                loss_fn=config.output_head.loss_fn,
-            )
-        elif config.output_head.type == "gaussian":
-            self.output_head = output_head.GaussianOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                std_fn=config.output_head.std_fn,
-                min_std_val=config.output_head.min_std_val,
-            )
-        elif config.output_head.type == "quantile":
-            train_taus = torch.linspace(0.0, 1.0, config.output_head.num_train_taus + 2)[1:-1]
-            self.output_head = output_head.QuantileOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                degree=config.output_head.degree,
-                train_taus=train_taus,
-            )
-        else:
-            raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear', 'Gaussian', 'Quantile'.")
-        self.num_samples = config.num_samples
         
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
@@ -471,42 +638,3 @@ class OAT(nn.Module):
             g_tgt=query_data['geo']         # Geometric bias for queries
         )
         return updated_query_token, query_token
-    
-    def _create_uninformed_tokens(
-        self,
-        global_data: Dict[str, torch.Tensor],
-        local_data: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """
-        Create uninformed tokens from global and local information.
-        
-        Implements Eq. 1-7:
-        1. Z_nwp = G(U_nwp, τ)  - Global encoding
-        2. Z_nwp_x = R(Z_nwp, x)  - Spatial readout
-        3. Z_ξ = E_ξ(ξ)  - Topographic encoding
-        4. Z = F([Z_nwp || Z_ξ], τ)  - Fusion
-        
-        Args:
-            global_data: Global NWP fields and time embeddings
-            local_data: Local coordinates and topographic patches
-        
-        Returns:
-            Uninformed tokens: (B, N, D_model)
-        """
-        # Global encoding and readout (Eq. 1-3)
-        global_token = self.global_encoder(global_data, local_data)
-        
-        # Topographic encoding (Eq. 4-5)
-        topo_token = self.topographic_encoder(local_data['topo'])
-        
-        # Fusion (Eq. 6-7)
-        batch_size = global_token.shape[0]
-        n_points = global_token.shape[1]
-        cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_points, -1)
-        uninformed_token = self.fusion_layer1(
-            global_token,
-            topo_token,
-            cond=cond
-        )
-        
-        return uninformed_token
