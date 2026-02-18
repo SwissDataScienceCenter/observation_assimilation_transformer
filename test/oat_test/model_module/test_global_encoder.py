@@ -1,7 +1,10 @@
 import os
 import pytest
 import torch
-from oat.model_module.global_encoder import SwinUNETRGlobalEncoder, UNetGlobalEncoder, BaseGlobalEncoder
+from oat.model_module.global_encoder import (
+    SwinUNETRGlobalEncoder, UNetGlobalEncoder, BaseGlobalEncoder,
+    MLPGlobalEncoder, InterpolationGlobalEncoder,
+)
 from typing import Any, Dict
 
 
@@ -21,6 +24,15 @@ def unet_params() -> Dict[str, Any]:
         'strides': (1, 1, 1),
         'num_res_units': 2,
     }
+    
+
+def mlp_params() -> Dict[str, Any]:
+    return {
+        'in_channels': 4,
+        'hidden_dims': [16, 32],
+        'out_channels': 4,
+        'act_fn': 'ReLU'
+    }
 
 
 @pytest.fixture
@@ -38,7 +50,7 @@ def img(request: pytest.FixtureRequest) -> torch.Tensor:
     return torch.randn(*request.param)
 
 
-@pytest.fixture(params=["swin_unetr", "unet"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
 def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -47,15 +59,22 @@ def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dic
             swin_unetr_params=params,
             field_extent=field_extent
         )
-    else:
+    elif request.param == "unet":
         params = unet_params()
         params['in_channels'] = img.shape[-3]
         return UNetGlobalEncoder(
             unet_params=params,
             field_extent=field_extent
         )
+    elif request.param == "mlp":
+        params = mlp_params()
+        params['in_channels'] = img.shape[-3]
+        return MLPGlobalEncoder(
+            mlp_params=params,
+            field_extent=field_extent
+        )
 
-@pytest.fixture(params=["swin_unetr", "unet"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
 def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -64,11 +83,18 @@ def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, 
             swin_unetr_params=params,
             field_extent=field_extent
         )
-    else:
+    elif request.param == "unet":
         params = unet_params()
         params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
         return UNetGlobalEncoder(
             unet_params=params,
+            field_extent=field_extent
+        )
+    elif request.param == "mlp":
+        params = mlp_params()
+        params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+        return MLPGlobalEncoder(
+            mlp_params=params,
             field_extent=field_extent
         )
 
@@ -158,10 +184,53 @@ def test_unet_output_size(encoder: BaseGlobalEncoder, img: torch.Tensor) -> None
 @pytest.mark.skipif(
     os.getenv("CI") == "true",
     reason="Too heavy for CI"
-)        
+)
 def test_with_batch(encoder_from_batch: BaseGlobalEncoder, batch_fixture: dict[str, Any]) -> None:
     global_data = batch_fixture["global_data"]
     local_data = batch_fixture["observation_data"]
     batch_size, num_stations = local_data["coords"].shape[:2]
     output = encoder_from_batch(global_data, local_data)
     assert output.shape == (batch_size, num_stations, 4)
+
+
+def test_interpolation_encoder_output_shape(field_extent: Dict[str, torch.Tensor]) -> None:
+    B, C, H, W, S = 2, 5, 32, 32, 10
+    encoder = InterpolationGlobalEncoder(field_extent=field_extent)
+    global_data = {"global_field": torch.randn(B, C, H, W)}
+    local_data = {"coords": torch.rand(B, S, 2) * 100.0}
+    out = encoder(global_data, local_data)
+    assert out.shape == (B, S, C)
+
+
+def test_interpolation_encoder_varies_batch_size(field_extent: Dict[str, torch.Tensor]) -> None:
+    C, H, W, S = 4, 16, 16, 8
+    encoder = InterpolationGlobalEncoder(field_extent=field_extent)
+    for B in (1, 2, 4):
+        out = encoder(
+            {"global_field": torch.randn(B, C, H, W)},
+            {"coords": torch.rand(B, S, 2) * 100.0},
+        )
+        assert out.shape[0] == B
+
+
+def test_interpolation_encoder_varies_station_count(field_extent: Dict[str, torch.Tensor]) -> None:
+    B, C, H, W = 2, 3, 16, 16
+    encoder = InterpolationGlobalEncoder(field_extent=field_extent)
+    for S in (1, 10, 50):
+        out = encoder(
+            {"global_field": torch.randn(B, C, H, W)},
+            {"coords": torch.rand(B, S, 2) * 100.0},
+        )
+        assert out.shape[1] == S
+
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Too heavy for CI")
+def test_interpolation_encoder_with_batch_fixture(batch_fixture: dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> None:
+    global_data = batch_fixture["global_data"]
+    query_data = batch_fixture["query_data"]
+    B = global_data["global_field"].shape[0]
+    C_global = global_data["global_field"].shape[1]
+    S = query_data["coords"].shape[1]
+    encoder = InterpolationGlobalEncoder(field_extent=field_extent)
+    out = encoder(global_data, query_data)
+    assert out.shape == (B, S, C_global)

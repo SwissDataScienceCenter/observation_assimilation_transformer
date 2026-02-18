@@ -1,1 +1,2 @@
 from .oat_predictor import OATPredictor
+from .baseline_predictor import NWPInterpolatorPredictor, create_baseline_predictor

@@ -34,3 +34,4 @@ build/
 .DS_Store
 poetry.lock
 .cache_constant_inputs
+CLAUDE.md

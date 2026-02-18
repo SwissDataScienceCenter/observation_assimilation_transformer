@@ -1,6 +1,5 @@
 from typing import Type, Optional, List
 import pytorch_lightning as pl
-import torch.nn as nn
 import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer

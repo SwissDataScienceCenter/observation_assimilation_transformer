@@ -1,4 +1,13 @@
 #!/bin/bash
+#
+# Usage:
+#   sbatch scripts/submit_training_uv_env.sh                                    # OAT training (default)
+#   sbatch scripts/submit_training_uv_env.sh model=baseline logging=baseline    # Baseline evaluation
+#   sbatch scripts/submit_training_uv_env.sh --env uv model=baseline logging=baseline
+#   sbatch scripts/submit_training_uv_env.sh dataset.obs_vars=[temperature]     # OAT with config overrides
+#
+# The --env flag selects the Python environment (poetry or uv).
+# All other arguments are forwarded as Hydra overrides to scripts.train_model.
 
 #SBATCH --job-name="oat_training"
 
@@ -19,6 +28,7 @@
 
 
 ENV="poetry"  # default
+HYDRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
@@ -28,13 +38,14 @@ while [[ $# -gt 0 ]]; do
         shift # past value
         ;;
         *)
-        echo "Unknown argument: $1"
+        HYDRA_ARGS+=("$1")
         shift
         ;;
     esac
 done
 
 echo "Using environment: $ENV"
+echo "Hydra overrides: ${HYDRA_ARGS[*]}"
 
 if [ "$ENV" = "uv" ]; then
     echo "Activating UV venv"
@@ -64,4 +75,4 @@ print("✅ CUDA is available.")
 EOF
 
 
-srun python -m scripts.train_model
+srun python -m scripts.train_model "${HYDRA_ARGS[@]}"

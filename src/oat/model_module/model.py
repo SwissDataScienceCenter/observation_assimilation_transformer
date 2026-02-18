@@ -33,6 +33,8 @@ class GlobalEncoderConfig:
     channels: Tuple[int, ...] = (16, 32, 64, 128)
     strides: Tuple[int, ...] = (1, 1, 1)
     num_res_units: int = 2
+    hidden_dims: Tuple[int, ...] = (32,)
+    act_fn: str = 'ReLU'
 
 
 
@@ -192,8 +194,21 @@ class OAT(nn.Module):
                     'max': torch.tensor(config.global_encoder.field_extent_max)
                 }
             )
+        elif config.global_encoder.type == "MLP":
+            self.global_encoder = global_encoder.MLPGlobalEncoder(
+                mlp_params={
+                    'in_channels': config.global_encoder.in_channels,
+                    'out_channels': config.global_encoder.out_channels,
+                    'hidden_dims': config.global_encoder.hidden_dims,
+                    'act_fn': config.global_encoder.act_fn
+                },
+                field_extent={
+                    'min': torch.tensor(config.global_encoder.field_extent_min),
+                    'max': torch.tensor(config.global_encoder.field_extent_max)
+                }
+            )
         else:
-            raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet' and 'SwinUNETR'.")
+            raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', and 'MLP'.")
         
         # Topographic encoder (Eq. 4-5)
         self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(

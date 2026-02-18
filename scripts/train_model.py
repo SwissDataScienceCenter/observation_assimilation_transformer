@@ -1,20 +1,18 @@
 import os
 from datetime import datetime
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.data_split import create_splits
 from oat.model_module import model
-from oat.data_module.transform import NestedTransform, Transform
+from oat.data_module.setup import setup_data_and_transform
+from oat.data_module.transform import Transform
 from oat.predictor_module import OATPredictor
 from omegaconf import DictConfig
 import hydra
+from hydra.core.hydra_config import HydraConfig
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 import logging
 from pathlib import Path
 import pickle
-from typing import Tuple, Dict
+from typing import Dict
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import (
@@ -23,41 +21,16 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from pytorch_lightning.loggers import WandbLogger
-
-def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> Tuple[CosmoPeakWeatherDataset, 
-                                                            DataLoader, 
-                                                            DataLoader, 
-                                                            DataLoader, 
-                                                            NestedTransform, 
-                                                            Transform]:
-    logger.info("Setting up dataset and dataloaders...")
-    dataset = CosmoPeakWeatherDataset(cfg.dataset)
-    logger.info(f"Dataset size: {len(dataset)} samples")
-    train_dataset, val_dataset, test_dataset = create_splits(dataset, **cfg.split)
-    logger.info(f"Train size: {len(train_dataset)} samples")
-    logger.info(f"Validation size: {len(val_dataset)} samples")
-    logger.info(f"Test size: {len(test_dataset)} samples")
-    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
-    val_loader = DataLoader(val_dataset, shuffle=True, **cfg.dataloader)
-    test_loader = DataLoader(test_dataset, shuffle=False, **cfg.dataloader)
-    logger.info(f"Train loader batches: {len(train_loader)}")
-    logger.info(f"Validation loader batches: {len(val_loader)}")
-    logger.info(f"Test loader batches: {len(test_loader)}")
-    
-    # TODO: Move the number somewhere to config
-    input_transform, output_transform = train_dataset.get_transform(num_data_points=64,#cfg.dataset.data_points_for_stats,
-                                                                    dataloader=train_loader)
-    logger.info("Transforms set up successfully.")
-    return dataset, train_loader, val_loader, test_loader, input_transform, output_transform
+from torch.utils.data import DataLoader
 
 
-def setup_model_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
     global_encoder_cfg = model.GlobalEncoderConfig(
-        **model_cfg.global_encoder, 
+        **model_cfg.global_encoder,
         in_channels=global_input_chans,
         field_extent_max=field_extent['max'],
         field_extent_min=field_extent['min']
@@ -91,22 +64,22 @@ def setup_model_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger)
     logger.info("Initialized model cfg...")
     return oat_config
 
-def setup_predictor(model_cfg: model.OATConfig, 
+def setup_oat_predictor(model_cfg: model.OATConfig, 
                     var_names: str,
                     transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
     from importlib import import_module
-    
+
     # optimizer
     module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
     module = import_module(module_path)
     optim_cls = getattr(module, class_name)
-    
+
     # scheduler
     module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
     module = import_module(module_path)
     sched_cls = getattr(module, class_name)
-    
+
 
     predictor = OATPredictor(
         oat_model_cfg=model_cfg,
@@ -119,10 +92,26 @@ def setup_predictor(model_cfg: model.OATConfig,
         scheduler_class=sched_cls,
         scheduler_params=cfg.predictor.kwargs.scheduler_params
     )
-    
+
     return predictor
 
-def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig):
+
+def setup_wandb_logger(cfg: DictConfig) -> WandbLogger:
+    base_name = cfg.logging.run_name_prefix
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+    run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
+    wandb_logger = WandbLogger(name=run_name,
+                         project=cfg.logging.project,
+                         group=cfg.logging.group,
+                         entity=cfg.logging.entity,
+                         log_model=False)
+
+    wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+    return wandb_logger
+
+
+def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
     assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
 
     logger.info("Saving examples of transforms as fixtures ...")
@@ -132,7 +121,28 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
     
     with open(out_file, "wb") as f:
         pickle.dump(input_transform, f)
+        logger.info("Saving examples of transforms as fixtures ...")
+        ROOT = Path(__file__).resolve().parents[1]
+        out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
 
+        with open(out_file, "wb") as f:
+            pickle.dump(input_transform, f)
+
+        logger.info(f"Saved input_transform object to {out_file}")
+
+        out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
+
+        with open(out_file, "wb") as f:
+            pickle.dump(output_transform, f)
+
+        logger.info(f"Saved output_transform object to {out_file}")
+        batch = next(iter(train_loader))
+        out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
+        with open(out_file, "wb") as f:
+                pickle.dump(batch, f)
+
+        logger.info(f"Saved batch fixture object to {out_file}")
     logger.info(f"Saved input_transform object to {out_file}")
     
     out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
@@ -157,6 +167,7 @@ def main(cfg: DictConfig) -> None:
     # set global seed
     OmegaConf.resolve(cfg) # for referenced fields
     torch.manual_seed(cfg.seed)
+    model_type = HydraConfig.get().runtime.choices.get("model", "oat")
     dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     
     if cfg.get("save_fixtures", False):
@@ -167,68 +178,67 @@ def main(cfg: DictConfig) -> None:
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    oat_model_cfg = setup_model_cfg(cfg, field_extent, logger)
-    logger.info("Model set up successfully.")
-    
-    
-    var_names = dataset.config.obs_vars
-    predictor = setup_predictor(model_cfg=oat_model_cfg,
-                                var_names = var_names,
-                                transforms=[input_transform, output_transform],
-                                cfg=cfg)
-    # Callbacks
-    
-    # NOTE maybe use cfg for patience
-    early_stop_callback = EarlyStopping(
-        monitor="val_loss",
-        patience=10,
-        mode="min",
-        verbose=True
-    )
-    lr_monitor = LearningRateMonitor(logging_interval="step")
-    
-    # Logger 
-    base_name = cfg.logging.run_name_prefix
-    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
-    run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
-    checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
-    
-    # Each run has their own folder. Save the cfg as yaml file in there.
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
-    
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
-        mode="min",
-        save_top_k=1,
-        verbose=True,
-        dirpath=checkpoint_dir,
-        filename="best-model-{epoch:02d}-{val_loss:.4f}"
-    )
-    
-    wandb_logger = WandbLogger(name=run_name,
-                         project=cfg.logging.project,
-                         group=cfg.logging.group,
-                         entity=cfg.logging.entity,
-                         log_model=False)
-    
-    wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+    wandb_logger = setup_wandb_logger(cfg)
 
-    # NOTE check if compiling model helps
-    # predictor = torch.compile(predictor)
-    
-    trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,
-                                                early_stop_callback,
-                                                lr_monitor],
-                                    logger=wandb_logger)
+    if model_type == "baseline":
+        from oat.model_module.baseline import NWPInterpolatorConfig
+        from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-    trainer.fit(model=predictor,
-                train_dataloaders=train_loader,
-                val_dataloaders=val_loader)
-                
+        baseline_config = NWPInterpolatorConfig(
+            field_extent=field_extent,
+            **cfg.model
+        )
+        pre_transform = dataset.get_baseline_pre_transform()
+        predictor = create_baseline_predictor(
+            config=baseline_config,
+            obs_vars=list(dataset.config.obs_vars),
+            pre_transform=pre_transform,
+        )
+
+        trainer = Trainer(**cfg.trainer, logger=wandb_logger)
+        trainer.validate(predictor, val_loader)
+    else:
+        oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
+        logger.info("Model set up successfully.")
+
+        var_names = dataset.config.obs_vars
+        predictor = setup_oat_predictor(model_cfg=oat_model_cfg,
+                                    var_names=var_names,
+                                    transforms=[input_transform, output_transform],
+                                    cfg=cfg)
+        # Callbacks
+        checkpoint_callback = ModelCheckpoint(
+            monitor="val_loss",
+            mode="min",
+            save_top_k=1,
+            verbose=True,
+            dirpath="checkpoints/",
+            filename="best-model-{epoch:02d}-{val_loss:.4f}"
+        )
+        # NOTE maybe use cfg for patience
+        early_stop_callback = EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            mode="min",
+            verbose=True
+        )
+        lr_monitor = LearningRateMonitor(logging_interval="step")
+
+        # NOTE check if compiling model helps
+        # predictor = torch.compile(predictor)
+
+        trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,
+                                                    early_stop_callback,
+                                                    lr_monitor],
+                                        logger=wandb_logger)
+
+        trainer.fit(model=predictor,
+                    train_dataloaders=train_loader,
+                    val_dataloaders=val_loader)
+
 if __name__ == "__main__":
     # Usage:
-    # python -m scripts.setup_data +save_fixtures=true ++dataset.data_points_for_stats=10
-    # python -m scripts.setup_data +save_fixtures=true ++dataset.data_points_for_stats=10 ++dataloader.batch_size=1
+    # python -m scripts.train_model                              (OAT training)
+    # python -m scripts.train_model model=baseline logging=baseline  (baseline evaluation)
+    # python -m scripts.train_model +save_transforms_fixtures=true ++dataloader.batch_size=1
     main()
