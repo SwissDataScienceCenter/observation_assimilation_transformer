@@ -1,18 +1,18 @@
 from oat.model_module import baseline
 import pytorch_lightning as pl
-from typing import Dict, Any, Callable, Optional, List
+from typing import Dict, Any, Callable, Optional, List, Tuple
 import torch
-from oat.predictor_module.functional_metrics import sample_mae, point_mae
+from oat.predictor_module.functional_metrics import point_mae
 
 
-class BaselinePredictor(pl.LightningModule):
+class NWPInterpolatorPredictor(pl.LightningModule):
     
     def __init__(self, 
-                 config: baseline.InterpolatorBaselineConfig,
+                 config: baseline.NWPInterpolatorConfig,
                  output_var_names: List,
                  input_transform: Callable | None = None) -> None:
         super().__init__()
-        self.model = baseline.InterpolatorBaseline(config)
+        self.model = baseline.NWPInterpolator(config)
         self.hparams.update(self.model.interpolator._interpolation_params)
         self.input_transform = input_transform
         
@@ -24,7 +24,7 @@ class BaselinePredictor(pl.LightningModule):
         self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
         self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
         
-    def forward(self, batch: Dict[str, Any], query_locations: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, batch: Dict[str, Any], query_locations: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Any, Any]:
         if query_locations is None:
             target_obs = batch['query_data'].get('obs', None)
             target_mask_obs = batch['query_data'].get('mask_obs', None)
@@ -32,7 +32,7 @@ class BaselinePredictor(pl.LightningModule):
         else:
             # TODO implement
             raise NotImplementedError("Custom query_locations not yet supported")
-        out = self.model(batch['global_data'], batch['observation_data'], query_data)
+        out = self.model(batch['global_data'], query_data)
         return out, target_obs, target_mask_obs
     
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -84,12 +84,12 @@ class BaselinePredictor(pl.LightningModule):
 
 
 def create_baseline_predictor(
-    config: baseline.InterpolatorBaselineConfig,
+    config: baseline.NWPInterpolatorConfig,
     obs_vars: List[str],
     pre_transform: Callable | None = None,
-) -> BaselinePredictor:
+) -> NWPInterpolatorPredictor:
     """Build a BaselinePredictor from a config and dataset-provided pre-transform."""
-    return BaselinePredictor(
+    return NWPInterpolatorPredictor(
         config=config,
         output_var_names=obs_vars,
         input_transform=pre_transform,

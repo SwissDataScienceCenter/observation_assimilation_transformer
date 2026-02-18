@@ -7,15 +7,15 @@ from typing import Dict, Any
 from dataclasses import dataclass
 
 @dataclass
-class InterpolatorBaselineConfig:
+class NWPInterpolatorConfig:
     field_extent: Dict[str, Any]
     mode: str = 'bilinear'
     padding_mode: str = 'border'
     
 
-class InterpolatorBaseline(nn.Module):
+class NWPInterpolator(nn.Module):
     
-    def __init__(self, config: InterpolatorBaselineConfig) -> None:
+    def __init__(self, config: NWPInterpolatorConfig) -> None:
         super().__init__()
         interpolation_params = {
                 'mode': config.mode,
@@ -25,7 +25,6 @@ class InterpolatorBaseline(nn.Module):
                                                        interpolation_params=interpolation_params)
         
     def forward(self, global_data: Dict[str, Any], 
-        observation_data: Dict[str, Any],
         query_data: Dict[str, Any]) -> torch.Tensor:
         return self.interpolator(global_data, query_data)
     

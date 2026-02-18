@@ -10,7 +10,7 @@ import pytest
     ids=list(METRICS.keys()),
 )
 @pytest.mark.parametrize("aggregation", ['all', 'variable'])
-def test_sample_mae(metric_fn, aggregation):
+def test_sample_mae(metric_fn: callable, aggregation: str) -> None:
     
     y_pred_samples = torch.randn(32,18,100,4)
     y_true = torch.randn(32,18,4)
