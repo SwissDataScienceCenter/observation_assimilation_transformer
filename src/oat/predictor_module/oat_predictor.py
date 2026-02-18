@@ -132,12 +132,13 @@ class OATPredictor(pl.LightningModule):
                                   prefix="train")
         
         # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="train_pre_oat")
+        if 'pre_oat_output' in y_hat:
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="train_pre_oat")
 
         return loss
 
@@ -156,12 +157,13 @@ class OATPredictor(pl.LightningModule):
                                   prefix="val")
 
         # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="val_pre_oat")
+        if 'pre_oat_output' in y_hat:
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="val_pre_oat")
 
         return loss
 
@@ -180,12 +182,13 @@ class OATPredictor(pl.LightningModule):
                                   prefix="test")
         
         # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="test_pre_oat")
+        if 'pre_oat_output' in y_hat:
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="test_pre_oat")
 
         return loss
 
