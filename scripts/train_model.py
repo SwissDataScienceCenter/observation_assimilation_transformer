@@ -24,7 +24,7 @@ from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OAT:
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
