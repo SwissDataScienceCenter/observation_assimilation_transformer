@@ -12,7 +12,7 @@ import torch
 import logging
 from pathlib import Path
 import pickle
-from typing import Dict
+from typing import Dict, Tuple, List
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import (
@@ -96,11 +96,12 @@ def setup_oat_predictor(model_cfg: model.OATConfig,
     return predictor
 
 
-def setup_wandb_logger(cfg: DictConfig) -> WandbLogger:
+def setup_logger_and_calllbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
     run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
+    checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
     wandb_logger = WandbLogger(name=run_name,
                          project=cfg.logging.project,
                          group=cfg.logging.group,
@@ -108,7 +109,26 @@ def setup_wandb_logger(cfg: DictConfig) -> WandbLogger:
                          log_model=False)
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
-    return wandb_logger
+    
+            # Callbacks
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        verbose=True,
+        dirpath=checkpoint_dir,
+        filename="best-model-{epoch:02d}-{val_loss:.4f}"
+    )
+    # NOTE maybe use cfg for patience
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        mode="min",
+        verbose=True
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+    
+    return wandb_logger, [checkpoint_callback, early_stop_callback, lr_monitor]
 
 
 def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
@@ -178,7 +198,7 @@ def main(cfg: DictConfig) -> None:
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    wandb_logger = setup_wandb_logger(cfg)
+    wandb_logger, callbacks = setup_logger_and_calllbacks(cfg)
 
     if model_type == "baseline":
         from oat.model_module.baseline import NWPInterpolatorConfig
@@ -203,35 +223,15 @@ def main(cfg: DictConfig) -> None:
 
         var_names = dataset.config.obs_vars
         predictor = setup_oat_predictor(model_cfg=oat_model_cfg,
-                                    var_names=var_names,
-                                    transforms=[input_transform, output_transform],
-                                    cfg=cfg)
-        # Callbacks
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1,
-            verbose=True,
-            dirpath="checkpoints/",
-            filename="best-model-{epoch:02d}-{val_loss:.4f}"
-        )
-        # NOTE maybe use cfg for patience
-        early_stop_callback = EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            mode="min",
-            verbose=True
-        )
-        lr_monitor = LearningRateMonitor(logging_interval="step")
+                                        var_names=var_names,
+                                        transforms=[input_transform, output_transform],
+                                        cfg=cfg)
+
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
 
-        trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback,
-                                                    early_stop_callback,
-                                                    lr_monitor],
-                                        logger=wandb_logger)
-
+        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger)
         trainer.fit(model=predictor,
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader)
