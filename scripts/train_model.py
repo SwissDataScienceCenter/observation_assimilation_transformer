@@ -128,7 +128,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
         verbose=True
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    
+OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
     return wandb_logger, [checkpoint_callback, early_stop_callback, lr_monitor]
 
 
