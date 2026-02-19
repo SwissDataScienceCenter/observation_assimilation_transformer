@@ -110,6 +110,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
     
+            os.makedirs(checkpoint_dir, exist_ok=True)
             # Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
