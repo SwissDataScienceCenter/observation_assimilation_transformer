@@ -98,7 +98,7 @@ def setup_oat_predictor(model_cfg: model.OATConfig,
 
 def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
-    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now_str = datetime.now().strftime("%Y%m%d")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
     run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
     checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
