@@ -110,7 +110,8 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
     
-            # Callbacks
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    # Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         mode="min",
@@ -127,7 +128,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
         verbose=True
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    
+    OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
     return wandb_logger, [checkpoint_callback, early_stop_callback, lr_monitor]
 
 
