@@ -96,7 +96,7 @@ def setup_oat_predictor(model_cfg: model.OATConfig,
     return predictor
 
 
-def setup_logger_and_calllbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
+def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
@@ -198,7 +198,7 @@ def main(cfg: DictConfig) -> None:
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    wandb_logger, callbacks = setup_logger_and_calllbacks(cfg)
+    wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
 
     if model_type == "baseline":
         from oat.model_module.baseline import NWPInterpolatorConfig
