@@ -153,6 +153,7 @@ class UninformedOAT(nn.Module):
     learns to correct pointwise corrections of NWP systematic errors 
     (known as statistical postprocessing).
     """
+    requires_observation: bool = False
     
     def __init__(self, config: Optional[UninformedOATConfig] = None) -> None:
         super().__init__()
@@ -403,6 +404,7 @@ class OAT(UninformedOAT):
     refines them by aggregating information across stations.
     """
     
+    requires_observation: bool = True
     def __init__(self, config: Optional[OATConfig] = None) -> None:
         """
         Initialize OAT model.
