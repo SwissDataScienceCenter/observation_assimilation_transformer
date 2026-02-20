@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+import warnings
+import importlib
 
 from oat.model_module import model
 from oat.data_module.setup import setup_data_and_transform
@@ -168,6 +170,18 @@ def main(cfg: DictConfig) -> None:
     OmegaConf.resolve(cfg) # for referenced fields
     torch.manual_seed(cfg.seed)
     model_type = HydraConfig.get().runtime.choices.get("model", "oat")
+
+    # Get model class
+    model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
+    model_module = importlib.import_module(model_module_str)
+    model_cls = getattr(model_module, model_cls_str)
+    # Check that only "informed" models have a train_split_fraction > 0.0
+    # and force it to 0.0 otherwise.
+    if not model_cls.requires_observation and cfg.split.train_split_fraction > 0.0:
+        warnings.warn(f"Observation fraction = {cfg.split.train_split_fraction} is incompatible with \
+            an uninformed model ({model_cls_str}). It will be forcibly overridden to 0.0")
+        cfg.split.train_split_fraction = 0.0
+        
     dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     
     if cfg.get("save_fixtures", False):

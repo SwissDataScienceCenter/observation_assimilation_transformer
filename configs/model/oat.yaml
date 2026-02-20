@@ -5,7 +5,8 @@ defaults:
   - masking: knn
   - transformer: oat_block
   - output_head: linear
-  
+
+model_cls: oat.model_module.model.OAT
 d_model: 16
 pre_oat_loss_weight: .1
 num_samples: 100

@@ -46,8 +46,12 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     assert len(train_indices) > 0 and len(val_indices) > 0 and len(test_indices) > 0, "Each split must contain at least one station."
     
     train_dataset = TrainDataset(dataset, train_indices, split_fraction=train_split_fraction, seed=seed)
-    val_dataset = EvalDataset(dataset, val_indices, train_indices)
-    test_dataset = EvalDataset(dataset, test_indices, np.concatenate((train_indices, val_indices)))
+    
+    observed_indices = np.array([], dtype=int) if train_split_fraction == 0.0 else train_indices
+    val_dataset = EvalDataset(dataset, eval_indices=val_indices, observed_indices=observed_indices)
+    
+    observed_indices = np.array([], dtype=int) if train_split_fraction == 0.0 else np.concatenate((train_indices, val_indices))
+    test_dataset = EvalDataset(dataset, eval_indices=test_indices, observed_indices=observed_indices)
     
     return train_dataset, val_dataset, test_dataset
 
