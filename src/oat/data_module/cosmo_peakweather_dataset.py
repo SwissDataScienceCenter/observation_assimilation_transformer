@@ -26,6 +26,12 @@ dtype_map = {
     "bfloat16": torch.bfloat16,
 }
 
+# (deps, fn) where fn(*dep_tensors) → tensor (H, W)
+DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    'wind_speed': (['U_10M', 'V_10M'], lambda u, v: torch.sqrt(u**2 + v**2)),
+    'wind_direction': (['U_10M', 'V_10M'], lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0),
+}
+
 
 @dataclass
 class CosmoPeakWeatherConfig:
@@ -133,20 +139,18 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # NWP fields (time-varying)
         self.nwp_ds = open_dataset(self.config.nwp_path)
-        # Validate requested NWP variables exist in the dataset
-        missing_vars = [
-            v for v in self.config.nwp_vars
-            if v not in self.nwp_ds.name_to_index
-        ]
+        # Collect all source vars: base vars + deps of derived vars (deduplicated)
+        source_vars = list(dict.fromkeys(
+            [v for v in self.config.nwp_vars if v not in DERIVED_FEATURES]
+            + [dep for v in self.config.nwp_vars if v in DERIVED_FEATURES
+               for dep in DERIVED_FEATURES[v][0]]
+        ))
+        missing_vars = [v for v in source_vars if v not in self.nwp_ds.name_to_index]
         if missing_vars:
-            available_vars = list(self.nwp_ds.name_to_index.keys())
-            raise KeyError(
-                f"The following NWP variables are not present in the dataset: "
-                f"{missing_vars}. Available variables are: {available_vars}"
-            )
-        self.nwp_var_idx = [
-            self.nwp_ds.name_to_index[v] for v in self.config.nwp_vars
-        ]
+            raise KeyError(f"NWP variables (or their dependencies) not in dataset: {missing_vars}. "
+                           f"Available: {list(self.nwp_ds.name_to_index.keys())}")
+        self._source_vars = source_vars
+        self.nwp_var_idx = [self.nwp_ds.name_to_index[v] for v in source_vars]
         
         
         # Reference grid for spatial alignment
@@ -374,22 +378,22 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # === Global data ===
         # Get NWP fields
-        values = self.nwp_ds[
-            self.nwp_ds.dates_interval_to_indices(
-                start=nwp_time, end=nwp_time
-            )[0],
-            self.nwp_var_idx,
-            0,  # member
-            :
+        raw = self.nwp_ds[
+            self.nwp_ds.dates_interval_to_indices(start=nwp_time, end=nwp_time)[0],
+            self.nwp_var_idx, 0, :
         ].reshape(len(self.nwp_var_idx), -1)
-        
-        # Regrid to reference grid
-        nwp_field = values[:, self.nwp_indices]
-        nwp_field = torch.from_numpy(
-            nwp_field.reshape(len(self.nwp_var_idx), *self.nwp_shape)
+        raw_field = torch.from_numpy(
+            raw[:, self.nwp_indices].reshape(len(self.nwp_var_idx), *self.nwp_shape)
         ).to(dtype_map[self.config.dtype])
-        
-        # Concatenate with topo
+        source = {var: raw_field[i] for i, var in enumerate(self._source_vars)}
+
+        # Output channels in exactly the order of self.config.nwp_vars
+        nwp_channels = [
+            DERIVED_FEATURES[v][1](*[source[d] for d in DERIVED_FEATURES[v][0]])
+            if v in DERIVED_FEATURES else source[v]
+            for v in self.config.nwp_vars
+        ]
+        nwp_field = torch.stack(nwp_channels, dim=0)  # (len(nwp_vars), H, W)
         global_field = torch.cat([nwp_field, self.topo_on_nwp_grid], dim=0)
         
         global_data = {'global_field': global_field}

@@ -1,9 +1,10 @@
 from hydra import initialize, compose
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset, DERIVED_FEATURES
 from oat.data_module.transform import NestedTransform, Transform
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 import os
 
 @pytest.mark.skipif(
@@ -52,8 +53,40 @@ def test_cosmo_peakweather_dataset() -> None:
     
     
     transforms = dataset.get_transform(0)
-    
+
     assert isinstance(transforms[0], NestedTransform)
     assert isinstance(transforms[1], Transform)
-    
-    
+
+
+def test_derived_features_wind_speed() -> None:
+    u = torch.tensor([[3.0, 0.0]])
+    v = torch.tensor([[4.0, 5.0]])
+    torch.testing.assert_close(DERIVED_FEATURES['wind_speed'][1](u, v),
+                               torch.tensor([[5.0, 5.0]]))
+
+def test_derived_feature_source_vars() -> None:
+    """Deps are resolved and deduplicated; base vars before deps."""
+    nwp_vars = ['T_2M', 'wind_speed']
+    source_vars = list(dict.fromkeys(
+        [v for v in nwp_vars if v not in DERIVED_FEATURES]
+        + [dep for v in nwp_vars if v in DERIVED_FEATURES for dep in DERIVED_FEATURES[v][0]]
+    ))
+    assert source_vars == ['T_2M', 'U_10M', 'V_10M']
+
+def test_derived_feature_output_order() -> None:
+    """Output channels are in nwp_vars order; unused deps not in output."""
+    nwp_vars = ['wind_speed', 'T_2M']
+    source = {
+        'T_2M': torch.full((2, 2), 280.0),
+        'U_10M': torch.full((2, 2), 3.0),
+        'V_10M': torch.full((2, 2), 4.0),
+    }
+    channels = [
+        DERIVED_FEATURES[v][1](*[source[d] for d in DERIVED_FEATURES[v][0]])
+        if v in DERIVED_FEATURES else source[v]
+        for v in nwp_vars
+    ]
+    result = torch.stack(channels, dim=0)
+    assert result.shape[0] == 2
+    torch.testing.assert_close(result[0], torch.full((2, 2), 5.0))   # wind_speed
+    torch.testing.assert_close(result[1], torch.full((2, 2), 280.0)) # T_2M
