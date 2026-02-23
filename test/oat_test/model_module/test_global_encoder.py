@@ -3,7 +3,7 @@ import pytest
 import torch
 from oat.model_module.global_encoder import (
     SwinUNETRGlobalEncoder, UNetGlobalEncoder, BaseGlobalEncoder,
-    MLPGlobalEncoder, InterpolationGlobalEncoder,
+    MLPGlobalEncoder, InterpolationGlobalEncoder, ResNetCNNGlobalEncoder,
 )
 from typing import Any, Dict
 
@@ -35,6 +35,15 @@ def mlp_params() -> Dict[str, Any]:
     }
 
 
+def resnet_cnn_params() -> Dict[str, Any]:
+    return {
+        'in_channels': 4,
+        'out_channels': 4,
+        'num_blocks': 2,
+        'act_fn': 'ReLU',
+    }
+
+
 @pytest.fixture
 def field_extent() -> Dict[str, torch.Tensor]:
     return {
@@ -50,7 +59,7 @@ def img(request: pytest.FixtureRequest) -> torch.Tensor:
     return torch.randn(*request.param)
 
 
-@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp", "resnet_cnn"])
 def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -73,8 +82,15 @@ def encoder(request: pytest.FixtureRequest, img: torch.Tensor, field_extent: Dic
             mlp_params=params,
             field_extent=field_extent
         )
+    elif request.param == "resnet_cnn":
+        params = resnet_cnn_params()
+        params['in_channels'] = img.shape[-3]
+        return ResNetCNNGlobalEncoder(
+            resnet_cnn_params=params,
+            field_extent=field_extent
+        )
 
-@pytest.fixture(params=["swin_unetr", "unet", "mlp"])
+@pytest.fixture(params=["swin_unetr", "unet", "mlp", "resnet_cnn"])
 def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, Any], field_extent: Dict[str, torch.Tensor]) -> BaseGlobalEncoder:
     if request.param == "swin_unetr":
         params = swin_unetr_params()
@@ -95,6 +111,13 @@ def encoder_from_batch(request: pytest.FixtureRequest, batch_fixture: dict[str, 
         params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
         return MLPGlobalEncoder(
             mlp_params=params,
+            field_extent=field_extent
+        )
+    elif request.param == "resnet_cnn":
+        params = resnet_cnn_params()
+        params['in_channels'] = batch_fixture["global_data"]["global_field"].shape[-3]
+        return ResNetCNNGlobalEncoder(
+            resnet_cnn_params=params,
             field_extent=field_extent
         )
 
