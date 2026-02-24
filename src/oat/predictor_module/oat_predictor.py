@@ -117,7 +117,7 @@ class OATPredictor(pl.LightningModule):
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=False)
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
         with torch.no_grad():
 
@@ -131,7 +131,7 @@ class OATPredictor(pl.LightningModule):
                                     y_true=y_true_unnorm,
                                     mask=target_mask_obs,
                                     prefix="train",
-                                    on_step=True, on_epoch=False)
+                                    on_step=True, on_epoch=True)
             
             # pre_oat logging
             y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
@@ -140,7 +140,7 @@ class OATPredictor(pl.LightningModule):
                                     y_true=y_true_unnorm,
                                     mask=target_mask_obs,
                                     prefix="train_pre_oat",
-                                    on_step=True, on_epoch=False)
+                                    on_step=True, on_epoch=True)
 
         return loss
 
