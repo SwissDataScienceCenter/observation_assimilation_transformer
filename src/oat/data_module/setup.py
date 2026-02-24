@@ -34,8 +34,6 @@ def setup_data_and_transform(
     logger.info(f"Test loader batches: {len(test_loader)}")
 
     # TODO: Move the number somewhere to config
-    input_transform, output_transform = train_dataset.get_transform(
-        num_data_points=64, dataloader=train_loader
-    )
+    input_transform, output_transform = train_dataset.get_transform(num_data_points=64)
     logger.info("Transforms set up successfully.")
     return dataset, train_loader, val_loader, test_loader, input_transform, output_transform

@@ -117,51 +117,56 @@ class OATPredictor(pl.LightningModule):
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
+        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=False)
 
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        with torch.no_grad():
 
-        # y_hat_unorm shape: [batch,station,sample,feature]
-        # target_obs shape: [batch,station,feature]
-        # NOTE should we add nograd here?
-        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat, 
-                                                                   y_true=target_obs)
+            # y_hat_unorm shape: [batch,station,sample,feature]
+            # target_obs shape: [batch,station,feature]
+            # NOTE should we add nograd here?
+            y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat, 
+                                                                    y_true=target_obs)
 
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="train")
-        
-        # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="train_pre_oat")
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="train",
+                                    on_step=True, on_epoch=False)
+            
+            # pre_oat logging
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="train_pre_oat",
+                                    on_step=True, on_epoch=False)
 
         return loss
 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
-
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+            
+        with torch.no_grad():
+            y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
+                                                            y_true=target_obs)
+            # TODO log metrics with unorm value
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="val",
+                                    on_step=False, on_epoch=True)
 
-        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
-                                                        y_true=target_obs)
-        # TODO log metrics with unorm value
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="val")
-
-        # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="val_pre_oat")
+            # pre_oat logging
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="val_pre_oat",
+                                    on_step=False, on_epoch=True)
 
         return loss
 
@@ -170,22 +175,26 @@ class OATPredictor(pl.LightningModule):
         y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("test_loss", loss)
-
-        y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
-                                                        y_true=target_obs)
-
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="test")
         
-        # pre_oat logging
-        y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                        y_true=target_obs)
-        self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                  y_true=y_true_unnorm,
-                                  mask=target_mask_obs,
-                                  prefix="test_pre_oat")
+        with torch.no_grad():
+            
+            y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
+                                                            y_true=target_obs)
+
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="test",
+                                    on_step=False, on_epoch=True)
+            
+            # pre_oat logging
+            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                            y_true=target_obs)
+            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                    y_true=y_true_unnorm,
+                                    mask=target_mask_obs,
+                                    prefix="test_pre_oat",
+                                    on_step=False, on_epoch=True)
 
         return loss
 
@@ -199,7 +208,9 @@ class OATPredictor(pl.LightningModule):
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 
                                         mask: torch.Tensor,
-                                        prefix: str = "") -> None:
+                                        prefix: str = "",
+                                        on_step: bool = True,
+                                        on_epoch: bool = True) -> None:
         for metric_name, metric_fn in self.metrics_fn.items():
             
             metric_values = metric_fn(y_target=y_true,
@@ -212,7 +223,7 @@ class OATPredictor(pl.LightningModule):
                 
                 self.log(name=f'{prefix}_{metric_name}_{var_name}', 
                          value=metric_val, 
-                         prog_bar=True, on_step=True, on_epoch=True)
+                         prog_bar=True, on_step=on_step, on_epoch=on_epoch)
             
 
     def configure_optimizers(self) -> Optimizer:

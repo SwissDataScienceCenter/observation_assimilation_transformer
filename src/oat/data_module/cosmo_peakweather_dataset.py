@@ -331,13 +331,16 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 "times available (self.times is empty). Ensure times are set "
                 "before loading observations."
             )
-        self.obs_df, self.obs_mask = self.obs_ds.get_observations(
+        self.obs_np, self.obs_mask_np = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1] + pd.Timedelta(hours=1),  # Include last time
             parameters=self.config.obs_vars,
             stations=self.stations,
             return_mask=True,
+            as_numpy=True,
         )
+        self.obs_np = self.obs_np[self.time_indices]  # Align with filtered times
+        self.obs_mask_np = self.obs_mask_np[self.time_indices]
         
         # Station metadata
         self.station_coords = torch.tensor(
@@ -353,6 +356,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             ].values,
             dtype=dtype_map[self.config.dtype]
         )
+
         
     def __len__(self) -> int:
         return len(self.times)
@@ -401,34 +405,9 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         if self.config.use_time_embedding:
             global_data['time_emb'] = self._get_time_embedding(nwp_time)
             
-        # === Observation data ===
-        # Get observations for this time, with explicit error handling
-        try:
-            df_time = self.obs_df.xs(time)
-            df_mask_time = self.obs_mask.xs(time)
-        except KeyError as exc:
-            raise KeyError(
-                f"Observations for time {time!r} not found in obs_df index."
-            ) from exc
-        df_unstacked = df_time.unstack()
-        df_final = df_unstacked.reindex(
-            columns=self.config.obs_vars,
-            index=self.stations
-        )
-        obs_values = df_final.values  # (N_stations, C_obs)
-        df_mask_unstacked = df_mask_time.unstack()
-        df_mask_final = df_mask_unstacked.reindex(
-            columns=self.config.obs_vars,
-            index=self.stations
-        )
-        obs_mask = df_mask_final.values  # (N_stations, C_obs)
-        #obs_mask[np.isnan(obs_mask)] = False  # Treat NaN in mask as False
-        # obs_values[~obs_mask] = 0  # Set missing values to NaN for masking
-        
-        # Extract topographic patches at station locations
-        # topo_field = torch.from_numpy(
-        #     self.topo_data[self.topo_var_idx]
-        # ).to(dtype_map[self.config.dtype])
+        obs_values = self.obs_np[idx]       # (N_stations, C_obs)
+        obs_mask = self.obs_mask_np[idx]    # (N_stations, C_obs)
+
         topo_field = self.topo_field  # No loading, no conversion
         topo_patches = self._extract_patches(
             self.station_coords,
