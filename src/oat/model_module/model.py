@@ -33,6 +33,7 @@ class GlobalEncoderConfig:
     channels: Tuple[int, ...] = (16, 32, 64, 128)
     strides: Tuple[int, ...] = (1, 1, 1)
     num_res_units: int = 2
+    kernel_size: int = 3
     num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
     act_fn: str = 'ReLU'
@@ -213,6 +214,7 @@ class OAT(nn.Module):
                 resnet_cnn_params={
                     'in_channels': config.global_encoder.in_channels,
                     'out_channels': config.global_encoder.out_channels,
+                    'kernel_size': config.global_encoder.kernel_size,
                     'num_blocks': config.global_encoder.num_blocks,
                     'act_fn': config.global_encoder.act_fn,
                 },

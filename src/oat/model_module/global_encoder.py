@@ -133,18 +133,20 @@ class _ResBlock(torch.nn.Module):
     def __init__(self, channels: int, kernel_size: int, act_fn: str) -> None:
         super().__init__()
         pad = kernel_size // 2
-        self.conv1 = torch.nn.Conv2d(channels, channels, kernel_size, padding=pad, bias=False)
+        self.conv1 = torch.nn.Conv2d(channels, channels, 1, bias=False)
         self.bn1 = torch.nn.BatchNorm2d(channels)
         self.act = get_activation(act_fn)
         self.conv2 = torch.nn.Conv2d(channels, channels, kernel_size, padding=pad, bias=False)
         self.bn2 = torch.nn.BatchNorm2d(channels)
         self.act2 = get_activation(act_fn)
+        self.conv3 = torch.nn.Conv2d(channels, channels, 1, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
         out = self.act(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.act2(out + residual)
+        out = self.act2(self.bn2(self.conv2(out)))
+        out = self.conv3(out)
+        return out + residual
 
 
 class ResNetCNNGlobalEncoder(InterpolationGlobalEncoder):
