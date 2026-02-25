@@ -1,0 +1,6 @@
+type: ResNetCNN
+# in_channels, field_extent_min, field_extent_max must be set by data
+out_channels: 32
+num_blocks: 2
+kernel_size: 5
+act_fn: GELU
