@@ -18,9 +18,8 @@ def test_cosmo_peakweather_dataset() -> None:
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     
     # check dates
-    # all obs times there
-    obs_times = dataset.obs_df.index
-    assert np.all(dataset.times.isin(obs_times))
+    # obs_np has exactly one row per dataset time (missing times get NaN fill)
+    assert len(dataset.obs_np) == len(dataset.times)
     # only missing nwp times are missing
     nwp_times = pd.to_datetime(dataset.nwp_ds.dates).tz_localize('UTC')
     missing_nwp_idx = np.where(~nwp_times.isin(dataset.times))
