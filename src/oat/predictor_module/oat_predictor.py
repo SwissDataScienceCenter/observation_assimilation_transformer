@@ -201,7 +201,7 @@ class OATPredictor(pl.LightningModule):
     def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
         batch = self._normalize_batch(batch)
 
-        y_hat = self(batch, return_loss=False)
+        y_hat = self(batch, return_loss_and_targets=False)
 
         return self.output_transform.inverse(y_hat['samples'])
     
