@@ -350,12 +350,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             dtype=dtype_map[self.config.dtype]
         )
         
-        self.station_geo = torch.tensor(
-            self.obs_ds.stations_table.loc[self.stations][
-                self.config.geo_vars
-            ].values,
-            dtype=dtype_map[self.config.dtype]
-        )
+        self.station_geo = self._get_geo(self.station_coords)
 
         
     def __len__(self) -> int:
@@ -439,10 +434,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             self.topo_extent
         )
         
-        # For geo, we can use nearest neighbor lookup since it's just station metadata
-        tree = cKDTree(self.station_coords.numpy())
-        _, indices = tree.query(query_coords.numpy())
-        geo_query = self.station_geo[indices]
+        geo_query = self._get_geo(query_coords)
         
         return {
             'coords': query_coords,
@@ -475,6 +467,26 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         return patches
         
+    def _get_geo(self, coords: torch.Tensor) -> torch.Tensor:
+        """Return geo features (swiss_easting, swiss_northing, dem) for given coordinates.
+
+        DEM (topo_vars[0]) is bilinearly interpolated from topo_field at each coordinate.
+
+        Args:
+            coords: (N, 2) tensor of [swiss_easting, swiss_northing]
+
+        Returns:
+            (N, 3) tensor of [swiss_easting, swiss_northing, dem]
+        """
+        point_grid = torch.zeros(1, 1, 2, dtype=coords.dtype, device=coords.device)
+        dem = self._extract_patches(
+            coords,
+            self.topo_field[0:1],  # DEM channel only, shape (1, H, W)
+            point_grid,
+            self.topo_extent,
+        )[:, 0, 0, 0]  # (N,)
+        return torch.cat([coords, dem.unsqueeze(1)], dim=1)  # (N, 3)
+
     @staticmethod
     def _normalize_positions(
         pos: torch.Tensor,
