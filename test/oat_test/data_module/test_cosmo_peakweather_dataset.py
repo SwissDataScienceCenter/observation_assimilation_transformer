@@ -63,6 +63,10 @@ def test_cosmo_peakweather_dataset() -> None:
     [0.8, 0.0],
     ids=["with_observations", "no_observations"]
 )
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
 def test_splits(observation_fraction: float):
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
