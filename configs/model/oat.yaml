@@ -1,5 +1,5 @@
 defaults:
-  - global_encoder: unet
+  - global_encoder: mlp
   - topographic_encoder: default
   - fusion_layer: default
   - masking: knn
