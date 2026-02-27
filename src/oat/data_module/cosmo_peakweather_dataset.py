@@ -26,6 +26,12 @@ dtype_map = {
     "bfloat16": torch.bfloat16,
 }
 
+# (deps, fn) where fn(*dep_tensors) → tensor (H, W)
+DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    'wind_speed': (['U_10M', 'V_10M'], lambda u, v: torch.sqrt(u**2 + v**2)),
+    'wind_direction': (['U_10M', 'V_10M'], lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0),
+}
+
 
 @dataclass
 class CosmoPeakWeatherConfig:
@@ -133,20 +139,18 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # NWP fields (time-varying)
         self.nwp_ds = open_dataset(self.config.nwp_path)
-        # Validate requested NWP variables exist in the dataset
-        missing_vars = [
-            v for v in self.config.nwp_vars
-            if v not in self.nwp_ds.name_to_index
-        ]
+        # Collect all source vars: base vars + deps of derived vars (deduplicated)
+        source_vars = list(dict.fromkeys(
+            [v for v in self.config.nwp_vars if v not in DERIVED_FEATURES]
+            + [dep for v in self.config.nwp_vars if v in DERIVED_FEATURES
+               for dep in DERIVED_FEATURES[v][0]]
+        ))
+        missing_vars = [v for v in source_vars if v not in self.nwp_ds.name_to_index]
         if missing_vars:
-            available_vars = list(self.nwp_ds.name_to_index.keys())
-            raise KeyError(
-                f"The following NWP variables are not present in the dataset: "
-                f"{missing_vars}. Available variables are: {available_vars}"
-            )
-        self.nwp_var_idx = [
-            self.nwp_ds.name_to_index[v] for v in self.config.nwp_vars
-        ]
+            raise KeyError(f"NWP variables (or their dependencies) not in dataset: {missing_vars}. "
+                           f"Available: {list(self.nwp_ds.name_to_index.keys())}")
+        self._source_vars = source_vars
+        self.nwp_var_idx = [self.nwp_ds.name_to_index[v] for v in source_vars]
         
         
         # Reference grid for spatial alignment
@@ -327,13 +331,16 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 "times available (self.times is empty). Ensure times are set "
                 "before loading observations."
             )
-        self.obs_df, self.obs_mask = self.obs_ds.get_observations(
+        self.obs_np, self.obs_mask_np = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1] + pd.Timedelta(hours=1),  # Include last time
             parameters=self.config.obs_vars,
             stations=self.stations,
             return_mask=True,
+            as_numpy=True,
         )
+        self.obs_np = self.obs_np[self.time_indices]  # Align with filtered times
+        self.obs_mask_np = self.obs_mask_np[self.time_indices]
         
         # Station metadata
         self.station_coords = torch.tensor(
@@ -343,12 +350,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             dtype=dtype_map[self.config.dtype]
         )
         
-        self.station_geo = torch.tensor(
-            self.obs_ds.stations_table.loc[self.stations][
-                self.config.geo_vars
-            ].values,
-            dtype=dtype_map[self.config.dtype]
-        )
+        self.station_geo = self._get_geo(self.station_coords)
+
         
     def __len__(self) -> int:
         return len(self.times)
@@ -374,22 +377,22 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # === Global data ===
         # Get NWP fields
-        values = self.nwp_ds[
-            self.nwp_ds.dates_interval_to_indices(
-                start=nwp_time, end=nwp_time
-            )[0],
-            self.nwp_var_idx,
-            0,  # member
-            :
+        raw = self.nwp_ds[
+            self.nwp_ds.dates_interval_to_indices(start=nwp_time, end=nwp_time)[0],
+            self.nwp_var_idx, 0, :
         ].reshape(len(self.nwp_var_idx), -1)
-        
-        # Regrid to reference grid
-        nwp_field = values[:, self.nwp_indices]
-        nwp_field = torch.from_numpy(
-            nwp_field.reshape(len(self.nwp_var_idx), *self.nwp_shape)
+        raw_field = torch.from_numpy(
+            raw[:, self.nwp_indices].reshape(len(self.nwp_var_idx), *self.nwp_shape)
         ).to(dtype_map[self.config.dtype])
-        
-        # Concatenate with topo
+        source = {var: raw_field[i] for i, var in enumerate(self._source_vars)}
+
+        # Output channels in exactly the order of self.config.nwp_vars
+        nwp_channels = [
+            DERIVED_FEATURES[v][1](*[source[d] for d in DERIVED_FEATURES[v][0]])
+            if v in DERIVED_FEATURES else source[v]
+            for v in self.config.nwp_vars
+        ]
+        nwp_field = torch.stack(nwp_channels, dim=0)  # (len(nwp_vars), H, W)
         global_field = torch.cat([nwp_field, self.topo_on_nwp_grid], dim=0)
         
         global_data = {'global_field': global_field}
@@ -397,34 +400,9 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         if self.config.use_time_embedding:
             global_data['time_emb'] = self._get_time_embedding(nwp_time)
             
-        # === Observation data ===
-        # Get observations for this time, with explicit error handling
-        try:
-            df_time = self.obs_df.xs(time)
-            df_mask_time = self.obs_mask.xs(time)
-        except KeyError as exc:
-            raise KeyError(
-                f"Observations for time {time!r} not found in obs_df index."
-            ) from exc
-        df_unstacked = df_time.unstack()
-        df_final = df_unstacked.reindex(
-            columns=self.config.obs_vars,
-            index=self.stations
-        )
-        obs_values = df_final.values  # (N_stations, C_obs)
-        df_mask_unstacked = df_mask_time.unstack()
-        df_mask_final = df_mask_unstacked.reindex(
-            columns=self.config.obs_vars,
-            index=self.stations
-        )
-        obs_mask = df_mask_final.values  # (N_stations, C_obs)
-        #obs_mask[np.isnan(obs_mask)] = False  # Treat NaN in mask as False
-        # obs_values[~obs_mask] = 0  # Set missing values to NaN for masking
-        
-        # Extract topographic patches at station locations
-        # topo_field = torch.from_numpy(
-        #     self.topo_data[self.topo_var_idx]
-        # ).to(dtype_map[self.config.dtype])
+        obs_values = self.obs_np[idx]       # (N_stations, C_obs)
+        obs_mask = self.obs_mask_np[idx]    # (N_stations, C_obs)
+
         topo_field = self.topo_field  # No loading, no conversion
         topo_patches = self._extract_patches(
             self.station_coords,
@@ -456,10 +434,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             self.topo_extent
         )
         
-        # For geo, we can use nearest neighbor lookup since it's just station metadata
-        tree = cKDTree(self.station_coords.numpy())
-        _, indices = tree.query(query_coords.numpy())
-        geo_query = self.station_geo[indices]
+        geo_query = self._get_geo(query_coords)
         
         return {
             'coords': query_coords,
@@ -492,6 +467,26 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         return patches
         
+    def _get_geo(self, coords: torch.Tensor) -> torch.Tensor:
+        """Return geo features (swiss_easting, swiss_northing, dem) for given coordinates.
+
+        DEM (topo_vars[0]) is bilinearly interpolated from topo_field at each coordinate.
+
+        Args:
+            coords: (N, 2) tensor of [swiss_easting, swiss_northing]
+
+        Returns:
+            (N, 3) tensor of [swiss_easting, swiss_northing, dem]
+        """
+        point_grid = torch.zeros(1, 1, 2, dtype=coords.dtype, device=coords.device)
+        dem = self._extract_patches(
+            coords,
+            self.topo_field[0:1],  # DEM channel only, shape (1, H, W)
+            point_grid,
+            self.topo_extent,
+        )[:, 0, 0, 0]  # (N,)
+        return torch.cat([coords, dem.unsqueeze(1)], dim=1)  # (N, 3)
+
     @staticmethod
     def _normalize_positions(
         pos: torch.Tensor,

@@ -129,6 +129,51 @@ class UNetGlobalEncoder(InterpolationGlobalEncoder):
         return self.model(global_data["global_field"])
     
     
+class _ResBlock(torch.nn.Module):
+    def __init__(self, channels: int, kernel_size: int, act_fn: str) -> None:
+        super().__init__()
+        pad = kernel_size // 2
+        self.conv1 = torch.nn.Conv2d(channels, channels, 1, bias=False)
+        self.bn1 = torch.nn.BatchNorm2d(channels)
+        self.act = get_activation(act_fn)
+        self.conv2 = torch.nn.Conv2d(channels, channels, kernel_size, padding=pad, bias=False)
+        self.bn2 = torch.nn.BatchNorm2d(channels)
+        self.act2 = get_activation(act_fn)
+        self.conv3 = torch.nn.Conv2d(channels, channels, 1, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        out = self.act(self.bn1(self.conv1(x)))
+        out = self.act2(self.bn2(self.conv2(out)))
+        out = self.conv3(out)
+        return out + residual
+
+
+class ResNetCNNGlobalEncoder(InterpolationGlobalEncoder):
+    """Global encoder using a stack of ResNet-style CNN blocks."""
+
+    def __init__(self, *, resnet_cnn_params: Dict[str, Any], field_extent: Dict[str, Any], **kwargs: Any) -> None:
+        super().__init__(field_extent=field_extent, interpolation_params=resnet_cnn_params.get('interpolation_params', None), **kwargs)
+        in_channels = resnet_cnn_params['in_channels']
+        out_channels = resnet_cnn_params['out_channels']
+        num_blocks = resnet_cnn_params.get('num_blocks', 4)
+        kernel_size = resnet_cnn_params.get('kernel_size', 3)
+        act_fn = resnet_cnn_params.get('act_fn', 'ReLU')
+        pad = kernel_size // 2
+        layers: list[torch.nn.Module] = [
+            torch.nn.Conv2d(in_channels, out_channels, kernel_size, padding=pad, bias=False),
+            torch.nn.BatchNorm2d(out_channels),
+            get_activation(act_fn),
+        ]
+        for _ in range(num_blocks):
+            layers.append(_ResBlock(out_channels, kernel_size, act_fn))
+        self.model = torch.nn.Sequential(*layers)
+
+    def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
+        output = self.model(global_data["global_field"])
+        return self.interpolate(output, local_data)
+
+
 class SwinUNETRGlobalEncoder(InterpolationGlobalEncoder):
     """Global encoder using SwinUNETR architecture."""
 
