@@ -17,6 +17,7 @@ outputs
 # logs
 slurm_logs
 wandb
+checkpoints
 
 # Jupyter
 .ipynb_checkpoints/
