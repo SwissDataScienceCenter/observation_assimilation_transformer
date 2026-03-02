@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+import warnings
+import importlib
 
 from oat.model_module import model
 from oat.data_module.setup import setup_data_and_transform
@@ -12,7 +14,7 @@ import torch
 import logging
 from pathlib import Path
 import pickle
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import (
@@ -35,22 +37,39 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         field_extent_max=field_extent['max'],
         field_extent_min=field_extent['min']
         )
+
     topography_encoder_cfg = model.TopographicEncoderConfig(
         **model_cfg.topographic_encoder,
         in_channels=len(data_cfg.topo_vars)
         )
+
     fusion_layer_cfg = model.FusionLayerConfig(
         **model_cfg.fusion_layer,
         out_channels=model_cfg.d_model)
-    masking_cfg = model.MaskingConfig(**model_cfg.masking)
-    transformer_cfg = model.TransformerConfig(
-        d_geo_bias=len(data_cfg.geo_vars),
-        d_model=model_cfg.d_model,
-        **model_cfg.transformer)
+
     output_head_cfg = model.OutputHeadConfig(
         target_features=len(data_cfg.obs_vars),
         in_features=model_cfg.d_model,
         **model_cfg.output_head)
+    
+    if get_model_cls(cfg) == model.UninformedOAT:
+        logger.info("Initialized uninformed model cfg...")
+        return model.UninformedOATConfig(
+            global_encoder=global_encoder_cfg,
+            topographic_encoder=topography_encoder_cfg,
+            fusion_layer=fusion_layer_cfg,
+            output_head=output_head_cfg,
+            num_samples=model_cfg.num_samples
+        )
+
+    masking_cfg = model.MaskingConfig(**model_cfg.masking)
+
+    transformer_cfg = model.TransformerConfig(
+        d_geo_bias=len(data_cfg.geo_vars),
+        d_model=model_cfg.d_model,
+        **model_cfg.transformer)
+
+
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
@@ -64,7 +83,7 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     logger.info("Initialized model cfg...")
     return oat_config
 
-def setup_oat_predictor(model_cfg: model.OATConfig, 
+def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig, 
                     var_names: str,
                     transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
@@ -183,12 +202,27 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_model_cls(cfg: DictConfig) -> Any:
+    model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
+    model_module = importlib.import_module(model_module_str)
+    return getattr(model_module, model_cls_str)
+
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # set global seed
     OmegaConf.resolve(cfg) # for referenced fields
     torch.manual_seed(cfg.seed)
     model_type = HydraConfig.get().runtime.choices.get("model", "oat")
+
+    # Get model class
+    model_cls = get_model_cls(cfg)
+    # Check that only "informed" models have a train_split_fraction > 0.0
+    # and force it to 0.0 otherwise.
+    if not model_cls.requires_observation and cfg.split.train_split_fraction > 0.0:
+        warnings.warn(f"Observation fraction = {cfg.split.train_split_fraction} is incompatible with \
+            an uninformed model ({model_cls}). It will be forcibly overridden to 0.0")
+        cfg.split.train_split_fraction = 0.0
+        
     dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     
     if cfg.get("save_fixtures", False):
@@ -220,7 +254,6 @@ def main(cfg: DictConfig) -> None:
         trainer.validate(predictor, val_loader)
     else:
         oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
-        logger.info("Model set up successfully.")
 
         var_names = dataset.config.obs_vars
         predictor = setup_oat_predictor(model_cfg=oat_model_cfg,

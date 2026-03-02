@@ -46,6 +46,23 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
     pred.training_step(batch=batch_fixture, batch_idx=None)
 
 
+
+def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninformed_model_cfg_fixture):
+
+
+    input_transform, output_transform = transform_fixture
+    
+    pred = OATPredictor(oat_model_cfg=uninformed_model_cfg_fixture,
+                        input_transform=input_transform,
+                        output_transform=output_transform,
+                        output_var_names=[str(i) for i in range(uninformed_model_cfg_fixture.output_head.target_features)],
+                        lr=1e-3,
+                        optimizer_class=torch.optim.AdamW)
+    
+
+    pred.training_step(batch=batch_fixture, batch_idx=None)
+
+
 def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
 
 

@@ -1,0 +1,21 @@
+defaults:
+  - dataset: cosmo_peakweather
+  - split: no_conditioning # uses 0% of the stations as "key-values"
+  - dataloader: default
+  - model: uninformed_oat
+  - trainer: default
+  - predictor: oat_predictor
+  - logging: default
+
+seed: 42
+
+hydra:
+  run:
+    dir: outputs/${hydra:runtime.choices.model}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+
+logging:
+  run_name_prefix: uninf_oat_training
+
+paths:
+  run_root: ${hydra:run.dir}

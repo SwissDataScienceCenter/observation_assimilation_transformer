@@ -4,7 +4,12 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
-from oat.model_module.model import OATConfig, OAT
+from oat.model_module.model import (
+    OATConfig, 
+    OAT, 
+    UninformedOATConfig,
+    UninformedOAT
+)
 from oat.data_module.transform import Transform
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
@@ -15,7 +20,7 @@ from oat.predictor_module.functional_metrics import (
 class OATPredictor(pl.LightningModule):
 
     def __init__(self,
-                 oat_model_cfg: OATConfig,
+                 oat_model_cfg: OATConfig | UninformedOATConfig,
                  input_transform: Transform,
                  output_transform: Transform,
                  output_var_names: List,
@@ -27,7 +32,6 @@ class OATPredictor(pl.LightningModule):
                  ):
         super().__init__()
 
-        # Ignore the model itself in hparams but update manually with its cfg
         self.save_hyperparameters()
 
         self.optimizer_class = optimizer_class
@@ -36,7 +40,11 @@ class OATPredictor(pl.LightningModule):
         self.scheduler_class = scheduler_class
         self.scheduler_params = scheduler_params or {}
 
-        self.model = OAT(oat_model_cfg)
+        if isinstance(oat_model_cfg, OATConfig):
+            self.model = OAT(oat_model_cfg)
+        elif isinstance(oat_model_cfg, UninformedOATConfig):
+            self.model = UninformedOAT(oat_model_cfg)
+
         self.input_transform = input_transform
         self.output_transform = output_transform
         
@@ -46,7 +54,7 @@ class OATPredictor(pl.LightningModule):
         
         # NOTE perhaps make this configurable?
         self.metrics_fn = {
-            'sample_mae': sample_mae,
+            # 'sample_mae': sample_mae,
             'point_mae': point_mae,
             'crps': mc_crps,
         }
@@ -95,22 +103,27 @@ class OATPredictor(pl.LightningModule):
         else:
             # TODO implement 
             pass
+        
+        # Prepare arguments:
+        # there are arguments common to both informed and uninformed models
+        model_fwd_kwargs = dict(
+            global_data=batch["global_data"],
+            query_data=batch["query_data"],
+        )
+        if self.model.requires_observation:
+            # these are arguments for the informed models only
+            model_fwd_kwargs["observation_data"] = batch['observation_data']
+            model_fwd_kwargs["return_pre_oat_output"] =True
 
         if not return_loss_and_targets:
-            out = self.model.forward(global_data=batch['global_data'],
-                               observation_data=batch['observation_data'],
-                               query_data=batch['query_data'],
-                               return_pre_oat_output=True)
-
+            out = self.model.forward(**model_fwd_kwargs)
             return out
 
         assert query_locations is None, "Can not compute loss for unlabelled queries."
-        out, loss = self.model.forward_with_loss(global_data=batch['global_data'],
-                                                    observation_data=batch['observation_data'],
-                                                    query_data=batch['query_data'],
-                                                    target_obs=target_obs,
-                                                    target_mask_obs=target_mask_obs,
-                                                    return_pre_oat_output=True)
+        # thee are arguments only required if you need to return the loss
+        model_fwd_kwargs["target_obs"] = target_obs
+        model_fwd_kwargs["target_mask_obs"] = target_mask_obs
+        out, loss = self.model.forward_with_loss(**model_fwd_kwargs)
 
         return out, loss, target_obs, target_mask_obs
 
@@ -134,13 +147,14 @@ class OATPredictor(pl.LightningModule):
                                     on_step=True, on_epoch=True)
             
             # pre_oat logging
-            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                            y_true=target_obs)
-            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                    y_true=y_true_unnorm,
-                                    mask=target_mask_obs,
-                                    prefix="train_pre_oat",
-                                    on_step=True, on_epoch=True)
+            if 'pre_oat_output' in y_hat:
+                y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                                y_true=target_obs)
+                self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                        y_true=y_true_unnorm,
+                                        mask=target_mask_obs,
+                                        prefix="train_pre_oat",
+                                        on_step=True, on_epoch=True)
 
         return loss
 
@@ -160,13 +174,14 @@ class OATPredictor(pl.LightningModule):
                                     on_step=False, on_epoch=True)
 
             # pre_oat logging
-            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                            y_true=target_obs)
-            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                    y_true=y_true_unnorm,
-                                    mask=target_mask_obs,
-                                    prefix="val_pre_oat",
-                                    on_step=False, on_epoch=True)
+            if 'pre_oat_output' in y_hat:
+                    y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                                    y_true=target_obs)
+                    self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                        y_true=y_true_unnorm,
+                                        mask=target_mask_obs,
+                                        prefix="val_pre_oat",
+                                        on_step=False, on_epoch=True)
 
         return loss
 
@@ -188,13 +203,14 @@ class OATPredictor(pl.LightningModule):
                                     on_step=False, on_epoch=True)
             
             # pre_oat logging
-            y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
-                                                            y_true=target_obs)
-            self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
-                                    y_true=y_true_unnorm,
-                                    mask=target_mask_obs,
-                                    prefix="test_pre_oat",
-                                    on_step=False, on_epoch=True)
+            if 'pre_oat_output' in y_hat:
+                    y_hat_samples_unnorm_pre_oat, _ = self._unnormalize_pred_and_target(y_hat=y_hat['pre_oat_output'],
+                                                                    y_true=target_obs)
+                    self._log_instant_metrics(y_hat_samples=y_hat_samples_unnorm_pre_oat,
+                                        y_true=y_true_unnorm,
+                                        mask=target_mask_obs,
+                                        prefix="test_pre_oat",
+                                        on_step=False, on_epoch=True)
 
         return loss
 
