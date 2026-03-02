@@ -1,19 +1,27 @@
+import logging
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 from oat.data_module import transform, statistics
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
+from omegaconf import ListConfig
 
 def create_splits(dataset: Dataset[Dict[str, Any]],
+                  logger: logging.Logger,
                   val_fraction: float = 0.2,
                   test_fraction: float = 0.2,
                   train_split_fraction: float = 0.8,
-                  seed: int | None = None) -> tuple[Dataset[Dict[str, Any]], 
-                                                              Dataset[Dict[str, Any]], 
-                                                              Dataset[Dict[str, Any]]]:
+                  train_indices: Optional[np.ndarray | list| ListConfig] = None,
+                  val_indices: Optional[np.ndarray | list | ListConfig] = None,
+                  test_indices: Optional[np.ndarray | list| ListConfig] = None,
+                  seed: int | None = None) -> Dict[str, Tuple[Dataset, Dataset, Dataset] | 
+                                                        Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+
+
     """
     Create train, validation, and test splits from a dataset.
     Splits the dataset by stations into training, validation, and test sets.
@@ -23,25 +31,56 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
         train_split_fraction: Fraction of training stations to use as observed stations (vs query stations) in each training sample (default: 0.8).
+        train_indices: optional list of train station indices.
+        val_indices: optional list of validation station indices.
+        test_indices: optional list of test station indices.
         seed: Optional random seed for reproducibility (default: None).
     Returns:
-        A tuple containing the train, validation, and test datasets.
+        A dictionary with "datasets" mapping to a tuple containing the train, validation, and test datasets
+        and "station_indices" mapping to a tuple with the corresponding station indices.
     """
-    
-    assert val_fraction + test_fraction < 1.0, "Validation and test fractions must sum to less than 1."
-    assert val_fraction >= 0.0 and test_fraction >= 0.0, "Validation and test fractions must be non-negative."
-    
     num_stations = len(dataset.stations)
-    indices = np.arange(num_stations, dtype=int)
-    rng = torch.Generator().manual_seed(seed) if seed is not None else None
-    indices = indices[torch.randperm(num_stations, generator=rng).numpy()]
-    
     test_size = int(num_stations * test_fraction)
     val_size = int(num_stations * val_fraction)
     
-    train_indices = indices[:num_stations - (val_size + test_size)]
-    val_indices = indices[num_stations - (val_size + test_size):num_stations - test_size]
-    test_indices = indices[num_stations - test_size:]
+    if all(x is None for x in (train_indices, val_indices, test_indices)):
+        assert val_fraction + test_fraction < 1.0, "Validation and test fractions must sum to less than 1."
+        assert val_fraction >= 0.0 and test_fraction >= 0.0, "Validation and test fractions must be non-negative."
+        
+        indices = np.arange(num_stations, dtype=int)
+        rng = torch.Generator().manual_seed(seed) if seed is not None else None
+        indices = indices[torch.randperm(num_stations, generator=rng).numpy()]
+        
+        
+        train_indices = indices[:num_stations - (val_size + test_size)]
+        val_indices = indices[num_stations - (val_size + test_size):num_stations - test_size]
+        test_indices = indices[num_stations - test_size:]
+        
+        logger.info('Generated new split indices.')
+        logger.info(f'Train indices: {train_indices}')
+        logger.info(f'Val indices: {val_indices}')
+        logger.info(f'Test indices: {test_indices}')
+    else:
+        assert all(x is not None for x in (train_indices, val_indices, test_indices))
+        logger.info("Using split indices defined in the configuration.")
+        logger.info(f'Train indices: {train_indices}')
+        logger.info(f'Val indices: {val_indices}')
+        logger.info(f'Test indices: {test_indices}')
+        
+        train_indices = np.array(train_indices) if  isinstance(train_indices, (list, ListConfig)) else train_indices
+        val_indices = np.array(val_indices) if  isinstance(val_indices, (list, ListConfig)) else val_indices
+        test_indices = np.array(test_indices) if  isinstance(test_indices, (list, ListConfig)) else test_indices
+        
+        if len(val_indices) != val_size:
+            logger.warning(f'Length of the val indices list ({len(val_indices)}) does not match val_fraction {val_fraction}. \
+                Make sure this is intentional!')
+        if len(test_indices) != test_size:
+            logger.warning(f'Length of the test indices list ({len(test_indices)}) does not match val_fraction {test_fraction}. \
+                Make sure this is intentional!')
+        if len(train_indices) != (num_stations - val_size - test_size):
+            logger.warning(f'Length of the training indices list ({len(train_indices)}) does not match val_fraction {val_fraction} and test_fraction {test_fraction}. \
+                Make sure this is intentional!')
+        
     
     assert len(train_indices) > 0 and len(val_indices) > 0 and len(test_indices) > 0, "Each split must contain at least one station."
     
@@ -53,7 +92,10 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     observed_indices = np.array([], dtype=int) if train_split_fraction == 0.0 else np.concatenate((train_indices, val_indices))
     test_dataset = EvalDataset(dataset, eval_indices=test_indices, observed_indices=observed_indices)
     
-    return train_dataset, val_dataset, test_dataset
+    return {
+        'datasets': (train_dataset, val_dataset, test_dataset),
+        'station_indices': (train_indices.tolist(), val_indices.tolist(), test_indices.tolist())
+    }
 
 class TrainDataset(Dataset[Dict[str, Any]]):
     """
