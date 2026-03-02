@@ -34,6 +34,8 @@ def setup_data_and_transform(
     old_split_fraction = train_dataset.split_fraction
     train_dataset.split_fraction = 1.0
     logger.info(f"Temporarily set train datasets' split fraction to 1.0.")
+    # NOTE should we  use a DataLoader in get_transform or not? (its optional)
+    # This changed in the merge of the uninformed baseline. TODO check it.
     input_transform, output_transform = train_dataset.get_transform(
         num_data_points=cfg.dataset.data_points_for_stats, 
         dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
