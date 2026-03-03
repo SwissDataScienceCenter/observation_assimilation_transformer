@@ -36,7 +36,7 @@ def setup_data_and_transform(
         cfg.split.val_indices = val_indices
         cfg.split.test_indices = test_indices
     else:
-        logger.info("Station indices already configured.")
+        logger.info("Station indices already configured. Nothing to be updated in the split section.")
 
     # NOTE: to compute the statistics, only "observation_data" is used.
     # for this reason, we temporarily ignore the split_fraction and set it to 1.0
