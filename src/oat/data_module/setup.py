@@ -22,10 +22,21 @@ def setup_data_and_transform(
     logger.info("Setting up dataset and dataloaders...")
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     logger.info(f"Dataset size: {len(dataset)} samples")
-    train_dataset, val_dataset, test_dataset = create_splits(dataset, **cfg.split)
+    splits = create_splits(dataset, **cfg.split, logger=logger)
+    train_dataset, val_dataset, test_dataset = splits['datasets']
+    train_indices, val_indices, test_indices = splits['station_indices']
+    
     logger.info(f"Train size: {len(train_dataset)} samples")
     logger.info(f"Validation size: {len(val_dataset)} samples")
     logger.info(f"Test size: {len(test_dataset)} samples")
+    
+    if all(x is None for x in (cfg.split.train_indices, cfg.split.val_indices, cfg.split.test_indices)):
+        logger.info("Adding station indices to the configuration. This is a side effect! Ensure the new cfg is saved.")
+        cfg.split.train_indices = train_indices
+        cfg.split.val_indices = val_indices
+        cfg.split.test_indices = test_indices
+    else:
+        logger.info("Station indices already configured. Nothing to be updated in the split section.")
 
     # NOTE: to compute the statistics, only "observation_data" is used.
     # for this reason, we temporarily ignore the split_fraction and set it to 1.0

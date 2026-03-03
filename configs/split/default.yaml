@@ -1,3 +1,7 @@
   val_fraction: 0.2
   test_fraction: 0.2
   train_split_fraction: 0.8
+
+  train_indices: null
+  val_indices: null
+  test_indices: null
