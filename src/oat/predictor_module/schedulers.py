@@ -46,3 +46,21 @@ class PreOATLossLinearWeightScheduler(nn.Module):
     def reset(self):
         self.current_step.fill_(torch.tensor(0.0, dtype=torch.long))
         self.current_weight.fill_(torch.tensor(self.start_weight, dtype=torch.float32))
+        
+    def __repr__(self):
+        if self.warmup_steps > 0:
+            schedule_type = (
+                f"Flat warmup for {self.warmup_steps} steps at {self.start_weight}"
+                f" then linear interpolation to {self.end_weight}"
+            )
+        else:
+            schedule_type = (
+                f"Linear decay from {self.start_weight} to {self.end_weight}"
+            )
+
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  schedule={schedule_type},\n"
+            f"  total_steps={self.total_steps}\n"
+            f")"
+        )
