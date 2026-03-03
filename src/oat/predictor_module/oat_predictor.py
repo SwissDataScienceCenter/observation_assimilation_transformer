@@ -1,4 +1,6 @@
 from typing import Type, Optional, List
+import logging
+
 import pytorch_lightning as pl
 import torch
 from torch.optim.lr_scheduler import LRScheduler
@@ -16,6 +18,8 @@ from oat.predictor_module.functional_metrics import (
     point_mae,
     mc_crps
 )
+
+logger = logging.getLogger(__name__)
 
 class OATPredictor(pl.LightningModule):
 
@@ -64,10 +68,49 @@ class OATPredictor(pl.LightningModule):
         if oat_loss_scheduler_cls is not None:
             assert oat_loss_scheduler_params is not None
             assert isinstance(oat_model_cfg, OATConfig)
-            self.oat_loss_weight_scheduler = oat_loss_scheduler_cls(**oat_loss_scheduler_params)
+            # self.oat_loss_weight_scheduler = oat_loss_scheduler_cls(**oat_loss_scheduler_params)
+            self.oat_loss_scheduler_cls = oat_loss_scheduler_cls
+            self.oat_loss_scheduler_params = oat_loss_scheduler_params
+            logger.info(f"OAT loss scheduler {oat_loss_scheduler_cls} will be lazily initialized when fitting starts.")
         else:
             self.oat_loss_weight_scheduler = None
+
+    def on_fit_start(self):
         
+        # Case 1; there is no pre-oat scheduler
+        if self.oat_loss_scheduler_cls is None:
+            return
+
+        # Case 2; the scheduler was already initialized, this is probably a checkpoint
+        # where the state_dict has been already loaded.
+        if self.oat_loss_weight_scheduler is not None:
+            logger.info("OAT loss scheduler already exists. Skipping initialization.")
+            return
+
+        # Case 3: logger is not yet initialize (lazy)
+
+        # this is only available when fitting starts
+        total_steps = self.trainer.estimated_stepping_batches 
+        
+        if self.oat_loss_scheduler_params.get("total_steps") is not None:
+            requested_steps = self.oat_loss_scheduler_params["total_steps"]
+            if requested_steps != total_steps:
+                if self.global_rank == 0:
+                    logger.info(
+                        f"WARNING: Scheduler configured for {requested_steps} steps "
+                        f"but trainer estimates {total_steps} steps."
+                        "Ensure this is is voluntary or set the steps to null in your config"
+                )
+        else:
+            self.oat_loss_scheduler_params["total_steps"] = total_steps
+            
+        self.oat_loss_weight_scheduler = self.oat_loss_scheduler_cls(**self.oat_loss_scheduler_params)
+
+        if self.global_rank == 0:
+            logger.info("OAT loss scheduler initialized.")
+            logger.info(self.oat_loss_weight_scheduler) # print printable representation of the scheduler
+
+
     def on_train_batch_end(self, *args, **kwargs):
         # This is done in parallel by all group members.
         # Ie. all GPUs advance their copy of the scheduler by one step
