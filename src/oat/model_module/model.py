@@ -438,6 +438,7 @@ class OAT(UninformedOAT):
         if config is None:
             config = OATConfig.default()
         self.config = config
+        self.register_buffer("pre_oat_loss_weight", torch.tensor(self.config.pre_oat_loss_weight, dtype=torch.float32))
         
         # Extract dimensions
         d_model = config.transformer.d_model
@@ -475,6 +476,9 @@ class OAT(UninformedOAT):
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
             activation_geo_bias=config.transformer.activation_geo_bias
         )
+        
+    def set_pre_oat_loss_weight(self, value: float) -> None:
+        self.pre_oat_loss_weight.fill_(float(value))
     
     def forward(
         self,
@@ -557,9 +561,9 @@ class OAT(UninformedOAT):
         
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
-        if self.config.pre_oat_loss_weight > 0:
+        if self.pre_oat_loss_weight.item() > 0:
             _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
-            pre_weight = max(0.0, min(1.0, float(self.config.pre_oat_loss_weight)))
+            pre_weight = max(0.0, min(1.0, float(self.pre_oat_loss_weight.item())))
             loss = (1 - pre_weight) * loss + pre_weight * pre_loss
             
         

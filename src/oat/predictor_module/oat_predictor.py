@@ -28,7 +28,9 @@ class OATPredictor(pl.LightningModule):
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
                  scheduler_class: Type[LRScheduler] | None = None,
-                 scheduler_params: Optional[dict] = None
+                 scheduler_params: Optional[dict] = None,
+                 oat_loss_scheduler_cls: Optional[dict] = None,
+                 oat_loss_scheduler_params:  Optional[dict] = None,
                  ):
         super().__init__()
 
@@ -58,6 +60,22 @@ class OATPredictor(pl.LightningModule):
             'point_mae': point_mae,
             'crps': mc_crps,
         }
+        
+        if oat_loss_scheduler_cls is not None:
+            assert oat_loss_scheduler_params is not None
+            assert isinstance(oat_model_cfg, OATConfig)
+            self.oat_loss_weight_scheduler = oat_loss_scheduler_cls(**oat_loss_scheduler_params)
+        else:
+            self.oat_loss_weight_scheduler = None
+        
+    def on_train_batch_end(self, *args, **kwargs):
+        # This is done in parallel by all group members.
+        # Ie. all GPUs advance their copy of the scheduler by one step
+        if self.oat_loss_weight_scheduler is not None:
+            oat_weight = self.oat_loss_weight_scheduler.step()
+            self.model.set_pre_oat_loss_weight(oat_weight)
+            
+            self.log("pre_oat_loss_weight", oat_weight, prog_bar=False, on_step=True, on_epoch=False)
 
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return self.input_transform(batch)
