@@ -93,7 +93,7 @@ class OATPredictor(pl.LightningModule):
                  optimizer_params: Optional[dict] = None,
                  lr_scheduler_class: Type[LRScheduler] | None = None,
                  lr_scheduler_params: Optional[dict] = None,
-                 oat_loss_scheduler_class: Optional[dict] = None,
+                 oat_loss_scheduler_class: Type[dict] = None,
                  oat_loss_scheduler_params:  Optional[dict] = None,
                  ):
         super().__init__()
@@ -156,10 +156,10 @@ class OATPredictor(pl.LightningModule):
             requested_steps = self.oat_loss_scheduler_params["total_steps"]
             if requested_steps != total_steps:
                 if self.global_rank == 0:
-                    logger.info(
+                    logger.warning(
                         f"WARNING: Scheduler configured for {requested_steps} steps "
                         f"but trainer estimates {total_steps} steps."
-                        "Ensure this is is voluntary or set the steps to null in your config"
+                        "Ensure this is voluntary or set the steps to null in your config"
                 )
         else:
             self.oat_loss_scheduler_params["total_steps"] = total_steps
