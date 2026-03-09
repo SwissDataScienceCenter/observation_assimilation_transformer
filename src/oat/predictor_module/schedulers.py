@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 import torch
 import torch.nn as nn
-import math
 
 class PreOATLossWeightScheduler(ABC, nn.Module):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
@@ -32,8 +31,8 @@ class PreOATLossWeightScheduler(ABC, nn.Module):
         pass
     
     def reset(self):
-        self.current_step.fill_(torch.tensor(0.0, dtype=torch.long))
-        self.current_weight.fill_(torch.tensor(self.start_weight, dtype=torch.float32))
+        self.current_step.zero_()
+        self.current_weight.fill_(self.start_weight)
 
 
 class LinearPreOATLossWeightScheduler(PreOATLossWeightScheduler):

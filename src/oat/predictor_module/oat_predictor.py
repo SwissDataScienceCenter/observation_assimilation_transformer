@@ -133,7 +133,11 @@ class OATPredictor(pl.LightningModule):
             self.oat_loss_scheduler_params = oat_loss_scheduler_params
             logger.info(f"OAT loss scheduler {oat_loss_scheduler_class} will be lazily initialized when fitting starts.")
         else:
-            self.oat_loss_weight_scheduler = None
+            self.oat_loss_scheduler_cls = None
+            self.oat_loss_scheduler_params = None
+            logger.info(f"No OAT loss scheduler configured. Skipping initialization.")
+
+        self.oat_loss_weight_scheduler = None
 
     def on_fit_start(self):
         
@@ -171,7 +175,7 @@ class OATPredictor(pl.LightningModule):
             logger.info(self.oat_loss_weight_scheduler) # print printable representation of the scheduler
 
 
-    def on_train_batch_end(self, *args, **kwargs):
+    def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
         # This is done in parallel by all group members.
         # Ie. all GPUs advance their copy of the scheduler by one step
         if self.oat_loss_weight_scheduler is not None:
