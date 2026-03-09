@@ -1,9 +1,10 @@
+from abc import ABC, abstractmethod
+
 import torch
 import torch.nn as nn
 import math
 
-
-class PreOATLossLinearWeightScheduler(nn.Module):
+class PreOATLossWeightScheduler(ABC, nn.Module):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
         super().__init__()
         
@@ -21,10 +22,43 @@ class PreOATLossLinearWeightScheduler(nn.Module):
         # and are NOT trained
         self.register_buffer("current_step", torch.tensor(0.0, dtype=torch.long))
         self.register_buffer("current_weight", torch.tensor(start_weight, dtype=torch.float32))
-        
-    
+
     def forward(self):
-        return self.current_weight
+        return self.current_weight.item()
+    
+    @abstractmethod
+    def step(self):
+        '''Not implemented'''
+        pass
+    
+    def reset(self):
+        self.current_step.fill_(torch.tensor(0.0, dtype=torch.long))
+        self.current_weight.fill_(torch.tensor(self.start_weight, dtype=torch.float32))
+
+
+class LinearPreOATLossWeightScheduler(PreOATLossWeightScheduler):
+    """
+    Linearly schedules a loss weight after an initial flat warmup period.
+
+    This scheduler keeps the weight fixed at `start_weight` for a specified
+    number of warmup steps. After the warmup phase, the weight evolves
+    linearly from `start_weight` to `end_weight` over the remaining training
+    steps until `total_steps` is reached.
+    
+    Args:
+        start_weight:
+            Initial loss weight (float between 0.0 and 1.0) used during the warmup phase and as the
+            starting value for the linear schedule.
+        flat_warmup_steps:
+            Number of initial steps during which the weight remains constant
+            at `start_weight`.
+        end_weight:
+            Final loss weight (float between 0.0 and 1.0) reached at `total_steps`.
+        total_steps:
+            Total number of scheduler steps, including the warmup phase.
+    """
+    def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
+        super().__init__(start_weight=start_weight, flat_warmup_steps=flat_warmup_steps, end_weight=end_weight, total_steps=total_steps)
     
     def step(self):
         if self.current_step.item() < self.warmup_steps:
@@ -42,10 +76,6 @@ class PreOATLossLinearWeightScheduler(nn.Module):
         self.current_step += 1
         
         return self.current_weight.item()
-    
-    def reset(self):
-        self.current_step.fill_(torch.tensor(0.0, dtype=torch.long))
-        self.current_weight.fill_(torch.tensor(self.start_weight, dtype=torch.float32))
         
     def __repr__(self):
         if self.warmup_steps > 0:
