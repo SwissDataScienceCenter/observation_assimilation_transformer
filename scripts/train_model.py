@@ -94,12 +94,23 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
     module = import_module(module_path)
     optim_cls = getattr(module, class_name)
 
-    # scheduler
+    # lr scheduler
     module_path, class_name = cfg.predictor.kwargs.lr_scheduler_class.rsplit(".", 1)
     module = import_module(module_path)
     sched_cls = getattr(module, class_name)
 
-
+    # oat loss scheduler
+    oat_loss_scheduler_class = cfg.predictor.kwargs.get("oat_loss_scheduler_class", None)
+    if oat_loss_scheduler_class is not None:
+        module_path, class_name = cfg.predictor.kwargs.oat_loss_scheduler_class.rsplit(".", 1)
+        module = import_module(module_path)
+        oat_loss_sched_cls = getattr(module, class_name)
+        oat_loss_sched_params = cfg.predictor.kwargs.oat_loss_scheduler_params
+    else:
+        oat_loss_sched_cls = None
+        oat_loss_sched_params = None
+        
+    
     predictor = OATPredictor(
         oat_model_cfg=model_cfg,
         input_transform=transforms[0],
@@ -109,7 +120,9 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         optimizer_class=optim_cls,
         optimizer_params=cfg.predictor.kwargs.optimizer_params,
         lr_scheduler_class=sched_cls,
-        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params
+        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
+        oat_loss_scheduler_class=oat_loss_sched_cls,
+        oat_loss_scheduler_params=oat_loss_sched_params
     )
 
     return predictor
