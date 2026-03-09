@@ -22,7 +22,67 @@ from oat.predictor_module.functional_metrics import (
 logger = logging.getLogger(__name__)
 
 class OATPredictor(pl.LightningModule):
+    
+    """
+    PyTorch Lightning module for training and evaluating an OAT-based model
+    
+        Args:
+        oat_model_cfg:
+            Configuration used to construct the underlying OAT model.
 
+        input_transform:
+            Transformation applied to model inputs before they are passed to
+            the network (e.g., normalization or feature preprocessing).
+
+        output_transform:
+            Transformation applied to model outputs or targets (e.g inverse-normalization).
+
+        output_var_names:
+            Names of the predicted output variables. Used for logging,
+            metric tracking, or structured output handling.
+
+        lr:
+            Learning rate used to initialize the optimizer. Defaults to 1e-3.
+
+        optimizer_class:
+            Optimizer class used during training. Defaults to Adam.
+
+        optimizer_params:
+            Additional keyword arguments passed to the optimizer during
+            initialization. Must match the signature of the torch optimizer
+            passed as `optimizer_class`
+            
+        lr_scheduler_class:
+            Learning rate scheduler applied to the optimizer. If None,
+            no scheduler is used.
+
+        lr_scheduler_params:
+            Parameters passed to the learning rate scheduler during
+            initialization. Must match the signature of the torch scheduler
+            passed as `lr_scheduler_class`
+
+        oat_loss_scheduler_cls:
+            Optional scheduler controlling the weighting of the OAT loss between
+            "per-oat" (before conditioning on observations) and "post-oat" (after
+            conditioning) during training.
+
+        oat_loss_scheduler_params:
+            Parameters used to initialize the OAT loss weight scheduler.
+            The dictionary must contain:
+            start_weight:
+                Initial loss weight (float between 0.0 and 1.0) used during the warmup phase and as the
+                starting value for the linear schedule.
+            flat_warmup_steps:
+                Number of initial steps during which the weight remains constant
+                at `start_weight`.
+            end_weight:
+                Final loss weight (float between 0.0 and 1.0) reached at `total_steps`.
+            total_steps (optional):
+                Total number of scheduler steps, including the warmup phase. If not given, 
+                the total number of steps is guessed by the Trainer to be the total steps considering
+                max_steps, max_epochs, batch_size, gradient accumulations, ...
+
+    """
     def __init__(self,
                  oat_model_cfg: OATConfig | UninformedOATConfig,
                  input_transform: Transform,
@@ -31,9 +91,9 @@ class OATPredictor(pl.LightningModule):
                  lr: float = 1e-3,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
-                 scheduler_class: Type[LRScheduler] | None = None,
-                 scheduler_params: Optional[dict] = None,
-                 oat_loss_scheduler_cls: Optional[dict] = None,
+                 lr_scheduler_class: Type[LRScheduler] | None = None,
+                 lr_scheduler_params: Optional[dict] = None,
+                 oat_loss_scheduler_class: Optional[dict] = None,
                  oat_loss_scheduler_params:  Optional[dict] = None,
                  ):
         super().__init__()
@@ -43,8 +103,8 @@ class OATPredictor(pl.LightningModule):
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
 
-        self.scheduler_class = scheduler_class
-        self.scheduler_params = scheduler_params or {}
+        self.lr_scheduler_class = lr_scheduler_class
+        self.lr_scheduler_params = lr_scheduler_params or {}
 
         if isinstance(oat_model_cfg, OATConfig):
             self.model = OAT(oat_model_cfg)
@@ -65,13 +125,13 @@ class OATPredictor(pl.LightningModule):
             'crps': mc_crps,
         }
         
-        if oat_loss_scheduler_cls is not None:
+        if oat_loss_scheduler_class is not None:
             assert oat_loss_scheduler_params is not None
             assert isinstance(oat_model_cfg, OATConfig)
             # self.oat_loss_weight_scheduler = oat_loss_scheduler_cls(**oat_loss_scheduler_params)
-            self.oat_loss_scheduler_cls = oat_loss_scheduler_cls
+            self.oat_loss_scheduler_cls = oat_loss_scheduler_class
             self.oat_loss_scheduler_params = oat_loss_scheduler_params
-            logger.info(f"OAT loss scheduler {oat_loss_scheduler_cls} will be lazily initialized when fitting starts.")
+            logger.info(f"OAT loss scheduler {oat_loss_scheduler_class} will be lazily initialized when fitting starts.")
         else:
             self.oat_loss_weight_scheduler = None
 
@@ -307,8 +367,8 @@ class OATPredictor(pl.LightningModule):
 
             optimizer = self.optimizer_class(self.parameters(), **self.optimizer_params)
 
-            if self.scheduler_class is not None:
-                scheduler = self.scheduler_class(optimizer, **self.scheduler_params)
+            if self.lr_scheduler_class is not None:
+                scheduler = self.lr_scheduler_class(optimizer, **self.lr_scheduler_params)
                 lr_scheduler_cfg = {
                     "scheduler": scheduler,
                     "monitor": "val_loss",

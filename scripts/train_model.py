@@ -95,7 +95,7 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
     optim_cls = getattr(module, class_name)
 
     # scheduler
-    module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+    module_path, class_name = cfg.predictor.kwargs.lr_scheduler_class.rsplit(".", 1)
     module = import_module(module_path)
     sched_cls = getattr(module, class_name)
 
@@ -108,8 +108,8 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         lr=cfg.predictor.lr,
         optimizer_class=optim_cls,
         optimizer_params=cfg.predictor.kwargs.optimizer_params,
-        scheduler_class=sched_cls,
-        scheduler_params=cfg.predictor.kwargs.scheduler_params
+        lr_scheduler_class=sched_cls,
+        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params
     )
 
     return predictor
