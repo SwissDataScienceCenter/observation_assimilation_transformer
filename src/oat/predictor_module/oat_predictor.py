@@ -176,7 +176,7 @@ class OATPredictor(pl.LightningModule):
         # Ie. all GPUs advance their copy of the scheduler by one step
         if self.oat_loss_weight_scheduler is not None:
             oat_weight = self.oat_loss_weight_scheduler.step()
-            self.model.set_pre_oat_loss_weight(oat_weight)
+            self.model.pre_oat_loss_weight = oat_weight
             
             self.log("pre_oat_loss_weight", oat_weight, prog_bar=False, on_step=True, on_epoch=False)
 
