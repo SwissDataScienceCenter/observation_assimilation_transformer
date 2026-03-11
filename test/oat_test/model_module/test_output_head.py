@@ -29,8 +29,8 @@ def test_linear_output_head() -> None:
         assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)  # Check sample shape
         assert torch.allclose(samples, preds.unsqueeze(-2).expand(-1, -1, num_samples, -1))  # Check that all samples match predictions
 
-@pytest.mark.parametrize("loss_fn_type", ['nll', 'crps'])
-def test_gaussian_output_head(loss_fn_type) -> None:
+@pytest.mark.parametrize("loss_fn", ['nll', 'crps'])
+def test_gaussian_output_head(loss_fn) -> None:
     batch_dim = 64
     target_dim = 2
     input_dim = 10
@@ -42,7 +42,7 @@ def test_gaussian_output_head(loss_fn_type) -> None:
     mask = torch.randint(0, 2, (batch_dim, n_stations, target_dim)).bool()
     for std_fn in ['softplus', 'exp']:
         gaussian_output_head = output_head.GaussianOutputHead(
-            in_features=input_dim, target_features=target_dim, std_fn=std_fn, loss_fn_type=loss_fn_type
+            in_features=input_dim, target_features=target_dim, std_fn=std_fn, loss_fn=loss_fn
         )
         out = gaussian_output_head(input_tensor)  # Forward pass
         assert out["mu_pred"].shape == (batch_dim, n_stations, target_dim)  # Check mean output shape

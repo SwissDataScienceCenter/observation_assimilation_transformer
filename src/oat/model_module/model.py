@@ -95,7 +95,7 @@ class OutputHeadConfig:
     in_features: int = 64
     loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
-    loss_fn_type: str = 'crps'
+    loss_fn: str = 'crps'
     min_std_val: float = 1e-3
     degree: int = 20
     num_train_taus: int = 10
@@ -263,7 +263,7 @@ class UninformedOAT(nn.Module):
             return output_head.GaussianOutputHead(
                 in_features=config.output_head.in_features,
                 target_features=config.output_head.target_features,
-                loss_fn_type=config.output_head.loss_fn_type,
+                loss_fn=config.output_head.loss_fn,
                 std_fn=config.output_head.std_fn,
                 min_std_val=config.output_head.min_std_val,
             )
