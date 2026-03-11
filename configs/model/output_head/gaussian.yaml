@@ -3,3 +3,4 @@
 type: gaussian
 std_fn: softplus
 min_std_val: 1e-3
+loss_fn_type: crps

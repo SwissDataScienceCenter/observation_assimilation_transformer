@@ -4,7 +4,7 @@ defaults:
   - fusion_layer: default
   - masking: knn
   - transformer: oat_block
-  - output_head: linear
+  - output_head: gaussian
 
 model_cls: oat.model_module.model.OAT
 d_model: 16

@@ -1,5 +1,6 @@
 from oat.model_module import output_head
 import torch
+import pytest
 
 
 def test_linear_output_head() -> None:
@@ -27,8 +28,9 @@ def test_linear_output_head() -> None:
         samples = linear_output_head.sample(out, num_samples)  # Sampling from output distribution
         assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)  # Check sample shape
         assert torch.allclose(samples, preds.unsqueeze(-2).expand(-1, -1, num_samples, -1))  # Check that all samples match predictions
-    
-def test_gaussian_output_head() -> None:
+
+@pytest.mark.parametrize("loss_fn_type", ['nll', 'crps'])
+def test_gaussian_output_head(loss_fn_type) -> None:
     batch_dim = 64
     target_dim = 2
     input_dim = 10
@@ -40,7 +42,7 @@ def test_gaussian_output_head() -> None:
     mask = torch.randint(0, 2, (batch_dim, n_stations, target_dim)).bool()
     for std_fn in ['softplus', 'exp']:
         gaussian_output_head = output_head.GaussianOutputHead(
-            in_features=input_dim, target_features=target_dim, std_fn=std_fn
+            in_features=input_dim, target_features=target_dim, std_fn=std_fn, loss_fn_type=loss_fn_type
         )
         out = gaussian_output_head(input_tensor)  # Forward pass
         assert out["mu_pred"].shape == (batch_dim, n_stations, target_dim)  # Check mean output shape
