@@ -93,7 +93,6 @@ class OutputHeadConfig:
     target_features: int
     type: str
     in_features: int = 64
-    loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
     loss_fn: str = 'crps'
     min_std_val: float = 1e-3
