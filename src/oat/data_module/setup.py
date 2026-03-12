@@ -49,15 +49,15 @@ def setup_data_and_transform(
     # This changed in the merge of the uninformed baseline. TODO check it.
     input_transform, output_transform = train_dataset.get_transform(
         num_data_points=cfg.dataset.data_points_for_stats, 
-        dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
+        dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader.train)
     )
     train_dataset.split_fraction = old_split_fraction
     logger.info("Transforms set up successfully.")
     logger.info(f"Set train datasets' split fraction back to {old_split_fraction}.")
 
-    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader)
-    val_loader = DataLoader(val_dataset, shuffle=True, **cfg.dataloader)
-    test_loader = DataLoader(test_dataset, shuffle=False, **cfg.dataloader)
+    train_loader = DataLoader(train_dataset, shuffle=True, **cfg.dataloader.train)
+    val_loader = DataLoader(val_dataset, shuffle=False, **cfg.dataloader.validation)
+    test_loader = DataLoader(test_dataset, shuffle=False, **cfg.dataloader.test)
     logger.info(f"Train loader batches: {len(train_loader)}")
     logger.info(f"Validation loader batches: {len(val_loader)}")
     logger.info(f"Test loader batches: {len(test_loader)}")

@@ -30,6 +30,7 @@ class ObservationAssimilationTransformer(nn.Module):
         norm_first: bool = False,
         bias: bool = True,
         sparse_attn: bool = False,
+        decoder_self_attention: bool = False,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -50,6 +51,7 @@ class ObservationAssimilationTransformer(nn.Module):
             activation_geo_bias: The activation function for geometry bias feedforward network. Defaults to "ReLU".
             bias: If True, adds bias to linear layers. Defaults to True.
             sparse_attn: If True, uses sparse attention mechanism. Defaults to False.
+            decoder_self_attention: If True, the decoder will perform self-attention.
             device: The device to place the model on. Defaults to None.
             dtype: The desired data type of the model parameters. Defaults to None.
         """
@@ -93,6 +95,7 @@ class ObservationAssimilationTransformer(nn.Module):
             activation_geo_bias=activation_geo_bias,
             sparse_attn=sparse_attn,
             bias=bias,
+            self_attention=decoder_self_attention,
             device=device,
             dtype=dtype,
         )
@@ -411,6 +414,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         activation_geo_bias: str = "ReLU",
         sparse_attn: bool = False,
         bias: bool = True,
+        self_attention: bool = False,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -429,23 +433,26 @@ class GeometryAwareDecoderLayer(nn.Module):
             activation_geo_bias: The activation function for the geometry bias feedforward network.
             sparse_attn: Whether to use sparse attention.
             bias: Whether to use bias in linear layers and layer normalization.
+            self_attention: whether self-attention is performed.
             device: The device to place the parameters on.
             dtype: The dtype of the parameters.
         """
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
         
-        self.self_attn = GeometryAwareMHA(
-            embed_dim=d_model,
-            num_heads=nhead,
-            dropout=dropout,
-            d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
-            geo_bias_hidden_dim=dim_geo_bias_feedforward,
-            activation_geo_bias=activation_geo_bias,
-            sparse_attn=sparse_attn,
-            device=device,
-            dtype=dtype,
-        )
+        self.perform_self_attention = self_attention
+        if self_attention:
+            self.self_attn = GeometryAwareMHA(
+                embed_dim=d_model,
+                num_heads=nhead,
+                dropout=dropout,
+                d_geo_bias=d_geo_bias,  # Assuming geometric features have same dim as d_model
+                geo_bias_hidden_dim=dim_geo_bias_feedforward,
+                activation_geo_bias=activation_geo_bias,
+                sparse_attn=sparse_attn,
+                device=device,
+                dtype=dtype,
+            )
         self.multihead_attn = GeometryAwareMHA(
             embed_dim=d_model,
             num_heads=nhead,
@@ -463,10 +470,13 @@ class GeometryAwareDecoderLayer(nn.Module):
         self.linear2 = nn.Linear(dim_feedforward, d_model, bias=bias, **factory_kwargs)
         
         self.norm_first = norm_first
-        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
+        
+        if self_attention:
+            self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
         self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
         self.norm3 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
-        self.dropout1 = nn.Dropout(dropout)
+        if self_attention:
+            self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
         
@@ -497,11 +507,14 @@ class GeometryAwareDecoderLayer(nn.Module):
         """
         x = tgt
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), tgt_mask_edges, g_tgt)
+            
+            if self.perform_self_attention:
+                x = x + self._sa_block(self.norm1(x), tgt_mask_edges, g_tgt)
             x = x + self._mha_block(self.norm2(x), memory, memory_mask_edges, g_src, g_tgt)
             x = x + self._ffn_block(self.norm3(x))
         else:
-            x = self.norm1(x + self._sa_block(x, tgt_mask_edges, g_tgt))
+            if self.perform_self_attention:
+                x = self.norm1(x + self._sa_block(x, tgt_mask_edges, g_tgt))
             x = self.norm2(x + self._mha_block(x, memory, memory_mask_edges, g_src, g_tgt))
             x = self.norm3(x + self._ffn_block(x))
         return x

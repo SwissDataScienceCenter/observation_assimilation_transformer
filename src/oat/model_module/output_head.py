@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from abc import abstractmethod, ABC
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Literal, Tuple
 
 class BaseOutputHead(nn.Module, ABC):
     
@@ -103,7 +103,7 @@ class LinearOutputHead(BaseOutputHead):
                  *,
                  in_features: int, 
                  target_features: int,
-                 loss_fn: str | None = None) -> None:
+                 loss_fn: Literal['mse', 'mae', 'huber'] | None = None) -> None:
         """
         Args:
             in_features: Channels of input features.
@@ -189,6 +189,7 @@ class GaussianOutputHead(BaseOutputHead):
                 *,
                 in_features: int, 
                 target_features: int,
+                loss_fn: Literal['nll', 'crps'],
                 std_fn: str | None = "softplus",
                 min_std_val: float | None = 1e-3
                 ) -> None:
@@ -196,6 +197,7 @@ class GaussianOutputHead(BaseOutputHead):
         Args:
             in_features: Channels of input features.
             target_features: Channels of output features.
+            loss_fn: The kind of loss function to use. Must be either nll or crps.
             std_fn: Function used to transform the raw standard deviation (e.g. "softplus", "exp"). Defaults to "softplus".
             min_std_val: Minimum standard deviation value used to clamp the output. If None, no clamping is applied. Defaults to 0.
 
@@ -212,6 +214,7 @@ class GaussianOutputHead(BaseOutputHead):
         else:
             raise ValueError(f"Unknown std fn: {std_fn}")
         self.min_std_val = min_std_val
+        self.loss_fn = loss_fn
         
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """ Generate predictions.
@@ -259,12 +262,22 @@ class GaussianOutputHead(BaseOutputHead):
         preds = self.forward(x)
         mean = preds["mu_pred"]
         std = preds["std_pred"]
-        var = std ** 2
-        nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
-        #loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
-        loss = self.loss_normalization_per_sample(nll, mask)
-        return preds, loss
-    
+        if self.loss_fn == 'nll':
+            var = std ** 2
+            nll = torch.log(std) + 0.5 * ((target - mean) ** 2) / var
+            #loss = torch.sum(nll[mask]) / torch.minimum(torch.sum(mask), torch.tensor(1.0))
+            loss = self.loss_normalization_per_sample(nll, mask)
+            return preds, loss
+        elif self.loss_fn == 'crps':
+            normal = torch.distributions.Normal(torch.zeros_like(mean), torch.ones_like(std))
+            scaled = (target - mean) / std
+
+            Phi = normal.cdf(scaled)
+            phi = torch.exp(normal.log_prob(scaled))
+            crps = std * (scaled * (2 * Phi - 1) + 2 * phi - (1 / torch.sqrt(torch.tensor(torch.pi, device=std.device))))
+            return preds, self.loss_normalization_per_sample(crps, mask)
+        else:
+            raise NotImplementedError(f'Loss function {self.loss_fn} not implemented.')
     
     def sample(self, out: Dict[str, torch.Tensor], num_samples: int) -> torch.Tensor:
         """ Generate samples from the output distribution.

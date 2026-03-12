@@ -152,7 +152,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
 
 
 def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
-    assert cfg.dataloader.batch_size == 1, "Please use batch size = 1 when saving fixtures."
+    assert cfg.dataloader.train.batch_size == 1, "Please use batch size = 1 when saving fixtures."
 
     logger.info("Saving examples of transforms as fixtures ...")
     ROOT = Path(__file__).resolve().parents[1]
