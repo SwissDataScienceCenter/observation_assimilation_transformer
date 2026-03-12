@@ -74,6 +74,7 @@ class TransformerConfig:
     dropout: float = 0.1
     activation: str = "GELU"
     sparse_attn: bool = True
+    decoder_self_attention: bool = False
     dim_geo_bias_feedforward: int = 16
     activation_geo_bias: str = "ReLU"
 
