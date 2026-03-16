@@ -6,6 +6,7 @@ defaults:
   - trainer: default
   - predictor: oat_predictor
   - logging: default
+  - profiler: no_profiler
 
 seed: 42
 

@@ -1,0 +1,11 @@
+defaults:
+  - config
+
+profiler: 
+  type: simple
+
+dataset:
+  data_points_for_stats: 128
+
+trainer:
+  max_steps: 1000
