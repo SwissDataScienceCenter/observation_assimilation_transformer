@@ -15,6 +15,7 @@ class NWPInterpolatorConfig:
 
 class NWPInterpolator(nn.Module):
     
+    requires_observation: bool = False
     def __init__(self, config: NWPInterpolatorConfig) -> None:
         super().__init__()
         interpolation_params = {

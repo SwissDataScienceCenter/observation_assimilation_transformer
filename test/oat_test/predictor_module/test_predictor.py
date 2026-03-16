@@ -46,6 +46,23 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
     pred.training_step(batch=batch_fixture, batch_idx=None)
 
 
+
+def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninformed_model_cfg_fixture):
+
+
+    input_transform, output_transform = transform_fixture
+    
+    pred = OATPredictor(oat_model_cfg=uninformed_model_cfg_fixture,
+                        input_transform=input_transform,
+                        output_transform=output_transform,
+                        output_var_names=[str(i) for i in range(uninformed_model_cfg_fixture.output_head.target_features)],
+                        lr=1e-3,
+                        optimizer_class=torch.optim.AdamW)
+    
+
+    pred.training_step(batch=batch_fixture, batch_idx=None)
+
+
 def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
 
 
@@ -78,7 +95,15 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     pred = pred.eval()
     reloaded_pred = reloaded_pred.eval()
     
-    prediction = pred(batch_fixture)['val_pred']
-    prediction_reloaded = reloaded_pred(batch_fixture)['val_pred']
+    prediction = pred(batch_fixture)
+    prediction_reloaded = reloaded_pred(batch_fixture)
+    # Check that all outputs apart from the samples are equivalent before and 
+    # after checkpointing
+    for k in [key for key in prediction.keys() if key != "samples"]:
+        if k == "pre_oat_output":
+            for kk in [key for key in prediction[k].keys() if key != "samples"]:
+                assert (prediction[k][kk] == prediction_reloaded[k][kk]).all()
+        else:
+            assert (prediction[k] == prediction_reloaded[k]).all()
     
-    assert (prediction == prediction_reloaded).all()
+    

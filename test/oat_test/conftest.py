@@ -10,7 +10,8 @@ from oat.model_module.model import (
     MaskingConfig,
     TransformerConfig,
     OutputHeadConfig,
-    OATConfig
+    OATConfig,
+    UninformedOATConfig
 )
 from oat.data_module.transform import Transform
 
@@ -50,7 +51,7 @@ def model_cfg_fixture(batch_fixture):
     output_head_cfg = OutputHeadConfig(
         in_features=4,
         target_features=batch_fixture['observation_data']['obs'].shape[-1],
-        type='linear'
+        type='gaussian'
     )
     
     oat_cfg = OATConfig(
@@ -64,6 +65,38 @@ def model_cfg_fixture(batch_fixture):
     )
     
     return oat_cfg
+
+@pytest.fixture
+def uninformed_model_cfg_fixture(batch_fixture):
+    global_enc_cfg = GlobalEncoderConfig(
+        in_channels=batch_fixture['global_data']['global_field'].shape[1],
+        field_extent_min= [2255500.0, 840500.0],
+        field_extent_max= [2964500.0, 1479500.0],
+        out_channels=4,
+        channels=(4,8)
+    )
+    
+    topography_enc_cfg = TopographicEncoderConfig(
+        in_channels=batch_fixture['observation_data']['topo'].shape[2],
+        out_channels=4
+    )
+    
+    fusion_layer_cfg = FusionLayerConfig(out_channels=4, hidden_channels=4)
+
+    output_head_cfg = OutputHeadConfig(
+        in_features=4,
+        target_features=batch_fixture['observation_data']['obs'].shape[-1],
+        type='gaussian'
+    )
+    
+    uninformed_oat_cfg = UninformedOATConfig(
+        global_encoder=global_enc_cfg,
+        topographic_encoder=topography_enc_cfg,
+        fusion_layer=fusion_layer_cfg,
+        output_head=output_head_cfg,
+        num_samples=10
+    )
+    return uninformed_oat_cfg
 
 @pytest.fixture
 def transform_fixture() -> tuple[Transform, Transform]:

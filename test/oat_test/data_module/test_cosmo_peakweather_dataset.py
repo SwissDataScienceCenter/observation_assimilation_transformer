@@ -1,11 +1,13 @@
 from hydra import initialize, compose
 from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset, DERIVED_FEATURES
 from oat.data_module.transform import NestedTransform, Transform
+from oat.data_module.data_split import create_splits
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 import os
+import torch
 
 @pytest.mark.skipif(
     os.getenv("CI") == "true",
@@ -55,8 +57,57 @@ def test_cosmo_peakweather_dataset() -> None:
 
     assert isinstance(transforms[0], NestedTransform)
     assert isinstance(transforms[1], Transform)
+    
+@pytest.mark.parametrize(
+    "observation_fraction",
+    [0.8, 0.0],
+    ids=["with_observations", "no_observations"]
+)
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
+def test_splits(observation_fraction: float):
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+    
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    
+    split_cfg = {'val_fraction': 0.2, 
+                 'test_fraction': 0.2, 
+                 'train_split_fraction': observation_fraction}
 
+    train_dataset, val_dataset, test_dataset = create_splits(dataset, **split_cfg)
+    
+    num_train_station = int(len(dataset.stations) * (1.0 - split_cfg['val_fraction'] - split_cfg['test_fraction']))
+    num_train_and_val_station = int(len(dataset.stations) * (1.0 - split_cfg['test_fraction']))
+    
+    
+    if observation_fraction == 0.0:
+        # Assert no observations are returned in the batch
+        for ds in [train_dataset, val_dataset, test_dataset]:  
+            for v in ds[0]['observation_data'].values():
+                assert torch.Tensor(v).numel() == 0
+                
+        # assert instead that all training stations are used as query
+        for v in train_dataset[0]['query_data'].values():
+            assert v.shape[0] == num_train_station
 
+    if observation_fraction > 0.0:
+        num_key_stations = int(num_train_station * observation_fraction)
+        
+        # assert the num of observation stations
+        for v in train_dataset[0]['observation_data'].values():
+                assert v.shape[0] == num_key_stations
+    
+        for v in val_dataset[0]['observation_data'].values():
+                assert v.shape[0] == num_train_station
+                
+        for v in test_dataset[0]['observation_data'].values():
+                assert v.shape[0] == num_train_and_val_station
+    
+    # TODO check all other shapes (eg query)
+    
 def test_derived_features_wind_speed() -> None:
     u = torch.tensor([[3.0, 0.0]])
     v = torch.tensor([[4.0, 5.0]])

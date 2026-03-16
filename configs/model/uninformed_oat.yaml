@@ -1,0 +1,10 @@
+defaults:
+  - global_encoder: mlp
+  - topographic_encoder: default
+  - fusion_layer: default
+  - output_head: gaussian
+
+model_cls: oat.model_module.model.UninformedOAT
+d_model: 16
+num_samples: 100
+
