@@ -139,6 +139,17 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
         dirpath=checkpoint_dir,
         filename="best-model-{epoch:02d}-{val_loss:.4f}"
     )
+    # Create callback that saves the last checkpoint at the end of training (regardless of val_loss) for resuming trainings
+    last_checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        monitor=None,
+        save_top_k=1,
+        filename="last",
+        save_last=False,
+        every_n_epochs=1,
+        enable_version_counter=False
+    )
+    
     # NOTE maybe use cfg for patience
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
@@ -148,7 +159,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
-    return wandb_logger, [checkpoint_callback, early_stop_callback, lr_monitor]
+    return wandb_logger, [checkpoint_callback, last_checkpoint_callback, early_stop_callback, lr_monitor]
 
 
 def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
