@@ -169,6 +169,8 @@ class OATPredictor(pl.LightningModule):
             self.oat_loss_scheduler_params["total_steps"] = total_steps
             
         self.oat_loss_weight_scheduler = self.oat_loss_scheduler_cls(**self.oat_loss_scheduler_params)
+        device = next(self.model.parameters()).device
+        self.oat_loss_weight_scheduler.to(device)
 
         if self.global_rank == 0:
             logger.info("OAT loss scheduler initialized.")

@@ -5,7 +5,7 @@ precision: 32
 max_epochs: 100
 num_sanity_val_steps: 5
 log_every_n_steps: 50
-enable_progress_bar: true
+enable_progress_bar: false
 accumulate_grad_batches: 1
 limit_val_batches: 0.2
 gradient_clip_val: 1.0

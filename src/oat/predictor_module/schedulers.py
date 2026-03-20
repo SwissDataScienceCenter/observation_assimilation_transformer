@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-class PreOATLossWeightScheduler(ABC, nn.Module):
+class WeightScheduler(ABC, nn.Module):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
         super().__init__()
         
@@ -36,7 +36,7 @@ class PreOATLossWeightScheduler(ABC, nn.Module):
         self.current_weight.fill_(self.start_weight)
 
 
-class LinearPreOATLossWeightScheduler(PreOATLossWeightScheduler):
+class LinearWeightScheduler(WeightScheduler):
     """
     Linearly schedules a loss weight after an initial flat warmup period.
 
@@ -95,7 +95,7 @@ class LinearPreOATLossWeightScheduler(PreOATLossWeightScheduler):
             f")"
         )
         
-class ExponentialDecayPreOATLossWeightScheduler(PreOATLossWeightScheduler):
+class ExponentialWeightScheduler(WeightScheduler):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps, sharpness=0.5):
         super().__init__(start_weight=start_weight, flat_warmup_steps=flat_warmup_steps, end_weight=end_weight, total_steps=total_steps)
 
