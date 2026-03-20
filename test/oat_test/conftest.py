@@ -51,7 +51,7 @@ def model_cfg_fixture(batch_fixture):
     output_head_cfg = OutputHeadConfig(
         in_features=4,
         target_features=batch_fixture['observation_data']['obs'].shape[-1],
-        type='linear'
+        type='gaussian'
     )
     
     oat_cfg = OATConfig(
@@ -86,7 +86,7 @@ def uninformed_model_cfg_fixture(batch_fixture):
     output_head_cfg = OutputHeadConfig(
         in_features=4,
         target_features=batch_fixture['observation_data']['obs'].shape[-1],
-        type='linear'
+        type='gaussian'
     )
     
     uninformed_oat_cfg = UninformedOATConfig(

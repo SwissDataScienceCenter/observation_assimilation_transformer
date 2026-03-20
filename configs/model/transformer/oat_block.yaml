@@ -1,11 +1,12 @@
 # d_model: 64 defined higher
 nhead: 4
-num_encoder_layers: 2
-num_decoder_layers: 2
+num_encoder_layers: 1
+num_decoder_layers: 1
 dim_feedforward: 32
 dropout: 0.1
 activation: GELU
 sparse_attn: true
+decoder_self_attention: false
 # d_geo_bias: int = 3   # data dependent
 dim_geo_bias_feedforward: 8
 activation_geo_bias: ReLU

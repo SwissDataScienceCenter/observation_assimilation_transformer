@@ -74,6 +74,7 @@ class TransformerConfig:
     dropout: float = 0.1
     activation: str = "GELU"
     sparse_attn: bool = True
+    decoder_self_attention: bool = False
     dim_geo_bias_feedforward: int = 16
     activation_geo_bias: str = "ReLU"
 
@@ -93,8 +94,8 @@ class OutputHeadConfig:
     target_features: int
     type: str
     in_features: int = 64
-    loss_fn: str = 'huber'
     std_fn: Optional[str] = 'softplus'
+    loss_fn: str = 'crps'
     min_std_val: float = 1e-3
     degree: int = 20
     num_train_taus: int = 10
@@ -262,6 +263,7 @@ class UninformedOAT(nn.Module):
             return output_head.GaussianOutputHead(
                 in_features=config.output_head.in_features,
                 target_features=config.output_head.target_features,
+                loss_fn=config.output_head.loss_fn,
                 std_fn=config.output_head.std_fn,
                 min_std_val=config.output_head.min_std_val,
             )
@@ -473,6 +475,7 @@ class OAT(UninformedOAT):
             activation=config.transformer.activation,
             sparse_attn=config.transformer.sparse_attn,
             d_geo_bias=config.transformer.d_geo_bias,
+            decoder_self_attention=config.transformer.decoder_self_attention,
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
             activation_geo_bias=config.transformer.activation_geo_bias
         )
