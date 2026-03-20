@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 class PreOATLossWeightScheduler(ABC, nn.Module):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
@@ -85,6 +86,56 @@ class LinearPreOATLossWeightScheduler(PreOATLossWeightScheduler):
         else:
             schedule_type = (
                 f"Linear decay from {self.start_weight} to {self.end_weight}"
+            )
+
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  schedule={schedule_type},\n"
+            f"  total_steps={self.total_steps}\n"
+            f")"
+        )
+        
+class ExponentialDecayPreOATLossWeightScheduler(PreOATLossWeightScheduler):
+    def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps, sharpness=0.5):
+        super().__init__(start_weight=start_weight, flat_warmup_steps=flat_warmup_steps, end_weight=end_weight, total_steps=total_steps)
+
+        # NOTE currently this is hardcoded by the default param.
+        # and is not yet controlled by the model's config.
+        self.sharpness = sharpness
+
+    def step(self):
+        step = self.current_step.item()
+
+        if step < self.warmup_steps:
+            w = self.start_weight
+
+        elif step > self.total_steps:
+            w = self.end_weight
+
+        else:
+            progress = (step - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+
+            shaped_progress = progress ** self.sharpness
+
+            w = self.start_weight * np.exp(
+                -np.log(self.start_weight / self.end_weight) * shaped_progress
+            )
+
+        self.current_weight.fill_(w)
+        self.current_step += 1
+
+        return self.current_weight.item()
+    
+    
+    def __repr__(self):
+        if self.warmup_steps > 0:
+            schedule_type = (
+                f"Flat warmup for {self.warmup_steps} steps at {self.start_weight}"
+                f" then exponential decay to {self.end_weight} with sharpness {self.sharpness}"
+            )
+        else:
+            schedule_type = (
+                f"Exponential decay from {self.start_weight} to {self.end_weight} with sharpness {self.sharpness}"
             )
 
         return (
