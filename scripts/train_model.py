@@ -24,7 +24,7 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import SimpleProfiler
-from pytorch_lightning.profilers.profiler import Profiler
+from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
 
 
