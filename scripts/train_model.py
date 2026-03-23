@@ -289,7 +289,7 @@ def main(cfg: DictConfig) -> None:
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader)
         
-        if profiler is not None:
+        if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
 
 if __name__ == "__main__":
