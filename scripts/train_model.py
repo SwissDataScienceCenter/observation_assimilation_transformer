@@ -23,6 +23,8 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.profilers import SimpleProfiler
+from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
 
 
@@ -114,7 +116,22 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
 
     return predictor
 
+def setup_profiler(cfg: DictConfig) -> Profiler | None:
+    if cfg.profiler.type == "simple":
+        dirpath = os.path.join("profiler_outputs", cfg.logging.group)
+        
+        now_str = datetime.now().strftime("%Y%m%d")
+        slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+    
+        filename = f"{cfg.logging.run_name_prefix}_{now_str}_job{slurm_job_id}"
+        
+        return SimpleProfiler(dirpath=dirpath, filename=filename)
 
+    if cfg.profiler.type == "none" or cfg.profiler.type is None:
+        return None
+
+    raise ValueError(f"Profiler type {cfg.profiler.type} unknown.")
+        
 def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
@@ -264,11 +281,16 @@ def main(cfg: DictConfig) -> None:
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
+        
+        profiler = setup_profiler(cfg=cfg)
 
-        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger)
+        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
         trainer.fit(model=predictor,
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader)
+        
+        if profiler is not None and trainer.is_global_zero:
+            print(profiler.summary())
 
 if __name__ == "__main__":
     # Usage:
