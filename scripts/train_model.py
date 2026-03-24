@@ -247,6 +247,9 @@ def main(cfg: DictConfig) -> None:
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
     wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
+    
+    # print config
+    logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
 
     if model_type == "baseline":
         from oat.model_module.baseline import NWPInterpolatorConfig
