@@ -387,7 +387,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         raw_field = torch.from_numpy(
             raw[:, self.nwp_indices].reshape(len(self.nwp_var_idx), *self.nwp_shape)
         ).to(dtype_map[self.config.dtype])
-        source = {var: raw_field[i] for i,var in enumerate(self._source_vars)}
+        source = {var: raw_field[i] for i, var in enumerate(self._source_vars)}
 
         # Output channels in exactly the order of self.config.nwp_vars
         nwp_channels = [
