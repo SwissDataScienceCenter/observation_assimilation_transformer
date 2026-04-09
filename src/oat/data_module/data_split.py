@@ -27,7 +27,8 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     Splits the dataset by stations into training, validation, and test sets.
     The stations are randomly shuffled before splitting to ensure randomness.
     Args:
-        dataset: The input dataset containing stations to be split.
+        dataset: The input dataset cand split in both the dataset and ontaining stations to be split.
+        logger: Optional logger for logging split information (default: None).
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
         train_split_fraction: Fraction of training stations to use as observed stations (vs query stations) in each training sample (default: 0.8).
