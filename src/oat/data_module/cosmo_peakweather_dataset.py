@@ -377,11 +377,6 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
         # === Global data ===
         # Get NWP fields
-        #print(nwp_time)
-        #interval_idx = self.nwp_ds.dates_interval_to_indices(start=nwp_time, end=nwp_time)
-        #print(nwp_time, idx, interval_idx, nwp_idx)
-
-        #print(interval_idx)
         raw = self.nwp_ds[int(nwp_idx)][self.nwp_var_idx]
         raw = raw.reshape(len(self.nwp_var_idx), -1)
         raw_field = torch.from_numpy(
