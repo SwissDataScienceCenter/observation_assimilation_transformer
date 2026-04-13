@@ -11,6 +11,7 @@ nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rech
 # NWP variables (COSMO)
 nwp_vars:
   - T_2M         # 2m temperature
+  - T_G
 
 # Topographic variables
 topo_vars:
