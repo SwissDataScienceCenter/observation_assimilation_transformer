@@ -474,6 +474,7 @@ class OAT(UninformedOAT):
             activation=config.transformer.activation,
             sparse_attn=config.transformer.sparse_attn,
             d_geo_bias=config.transformer.d_geo_bias,
+            decoder_self_attention=config.transformer.decoder_self_attention,
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
             activation_geo_bias=config.transformer.activation_geo_bias
         )
