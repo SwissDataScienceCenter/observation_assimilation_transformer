@@ -6,6 +6,7 @@ nwp_path: "/scratch/mch/fzanetta/data/anemoi/datasets/mch-co1e-an-archive-0p01-2
 topo_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
 obs_path: "/scratch/mch/cdonner/data/peakweather"
 ref_nwp_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
+nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
 
 # NWP variables (COSMO)
 nwp_vars:
