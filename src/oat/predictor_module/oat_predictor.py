@@ -147,11 +147,19 @@ class OATPredictor(pl.LightningModule):
 
         # Case 2; the scheduler was already initialized, this is probably a checkpoint
         # where the state_dict has been already loaded.
+        
+        # Case 3; the scheduler was saved in the checkpoint and needs to be reloaded
+        if getattr(self, "_oat_scheduler_state", None) is not None:
+            self.oat_loss_weight_scheduler.load_state_dict(self._oat_scheduler_state)
+            self._oat_scheduler_state = None
+            logger.info("OAT loss scheduler state loaded from checkpoint.")
+            return 
+        
         if self.oat_loss_weight_scheduler is not None:
             logger.info("OAT loss scheduler already exists. Skipping initialization.")
             return
 
-        # Case 3: logger is not yet initialize (lazy)
+        # Case 4: logger is not yet initialize (lazy)
 
         # this is only available when fitting starts
         total_steps = self.trainer.estimated_stepping_batches 
@@ -175,6 +183,14 @@ class OATPredictor(pl.LightningModule):
         if self.global_rank == 0:
             logger.info("OAT loss scheduler initialized.")
             logger.info(self.oat_loss_weight_scheduler) # print printable representation of the scheduler
+            
+    def on_save_checkpoint(self, checkpoint):
+        if self.oat_loss_weight_scheduler is not None:
+            checkpoint["oat_loss_scheduler_state"] = self.oat_loss_weight_scheduler.state_dict()
+
+    # LOAD
+    def on_load_checkpoint(self, checkpoint):
+        self._oat_scheduler_state = checkpoint.get("oat_loss_scheduler_state", None)
 
 
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
