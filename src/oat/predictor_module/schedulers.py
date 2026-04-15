@@ -97,6 +97,10 @@ class LinearWeightScheduler(WeightScheduler):
         
 class ExponentialWeightScheduler(WeightScheduler):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps, sharpness=0.5):
+        if start_weight <= 0:
+            raise ValueError("start_weight must be > 0 for ExponentialWeightScheduler")
+        if end_weight <= 0:
+            raise ValueError("end_weight must be > 0 for ExponentialWeightScheduler")
         super().__init__(start_weight=start_weight, flat_warmup_steps=flat_warmup_steps, end_weight=end_weight, total_steps=total_steps)
 
         # NOTE currently this is hardcoded by the default param.
