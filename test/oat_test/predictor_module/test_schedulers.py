@@ -30,6 +30,8 @@ def test_linear_scheduler_warmup_and_clamp() -> None:
 
     assert weights[0] == pytest.approx(1.0)
     assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(1.0)
+    assert weights[3] == pytest.approx(2.0 / 3.0)
     assert weights[4] == pytest.approx(1.0 / 3.0)
     assert weights[5] == pytest.approx(0.0)
     assert weights[6] == pytest.approx(0.0)
