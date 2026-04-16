@@ -18,6 +18,7 @@ from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
 from torch.utils.data import Dataset
 from oat.data_module import transform, statistics
+import logging as _logging
 
 dtype_map = {
     "float32": torch.float32,
@@ -41,7 +42,7 @@ class CosmoPeakWeatherConfig:
     topo_path: str
     obs_path: str
     ref_nwp_path: str  # Reference grid for regridding
-    
+
     # Variables
     nwp_vars: list[str]
     topo_vars: list[str]
@@ -60,6 +61,9 @@ class CosmoPeakWeatherConfig:
     # Time embedding
     use_time_embedding: bool = True
     
+    # Extracted NWP zarr (rechunked for fast __getitem__)
+    nwp_extracted_path: Optional[str] = None  # if set, used instead of anemoi for __getitem__ reads (105x less I/O)
+
     # Cache
     cache_dir: str = ".cache_constant_inputs"
     clear_cache: bool = False
@@ -151,8 +155,40 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                            f"Available: {list(self.nwp_ds.name_to_index.keys())}")
         self._source_vars = source_vars
         self.nwp_var_idx = [self.nwp_ds.name_to_index[v] for v in source_vars]
-        
-        
+
+        if self.config.nwp_extracted_path and Path(self.config.nwp_extracted_path).exists():
+            import zarr as _zarr
+            self._nwp_store = _zarr.open(self.config.nwp_extracted_path, mode="r")
+            extracted_vars = list(self._nwp_store.attrs["variables"])
+            if "variables" not in self._nwp_store.attrs:
+                raise ValueError(
+                    f"Extracted NWP store at {self.config.nwp_extracted_path} is missing the "
+                    f"required attrs['variables'] metadata. Regenerate the store with "
+                    f"scripts/extract_nwp_vars.py."
+                )
+            extracted_vars = list(self._nwp_store.attrs["variables"])
+            missing_extracted_vars = [v for v in self._source_vars if v not in extracted_vars]
+            if missing_extracted_vars:
+                raise ValueError(
+                    f"Extracted NWP store at {self.config.nwp_extracted_path} is missing "
+                    f"required variables: {missing_extracted_vars}. Available variables: "
+                    f"{extracted_vars}. Regenerate the store with scripts/extract_nwp_vars.py."
+                )
+            self._extracted_var_idx = [extracted_vars.index(v) for v in self._source_vars]
+            _logging.getLogger(__name__).info(
+                "Using extracted NWP store at %s with variables: %s",
+                self.config.nwp_extracted_path,
+                extracted_vars
+            )
+        else:
+            if self.config.nwp_extracted_path:
+                _logging.getLogger(__name__).warning(
+                    "nwp_extracted_path=%s does not exist; falling back to anemoi (slow: 379 MB/read). "
+                    "Run scripts/extract_nwp_vars.py to create it.",
+                    self.config.nwp_extracted_path,
+                )
+            self._nwp_store = None
+
         # Reference grid for spatial alignment
         self.ref_nwp_ds = xr.open_zarr(self.config.ref_nwp_path)
         topo_vars = [str(var) for var in self.config.topo_vars]
@@ -373,14 +409,14 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         """
         time = self.times[idx]
         nwp_idx = self.time_indices[idx]
-        nwp_time = self.nwp_ds.dates[nwp_idx]
-        
+
         # === Global data ===
         # Get NWP fields
-        raw = self.nwp_ds[
-            self.nwp_ds.dates_interval_to_indices(start=nwp_time, end=nwp_time)[0],
-            self.nwp_var_idx, 0, :
-        ].reshape(len(self.nwp_var_idx), -1)
+        if self._nwp_store is not None:
+            raw = self._nwp_store[int(nwp_idx)][self._extracted_var_idx]  # (n_vars, n_grid)
+        else:
+            raw = self.nwp_ds[int(nwp_idx)][self.nwp_var_idx]             # fallback: reads full 379 MB chunk
+        raw = raw.reshape(len(self.nwp_var_idx), -1)
         raw_field = torch.from_numpy(
             raw[:, self.nwp_indices].reshape(len(self.nwp_var_idx), *self.nwp_shape)
         ).to(dtype_map[self.config.dtype])
@@ -394,11 +430,11 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         ]
         nwp_field = torch.stack(nwp_channels, dim=0)  # (len(nwp_vars), H, W)
         global_field = torch.cat([nwp_field, self.topo_on_nwp_grid], dim=0)
-        
+
         global_data = {'global_field': global_field}
-        
+
         if self.config.use_time_embedding:
-            global_data['time_emb'] = self._get_time_embedding(nwp_time)
+            global_data['time_emb'] = self._get_time_embedding(time)
             
         obs_values = self.obs_np[idx]       # (N_stations, C_obs)
         obs_mask = self.obs_mask_np[idx]    # (N_stations, C_obs)
