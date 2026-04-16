@@ -116,6 +116,58 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
 
     return predictor
 
+
+def setup_gp_predictor(
+    cfg: DictConfig,
+    field_extent: Dict,
+    obs_vars: List[str],
+    transforms: tuple[Transform],
+) -> "GPPredictor":
+    from importlib import import_module
+    from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
+    from oat.predictor_module.gp_predictor import GPPredictor
+
+    data_cfg = cfg.dataset
+    model_cfg = cfg.model
+
+    gp_config = GPBaselineConfig(
+        obs_vars=obs_vars,
+        nwp_vars=list(data_cfg.nwp_vars),
+        field_extent=field_extent,
+        use_nwp=bool(model_cfg.use_nwp),
+        use_time_emb=bool(model_cfg.use_time_emb),
+        mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
+        kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
+        kernel_embed_dim=int(model_cfg.kernel_embed_dim),
+        noise_variance=float(model_cfg.noise_variance),
+        loss_fn=str(model_cfg.loss_fn),
+        num_samples=int(model_cfg.num_samples),
+    )
+    gp_model = GPBaseline(gp_config)
+
+    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
+    optim_cls = getattr(import_module(module_path), class_name)
+
+    sched_cls = None
+    sched_params: dict = {}
+    if cfg.predictor.kwargs.get("scheduler_class") is not None:
+        module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+        sched_cls = getattr(import_module(module_path), class_name)
+        sched_params = dict(cfg.predictor.kwargs.get("scheduler_params", {}))
+
+    return GPPredictor(
+        gp_model=gp_model,
+        input_transform=transforms[0],
+        output_transform=transforms[1],
+        output_var_names=obs_vars,
+        lr=float(cfg.predictor.lr),
+        optimizer_class=optim_cls,
+        optimizer_params=dict(cfg.predictor.kwargs.get("optimizer_params", {})),
+        scheduler_class=sched_cls,
+        scheduler_params=sched_params,
+    )
+
+
 def setup_profiler(cfg: DictConfig) -> Profiler | None:
     if cfg.profiler.type == "simple":
         dirpath = os.path.join("profiler_outputs", cfg.logging.group)
@@ -269,6 +321,30 @@ def main(cfg: DictConfig) -> None:
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
+    elif model_type == "gp_baseline":
+        predictor = setup_gp_predictor(
+            cfg=cfg,
+            field_extent=field_extent,
+            obs_vars=list(dataset.config.obs_vars),
+            transforms=[input_transform, output_transform],
+        )
+
+        profiler = setup_profiler(cfg=cfg)
+
+        trainer = Trainer(
+            **cfg.trainer,
+            callbacks=callbacks,
+            logger=wandb_logger,
+            profiler=profiler,
+        )
+        trainer.fit(
+            model=predictor,
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
+
+        if profiler is not None and trainer.is_global_zero:
+            print(profiler.summary())
     else:
         oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
 
@@ -281,14 +357,14 @@ def main(cfg: DictConfig) -> None:
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
-        
+
         profiler = setup_profiler(cfg=cfg)
 
         trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
         trainer.fit(model=predictor,
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader)
-        
+
         if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
 
