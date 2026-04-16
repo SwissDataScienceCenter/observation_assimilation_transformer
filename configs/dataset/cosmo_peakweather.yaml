@@ -6,12 +6,12 @@ nwp_path: "/scratch/mch/fzanetta/data/anemoi/datasets/mch-co1e-an-archive-0p01-2
 topo_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
 obs_path: "/scratch/mch/cdonner/data/peakweather"
 ref_nwp_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
+nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
 
 # NWP variables (COSMO)
 nwp_vars:
   - T_2M         # 2m temperature
-  - U_10M        # 10m U-wind component
-  - V_10M        # 10m V-wind component
+  - T_G
 
 # Topographic variables
 topo_vars:
@@ -24,9 +24,6 @@ topo_vars:
 # Observation variables (PeakWeather)
 obs_vars:
   - temperature
-  - wind_gust
-  - wind_u
-  - wind_v
 
 coord_vars:
   - swiss_easting
