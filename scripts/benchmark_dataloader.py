@@ -6,7 +6,6 @@ Loads dataset config from configs/dataset/cosmo_peakweather.yaml (via OmegaConf)
 Usage:
     python -m scripts.benchmark_dataloader
     python -m scripts.benchmark_dataloader --workers 0 1 2 4 8 --batches 20 --batch-size 32
-    python -m scripts.benchmark_dataloader --start-date 2022-01-01 --end-date 2022-01-31
 """
 
 import argparse
