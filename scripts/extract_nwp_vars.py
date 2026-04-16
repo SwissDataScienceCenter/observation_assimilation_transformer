@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output zarr path")
     parser.add_argument(
         "--vars", nargs="+", default=DEFAULT_VARS,
-        help="Variable names to extract (default: T_2M)"
+        help=f"Variable names to extract (default: {DEFAULT_VARS})"
     )
     parser.add_argument(
         "--batch", type=int, default=64,

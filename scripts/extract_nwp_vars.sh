@@ -5,8 +5,8 @@
 # from 379 MB to ~3.6 MB (T_2M only) or ~11 MB (T_2M + U_10M + V_10M).
 #
 # Usage:
-#   sbatch scripts/submit_extract_nwp_vars.sh
-#   sbatch scripts/submit_extract_nwp_vars.sh --vars T_2M U_10M V_10M
+#   sbatch scripts/extract_nwp_vars.sh
+#   sbatch scripts/extract_nwp_vars.sh --vars T_2M U_10M V_10M
 
 #SBATCH --job-name="extract_nwp_vars"
 

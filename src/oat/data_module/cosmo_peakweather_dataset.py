@@ -160,6 +160,20 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             import zarr as _zarr
             self._nwp_store = _zarr.open(self.config.nwp_extracted_path, mode="r")
             extracted_vars = list(self._nwp_store.attrs["variables"])
+            if "variables" not in self._nwp_store.attrs:
+                raise ValueError(
+                    f"Extracted NWP store at {self.config.nwp_extracted_path} is missing the "
+                    f"required attrs['variables'] metadata. Regenerate the store with "
+                    f"scripts/extract_nwp_vars.py."
+                )
+            extracted_vars = list(self._nwp_store.attrs["variables"])
+            missing_extracted_vars = [v for v in self._source_vars if v not in extracted_vars]
+            if missing_extracted_vars:
+                raise ValueError(
+                    f"Extracted NWP store at {self.config.nwp_extracted_path} is missing "
+                    f"required variables: {missing_extracted_vars}. Available variables: "
+                    f"{extracted_vars}. Regenerate the store with scripts/extract_nwp_vars.py."
+                )
             self._extracted_var_idx = [extracted_vars.index(v) for v in self._source_vars]
             _logging.getLogger(__name__).info(
                 "Using extracted NWP store at %s with variables: %s",

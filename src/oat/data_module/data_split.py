@@ -16,10 +16,10 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
                   test_fraction: float = 0.2,
                   train_split_fraction: float = 0.8,
                   train_indices: Optional[np.ndarray | list| ListConfig] = None,
-                  val_indices: Optional[np.ndarray | list | ListConfig] = None,
+                  val_indices: Optional[np.ndarray | list| ListConfig] = None,
                   test_indices: Optional[np.ndarray | list| ListConfig] = None,
                   seed: int | None = None) -> Dict[str, Tuple[Dataset, Dataset, Dataset] | 
-                                                        Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+                                                        Tuple[list[int], list[int], list[int]]]:
 
 
     """
@@ -27,7 +27,7 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     Splits the dataset by stations into training, validation, and test sets.
     The stations are randomly shuffled before splitting to ensure randomness.
     Args:
-        dataset: The input dataset cand split in both the dataset and ontaining stations to be split.
+        dataset: The input dataset cand split in both the dataset and containing stations to be split.
         logger: Optional logger for logging split information (default: None).
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
