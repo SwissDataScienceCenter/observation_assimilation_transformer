@@ -1,0 +1,6 @@
+lr: 5.0e-3
+kwargs:
+  optimizer_class: "torch.optim.Adam"
+  optimizer_params: {}
+  scheduler_class: null
+  scheduler_params: {}
