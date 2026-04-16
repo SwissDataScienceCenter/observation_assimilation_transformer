@@ -16,8 +16,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=256G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0
 #SBATCH --time=24:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive

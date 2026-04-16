@@ -11,15 +11,15 @@ import pandas as pd
 from omegaconf import ListConfig
 
 def create_splits(dataset: Dataset[Dict[str, Any]],
-                  logger: logging.Logger,
+                  logger: logging.Logger | None = None,
                   val_fraction: float = 0.2,
                   test_fraction: float = 0.2,
                   train_split_fraction: float = 0.8,
                   train_indices: Optional[np.ndarray | list| ListConfig] = None,
-                  val_indices: Optional[np.ndarray | list | ListConfig] = None,
+                  val_indices: Optional[np.ndarray | list| ListConfig] = None,
                   test_indices: Optional[np.ndarray | list| ListConfig] = None,
                   seed: int | None = None) -> Dict[str, Tuple[Dataset, Dataset, Dataset] | 
-                                                        Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+                                                        Tuple[list[int], list[int], list[int]]]:
 
 
     """
@@ -27,7 +27,8 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
     Splits the dataset by stations into training, validation, and test sets.
     The stations are randomly shuffled before splitting to ensure randomness.
     Args:
-        dataset: The input dataset containing stations to be split.
+        dataset: The input dataset cand split in both the dataset and containing stations to be split.
+        logger: Optional logger for logging split information (default: None).
         val_fraction: Fraction of stations to use for validation (default: 0.2).
         test_fraction: Fraction of stations to use for testing (default: 0.2).
         train_split_fraction: Fraction of training stations to use as observed stations (vs query stations) in each training sample (default: 0.8).
@@ -56,30 +57,33 @@ def create_splits(dataset: Dataset[Dict[str, Any]],
         val_indices = indices[num_stations - (val_size + test_size):num_stations - test_size]
         test_indices = indices[num_stations - test_size:]
         
-        logger.info('Generated new split indices.')
-        logger.info(f'Train indices: {train_indices}')
-        logger.info(f'Val indices: {val_indices}')
-        logger.info(f'Test indices: {test_indices}')
+        if logger:
+            logger.info('Generated new split indices.')
+            logger.info(f'Train indices: {train_indices}')
+            logger.info(f'Val indices: {val_indices}')
+            logger.info(f'Test indices: {test_indices}')
     else:
         assert all(x is not None for x in (train_indices, val_indices, test_indices))
-        logger.info("Using split indices defined in the configuration.")
-        logger.info(f'Train indices: {train_indices}')
-        logger.info(f'Val indices: {val_indices}')
-        logger.info(f'Test indices: {test_indices}')
+        if logger:
+            logger.info("Using split indices defined in the configuration.")
+            logger.info(f'Train indices: {train_indices}')
+            logger.info(f'Val indices: {val_indices}')
+            logger.info(f'Test indices: {test_indices}')
         
         train_indices = np.array(train_indices) if  isinstance(train_indices, (list, ListConfig)) else train_indices
         val_indices = np.array(val_indices) if  isinstance(val_indices, (list, ListConfig)) else val_indices
         test_indices = np.array(test_indices) if  isinstance(test_indices, (list, ListConfig)) else test_indices
         
-        if len(val_indices) != val_size:
-            logger.warning(f'Length of the val indices list ({len(val_indices)}) does not match val_fraction {val_fraction}. \
-                Make sure this is intentional!')
-        if len(test_indices) != test_size:
-            logger.warning(f'Length of the test indices list ({len(test_indices)}) does not match val_fraction {test_fraction}. \
-                Make sure this is intentional!')
-        if len(train_indices) != (num_stations - val_size - test_size):
-            logger.warning(f'Length of the training indices list ({len(train_indices)}) does not match val_fraction {val_fraction} and test_fraction {test_fraction}. \
-                Make sure this is intentional!')
+        if logger:
+            if len(val_indices) != val_size:
+                logger.warning(f'Length of the val indices list ({len(val_indices)}) does not match val_fraction {val_fraction}. \
+                    Make sure this is intentional!')
+            if len(test_indices) != test_size:
+                logger.warning(f'Length of the test indices list ({len(test_indices)}) does not match val_fraction {test_fraction}. \
+                    Make sure this is intentional!')
+            if len(train_indices) != (num_stations - val_size - test_size):
+                logger.warning(f'Length of the training indices list ({len(train_indices)}) does not match val_fraction {val_fraction} and test_fraction {test_fraction}. \
+                    Make sure this is intentional!')
         
     
     assert len(train_indices) > 0 and len(val_indices) > 0 and len(test_indices) > 0, "Each split must contain at least one station."
