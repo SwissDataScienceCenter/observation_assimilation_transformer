@@ -92,10 +92,10 @@ class OATPredictor(pl.LightningModule):
                  lr: float = 1e-3,
                  optimizer_class: Type[Optimizer] = torch.optim.Adam,
                  optimizer_params: Optional[dict] = None,
-                 lr_scheduler_class: Type[LRScheduler] | None = None,
+                 lr_scheduler_class: Optional[Type[LRScheduler]] = None,
                  lr_scheduler_params: Optional[dict] = None,
-                 oat_loss_scheduler_class: Type[nn.Module] = None,
-                 oat_loss_scheduler_params:  Optional[dict] = None,
+                 oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
+                 oat_loss_scheduler_params:  Optional[dict]  = None,
                  ):
         super().__init__()
 
