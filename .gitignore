@@ -37,3 +37,4 @@ poetry.lock
 .cache_constant_inputs
 CLAUDE.md
 checkpoints/
+benchmarking/

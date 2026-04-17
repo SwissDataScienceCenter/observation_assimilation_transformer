@@ -13,6 +13,7 @@ def setup_data_and_transform(
     cfg: DictConfig, logger: logging.Logger
 ) -> Tuple[
     CosmoPeakWeatherDataset,
+    int,
     DataLoader,
     DataLoader,
     DataLoader,
@@ -62,4 +63,5 @@ def setup_data_and_transform(
     logger.info(f"Validation loader batches: {len(val_loader)}")
     logger.info(f"Test loader batches: {len(test_loader)}")
 
-    return dataset, train_loader, val_loader, test_loader, input_transform, output_transform
+    # return len(train_dataset) for estimating total steps in the trainer, which is needed if the OAT loss scheduler's total steps is set to None in the config
+    return dataset, len(train_dataset), train_loader, val_loader, test_loader, input_transform, output_transform

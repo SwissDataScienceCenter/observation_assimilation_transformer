@@ -3,6 +3,7 @@ import logging
 
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
@@ -61,9 +62,9 @@ class OATPredictor(pl.LightningModule):
             initialization. Must match the signature of the torch scheduler
             passed as `lr_scheduler_class`
 
-        oat_loss_scheduler_cls:
+        oat_loss_scheduler_class:
             Optional scheduler controlling the weighting of the OAT loss between
-            "per-oat" (before conditioning on observations) and "post-oat" (after
+            "pre-oat" (before conditioning on observations) and "post-oat" (after
             conditioning) during training.
 
         oat_loss_scheduler_params:
@@ -93,7 +94,7 @@ class OATPredictor(pl.LightningModule):
                  optimizer_params: Optional[dict] = None,
                  lr_scheduler_class: Type[LRScheduler] | None = None,
                  lr_scheduler_params: Optional[dict] = None,
-                 oat_loss_scheduler_class: Type[dict] = None,
+                 oat_loss_scheduler_class: Type[nn.Module] = None,
                  oat_loss_scheduler_params:  Optional[dict] = None,
                  ):
         super().__init__()
@@ -128,69 +129,33 @@ class OATPredictor(pl.LightningModule):
         if oat_loss_scheduler_class is not None:
             assert oat_loss_scheduler_params is not None
             assert isinstance(oat_model_cfg, OATConfig)
-            # self.oat_loss_weight_scheduler = oat_loss_scheduler_cls(**oat_loss_scheduler_params)
-            self.oat_loss_scheduler_cls = oat_loss_scheduler_class
-            self.oat_loss_scheduler_params = oat_loss_scheduler_params
-            logger.info(f"OAT loss scheduler {oat_loss_scheduler_class} will be lazily initialized when fitting starts.")
+            self.oat_loss_weight_scheduler = oat_loss_scheduler_class(**oat_loss_scheduler_params)
+            logger.info(f"OAT loss scheduler {oat_loss_scheduler_class} initialized with parameters: {oat_loss_scheduler_params}")
         else:
-            self.oat_loss_scheduler_cls = None
-            self.oat_loss_scheduler_params = None
             logger.info(f"No OAT loss scheduler configured. Skipping initialization.")
-
-        self.oat_loss_weight_scheduler = None
+            self.oat_loss_weight_scheduler = None
 
     def on_fit_start(self):
         
-        # Case 1; there is no pre-oat scheduler
-        if self.oat_loss_scheduler_cls is None:
-            return
-
-        # Case 2; the scheduler was already initialized, this is probably a checkpoint
-        # where the state_dict has been already loaded.
-        
-        # Case 3; the scheduler was saved in the checkpoint and needs to be reloaded
-        if getattr(self, "_oat_scheduler_state", None) is not None:
-            self.oat_loss_weight_scheduler.load_state_dict(self._oat_scheduler_state)
-            self._oat_scheduler_state = None
-            logger.info("OAT loss scheduler state loaded from checkpoint.")
-            return 
-        
+        # If there is a OAT loss scheduler, 
+        # check that the total steps given to the scheduler matches the trainer's estimated total steps. 
+        # If not, log a warning.
         if self.oat_loss_weight_scheduler is not None:
-            logger.info("OAT loss scheduler already exists. Skipping initialization.")
-            return
 
-        # Case 4: logger is not yet initialize (lazy)
-
-        # this is only available when fitting starts
-        total_steps = self.trainer.estimated_stepping_batches 
+            total_steps = self.trainer.estimated_stepping_batches 
         
-        if self.oat_loss_scheduler_params.get("total_steps") is not None:
-            requested_steps = self.oat_loss_scheduler_params["total_steps"]
-            if requested_steps != total_steps:
+            requested_total_step = self.oat_loss_weight_scheduler.total_steps
+            
+            if requested_total_step != total_steps:
                 if self.global_rank == 0:
                     logger.warning(
-                        f"WARNING: Scheduler configured for {requested_steps} steps "
+                        f"WARNING: Scheduler configured for {requested_total_step} steps "
                         f"but trainer estimates {total_steps} steps."
-                        "Ensure this is voluntary or set the steps to null in your config"
+                        " Ensure this is voluntary or set the steps to null in your config"
                 )
-        else:
-            self.oat_loss_scheduler_params["total_steps"] = total_steps
-            
-        self.oat_loss_weight_scheduler = self.oat_loss_scheduler_cls(**self.oat_loss_scheduler_params)
-        device = next(self.model.parameters()).device
-        self.oat_loss_weight_scheduler.to(device)
-
-        if self.global_rank == 0:
-            logger.info("OAT loss scheduler initialized.")
-            logger.info(self.oat_loss_weight_scheduler) # print printable representation of the scheduler
-            
-    def on_save_checkpoint(self, checkpoint):
-        if self.oat_loss_weight_scheduler is not None:
-            checkpoint["oat_loss_scheduler_state"] = self.oat_loss_weight_scheduler.state_dict()
-
-    # LOAD
-    def on_load_checkpoint(self, checkpoint):
-        self._oat_scheduler_state = checkpoint.get("oat_loss_scheduler_state", None)
+            else:
+                if self.global_rank == 0:
+                    logger.info(f"OAT loss scheduler total steps matches trainer's estimated steps: {total_steps}.")
 
 
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:

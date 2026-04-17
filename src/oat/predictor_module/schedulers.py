@@ -4,7 +4,72 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-class WeightScheduler(ABC, nn.Module):
+
+import math
+from typing import Optional
+
+def estimate_total_steps(
+    dataset_size: int,
+    batch_size: int,
+    max_epochs: Optional[int] = None,
+    max_steps: Optional[int] = None,
+    accumulate_grad_batches: int = 1,
+    num_nodes: int = 1,
+    num_gpus_per_node: int = 1,
+    limit_train_batches: float | int = 1.0,
+    drop_last: bool = False,
+) -> int:
+    """
+    Estimate total optimizer steps similar to Lightning's `estimated_stepping_batches`,
+    extended for multi-node + multi-GPU training.
+
+    Args:
+        dataset_size: total number of samples in dataset
+        batch_size: batch size per GPU (per process)
+        max_epochs: number of epochs
+        max_steps: if set, overrides everything
+        accumulate_grad_batches: gradient accumulation factor
+        num_nodes: number of nodes
+        num_gpus_per_node: GPUs per node
+        limit_train_batches:
+            float (0.0–1.0): fraction of batches
+            int: absolute number of batches
+        drop_last: whether dataloader drops last incomplete batch
+    """
+
+    # 1. max_steps overrides everything (Lightning behavior)
+    if max_steps is not None and max_steps > 0:
+        return max_steps
+
+    assert max_epochs is not None, "Either max_epochs or max_steps must be set"
+
+    # 2. Total number of processes (world size)
+    world_size = num_nodes * num_gpus_per_node
+
+    # 3. Effective global batch size
+    global_batch_size = batch_size * world_size
+
+    # 4. Batches per epoch (before limits)
+    if drop_last:
+        batches_per_epoch = dataset_size // global_batch_size
+    else:
+        batches_per_epoch = math.ceil(dataset_size / global_batch_size)
+
+    # 5. Apply limit_train_batches
+    if isinstance(limit_train_batches, float):
+        batches_per_epoch = int(batches_per_epoch * limit_train_batches)
+    else:
+        batches_per_epoch = min(batches_per_epoch, limit_train_batches)
+
+    # 6. Optimizer steps per epoch (after grad accumulation)
+    steps_per_epoch = math.ceil(batches_per_epoch / accumulate_grad_batches)
+
+    # 7. Total steps
+    total_steps = steps_per_epoch * max_epochs
+
+    return total_steps
+
+class WeightScheduler(nn.Module, ABC):
     def __init__(self, start_weight, flat_warmup_steps, end_weight, total_steps):
         super().__init__()
         
@@ -20,7 +85,7 @@ class WeightScheduler(ABC, nn.Module):
         
         # These will automatically be saved in checkpoints
         # and are NOT trained
-        self.register_buffer("current_step", torch.tensor(0.0, dtype=torch.long))
+        self.register_buffer("current_step", torch.tensor(0, dtype=torch.long))
         self.register_buffer("current_weight", torch.tensor(start_weight, dtype=torch.float32))
 
     def forward(self):
