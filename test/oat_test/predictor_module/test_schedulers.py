@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+from oat.predictor_module.schedulers import estimate_total_steps
+
 import pytest
 
 _SCHEDULERS_PATH = (
@@ -52,3 +54,27 @@ def test_exponential_scheduler_rejects_non_positive_weights(
             end_weight=end_weight,
             total_steps=10,
         )
+
+
+def test_estimate_total_steps() -> None:
+
+    assert estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5) == 500
+
+    assert estimate_total_steps(dataset_size=1050, batch_size=20, max_epochs=3) == 159
+
+    assert estimate_total_steps(dataset_size=1050, batch_size=20, max_epochs=3, drop_last=True) == 156
+
+    assert estimate_total_steps(dataset_size=1000, batch_size=20, max_epochs=5, accumulate_grad_batches=2) * 2 == estimate_total_steps(dataset_size=1000, batch_size=20, max_epochs=5, accumulate_grad_batches=1)
+    
+    assert estimate_total_steps(dataset_size=1000, max_steps=42,batch_size=20, max_epochs=5, accumulate_grad_batches=2) == 42
+    
+    assert estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5, num_nodes=4) * 4 == estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5, num_nodes=1)
+    
+    assert estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5, num_gpus_per_node=4) * 4 == estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5, num_gpus_per_node=1)
+    
+    assert estimate_total_steps(dataset_size=1000, batch_size=10, max_epochs=5, limit_train_batches=0.5) == 250
+    
+    
+    
+    
+    
