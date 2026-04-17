@@ -79,9 +79,9 @@ class OATPredictor(pl.LightningModule):
             end_weight:
                 Final loss weight (float between 0.0 and 1.0) reached at `total_steps`.
             total_steps (optional):
-                Total number of scheduler steps, including the warmup phase. If not given, 
-                the total number of steps is guessed by the Trainer to be the total steps considering
-                max_steps, max_epochs, batch_size, gradient accumulations, ...
+                Total number of scheduler steps, including the warmup phase. 
+                If not given in the config, it will be estimated before instantiating this class
+                in train_model.py and passed to the scheduler's parameters.
 
     """
     def __init__(self,
