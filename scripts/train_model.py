@@ -130,12 +130,21 @@ def setup_gp_predictor(
     data_cfg = cfg.dataset
     model_cfg = cfg.model
 
+    gp_topography_kwargs = None
+    if bool(model_cfg.get("use_topography", False)):
+        gp_topography_kwargs = {
+            **dict(model_cfg.topographic_encoder),
+            "in_channels": len(data_cfg.topo_vars),
+        }
+
     gp_config = GPBaselineConfig(
         obs_vars=obs_vars,
         nwp_vars=list(data_cfg.nwp_vars),
         field_extent=field_extent,
         use_nwp=bool(model_cfg.use_nwp),
         use_time_emb=bool(model_cfg.use_time_emb),
+        use_topography=bool(model_cfg.get("use_topography", False)),
+        topography_encoder_kwargs=gp_topography_kwargs,
         mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
         kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),

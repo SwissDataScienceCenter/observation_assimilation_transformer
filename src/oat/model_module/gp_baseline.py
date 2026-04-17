@@ -11,12 +11,70 @@ from obsweatherscale.kernels.scaled_rbf_kernel import ScaledRBFKernel
 from obsweatherscale.means.neural_mean import NeuralMean
 from obsweatherscale.models.gp_model import GPModel
 from obsweatherscale.models.mlp import MLP
-from obsweatherscale.training.losses import crps_normal
+# from obsweatherscale.training.losses import crps_normal
+import torch.distributions as dist
 
 from oat.model_module.baseline import NWPInterpolator, NWPInterpolatorConfig
+from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 
 _VALID_LOSS_FNS = ("mll", "crps")
+
+def crps_normal(
+    obs: torch.Tensor,
+    mu: torch.Tensor,
+    sigma: torch.Tensor,
+) -> torch.Tensor:
+    """Wrapper to compute the Continuous Ranked Probability Score (CRPS)
+    for a Normal distribution.
+
+    Parameters
+    ----------
+    obs : torch.Tensor
+        Observed values.
+    mu : torch.Tensor
+        Mean of the Normal distribution.
+    sigma : torch.Tensor
+        Standard deviation of the Normal distribution.
+
+    Returns
+    -------
+    torch.Tensor
+        The CRPS for the normal distribution, averaged across all
+        observations.
+
+    Notes
+    -----
+    The CRPS is a proper scoring rule that measures the compatibility
+    between a probability distribution and an observation. It's defined
+    as the integrated squared difference between the CDF of the forecast
+    distribution and the empirical CDF of the observation.
+
+    For a normal distribution, the CRPS has the closed form:
+    CRPS(N(μ, σ), y) = 
+        σ * [y_norm * (2*Φ(y_norm) - 1) + 2*φ(y_norm) - 1/√π]
+    where y_norm = (y - μ)/σ, Φ is the CDF and φ is the PDF of the
+    standard normal.
+    """
+    # Create normal distribution
+    normal_dist = dist.Normal(mu, sigma)
+
+    # Compute cumul distr function and prob density function
+    cdf_obs = normal_dist.cdf(obs)
+    pdf_obs = normal_dist.log_prob(obs).exp()
+
+    # Compute CRPS
+    term1 = (obs - mu) * (2 * cdf_obs - 1)
+    term2 = sigma * (2 * pdf_obs * sigma - 1 / torch.sqrt(torch.tensor(torch.pi)))
+    crps = term1 + term2
+    # normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
+    # scaled = (obs - mu) / sigma
+
+    # Phi = normal.cdf(scaled)
+    # phi = torch.exp(normal.log_prob(scaled))
+    # crps = sigma * (scaled * (2 * Phi - 1) + 2 * phi - (1 / torch.sqrt(torch.tensor(torch.pi, device=sigma.device))))
+
+    return crps.mean()
 
 
 @dataclass
@@ -26,6 +84,8 @@ class GPBaselineConfig:
     field_extent: Dict[str, Any]
     use_nwp: bool = True
     use_time_emb: bool = True
+    use_topography: bool = False
+    topography_encoder_kwargs: Optional[Dict[str, Any]] = None
     mean_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
@@ -56,6 +116,18 @@ class GPBaseline(nn.Module):
             self.feature_dim += len(config.nwp_vars)
         if config.use_time_emb:
             self.feature_dim += 4
+        if config.use_topography:
+            if config.topography_encoder_kwargs is None:
+                raise ValueError(
+                    "topography_encoder_kwargs must be provided when "
+                    "use_topography=True."
+                )
+            self.topography_encoder: Optional[CNNTopographyEncoder] = (
+                CNNTopographyEncoder(**config.topography_encoder_kwargs)
+            )
+            self.feature_dim += int(config.topography_encoder_kwargs["out_channels"])
+        else:
+            self.topography_encoder = None
 
         if config.use_nwp:
             self.nwp_interpolator: Optional[NWPInterpolator] = NWPInterpolator(
@@ -105,6 +177,10 @@ class GPBaseline(nn.Module):
             num_points = local_data["geo"].shape[1]
             time_emb = global_data["time_emb"].unsqueeze(1).expand(-1, num_points, -1)
             parts.append(time_emb)
+
+        if self.topography_encoder is not None:
+            topo_feats = self.topography_encoder(local_data["topo"])
+            parts.append(topo_feats)
 
         return torch.cat(parts, dim=-1)
 

@@ -71,6 +71,26 @@ class TestGPBaselineFeatureDim:
         model = GPBaseline(make_config(use_nwp=True, use_time_emb=True))
         assert model.feature_dim == 10
 
+    def test_feature_dim_geo_nwp_time_topography(self):
+        topo_cfg = {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 3,
+            "initial_hw": (32, 32),
+            "kernel_sizes": 3,
+            "act_fn": "ReLU",
+            "use_batchnorm": True,
+        }
+        model = GPBaseline(
+            make_config(
+                use_nwp=True,
+                use_time_emb=True,
+                use_topography=True,
+                topography_encoder_kwargs=topo_cfg,
+            )
+        )
+        assert model.feature_dim == 3 + 3 + 4 + 16
+
     def test_feature_dim_geo_only(self):
         model = GPBaseline(make_config(use_nwp=False, use_time_emb=False))
         assert model.feature_dim == 3
@@ -78,6 +98,16 @@ class TestGPBaselineFeatureDim:
     def test_feature_dim_geo_plus_nwp(self):
         model = GPBaseline(make_config(use_nwp=True, use_time_emb=False))
         assert model.feature_dim == 6
+
+    def test_feature_dim_without_topography_matches_previous_behavior(self):
+        model = GPBaseline(
+            make_config(
+                use_nwp=True,
+                use_time_emb=True,
+                use_topography=False,
+            )
+        )
+        assert model.feature_dim == 10
 
 
 class TestGPBaselineFeatureExtraction:
@@ -87,6 +117,29 @@ class TestGPBaselineFeatureExtraction:
         global_data, obs_data, _ = make_batch(B=B, N_obs=N_obs)
         feats = model._extract_features(global_data, obs_data)
         assert feats.shape == (B, N_obs, 10)
+
+    def test_shape_includes_topography_embedding(self):
+        topo_cfg = {
+            "in_channels": 5,
+            "out_channels": 16,
+            "n_layers": 3,
+            "initial_hw": (32, 32),
+            "kernel_sizes": 3,
+            "act_fn": "ReLU",
+            "use_batchnorm": True,
+        }
+        model = GPBaseline(
+            make_config(
+                use_nwp=True,
+                use_time_emb=True,
+                use_topography=True,
+                topography_encoder_kwargs=topo_cfg,
+            )
+        )
+        B, N_obs = 2, 10
+        global_data, obs_data, _ = make_batch(B=B, N_obs=N_obs, n_topo=5)
+        feats = model._extract_features(global_data, obs_data)
+        assert feats.shape == (B, N_obs, 3 + 3 + 4 + 16)
 
     def test_shape_geo_only(self):
         model = GPBaseline(make_config(use_nwp=False, use_time_emb=False))
