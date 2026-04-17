@@ -1,28 +1,10 @@
-import importlib.util
-from pathlib import Path
-
-from oat.predictor_module.schedulers import estimate_total_steps
+from oat.predictor_module.schedulers import (
+    ExponentialWeightScheduler,
+    LinearWeightScheduler,
+    estimate_total_steps,
+)
 
 import pytest
-
-_SCHEDULERS_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "src"
-    / "oat"
-    / "predictor_module"
-    / "schedulers.py"
-)
-_SPEC = importlib.util.spec_from_file_location(
-    "oat.predictor_module.schedulers", _SCHEDULERS_PATH
-)
-assert _SPEC is not None and _SPEC.loader is not None
-_SCHEDULERS = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_SCHEDULERS)
-
-LinearWeightScheduler = _SCHEDULERS.LinearWeightScheduler
-ExponentialWeightScheduler = _SCHEDULERS.ExponentialWeightScheduler
-
-
 def test_linear_scheduler_warmup_and_clamp() -> None:
     scheduler = LinearWeightScheduler(
         start_weight=1.0, flat_warmup_steps=2, end_weight=0.0, total_steps=5
