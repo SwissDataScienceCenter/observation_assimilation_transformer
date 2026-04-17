@@ -120,7 +120,7 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
             logger.info(f"Config did not specify total_steps for the OAT loss scheduler. It has been set to the (manual) estimated total training steps: {estimated_total_step}\
                 \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
         else:
-            logger.info(f"OAT loss scheduler total_steps from config: {oat_loss_sched_params['kwargs']['total_steps']} \
+            logger.info(f"OAT loss scheduler total_steps from config: {oat_loss_sched_params['total_steps']} \
                 \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
             
     else:
