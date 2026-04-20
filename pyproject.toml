@@ -30,6 +30,8 @@ pyg-lib = {version = "0.4.0", source = "torch-wheels"}
 torch-geometric = ">=2.7.0"
 peakweather = {git = "https://github.com/MeteoSwiss/PeakWeather.git", tag = "v0.2.0"}
 wandb = "*"
+obsweatherscale = {git = "https://github.com/MeteoSwiss/obsweatherscale.git", rev = "852c19e", python = ">=3.10,<3.13"}
+gpytorch = ">=1.13,<2.0"
 line-profiler = "^5.0.2"
 
 [tool.poetry.group.dev.dependencies]
