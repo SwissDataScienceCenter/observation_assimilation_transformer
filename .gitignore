@@ -38,3 +38,4 @@ poetry.lock
 CLAUDE.md
 checkpoints/
 benchmarking/
+profiler_outputs/
