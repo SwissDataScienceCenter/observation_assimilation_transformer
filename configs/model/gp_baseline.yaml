@@ -14,5 +14,6 @@ mean_groups: [nwp, time_emb, topo]
 cov_groups: [nwp, geo,]
 
 noise_variance: 1.0
+eps: 0.001
 loss_fn: crps
 num_samples: 100

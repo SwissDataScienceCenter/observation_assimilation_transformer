@@ -127,6 +127,7 @@ class GPBaselineConfig:
     noise_variance: float = 1.0
     loss_fn: str = "crps"
     num_samples: int = 100
+    eps: float = 1e-3
 
 
 class GPBaseline(nn.Module):
@@ -228,7 +229,7 @@ class GPBaseline(nn.Module):
                 mean_indices=self.mean_indices,
             ),
             covar_module=KernelWithFeatureSlice(
-                kernel=NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=1e-3)),
+                kernel=NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps)),
                 kernel_indices=self.covar_indices,
             ),
         )
