@@ -110,6 +110,43 @@ class TestGPBaselineFeatureDim:
         assert model.feature_dim == 10
 
 
+class TestGPBaselineFeatureSlicing:
+    def test_geo_in_kernel_only(self):
+        # geo=0-2, nwp=3-5, time_emb skipped in both
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True, use_topography=False))
+        assert 0 not in model.mean_indices
+        assert 1 not in model.mean_indices
+        assert 2 not in model.mean_indices
+        assert model.covar_indices[:3] == (0, 1, 2)
+
+    def test_nwp_in_both_mean_and_kernel(self):
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=False, use_topography=False))
+        assert model.mean_indices == (3, 4, 5)
+        assert model.covar_indices == (0, 1, 2, 3, 4, 5)
+
+    def test_time_emb_excluded_from_both_by_default(self):
+        # geo=0-2, nwp=3-5, time_emb=6-9 (not in groups), feature_dim=10
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True, use_topography=False))
+        assert model.mean_indices == (3, 4, 5)
+        assert model.covar_indices == (0, 1, 2, 3, 4, 5)
+        assert model.feature_dim == 10
+
+    def test_time_emb_included_when_in_groups(self):
+        # geo=0-2, nwp=3-5, time_emb=6-9, feature_dim=10
+        model = GPBaseline(make_config(
+            use_nwp=True, use_time_emb=True, use_topography=False,
+            mean_groups=["nwp", "time_emb"],
+            cov_groups=["geo", "nwp", "time_emb"],
+        ))
+        assert model.mean_indices == (3, 4, 5, 6, 7, 8, 9)
+        assert model.covar_indices == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+    def test_gp_modules_are_wrapped_with_feature_slices(self):
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True, use_topography=False))
+        assert type(model.gp.mean_module).__name__ == "MeanWithFeatureSlice"
+        assert type(model.gp.covar_module).__name__ == "KernelWithFeatureSlice"
+
+
 class TestGPBaselineFeatureExtraction:
     def test_shape_full_features(self):
         model = GPBaseline(make_config(use_nwp=True, use_time_emb=True))

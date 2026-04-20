@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import gpytorch
 import torch
@@ -19,6 +19,39 @@ from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 
 _VALID_LOSS_FNS = ("mll", "crps")
+
+
+class MeanWithFeatureSlice(gpytorch.means.Mean):
+    def __init__(self, mean_module: gpytorch.means.Mean, mean_indices: Sequence[int]) -> None:
+        super().__init__()
+        self.mean_module = mean_module
+        self.mean_indices = tuple(int(i) for i in mean_indices)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mean_module(x[..., self.mean_indices])
+
+
+class KernelWithFeatureSlice(gpytorch.kernels.Kernel):
+    def __init__(
+        self,
+        kernel: gpytorch.kernels.Kernel,
+        kernel_indices: Sequence[int],
+    ) -> None:
+        super().__init__()
+        self.kernel = kernel
+        self.kernel_indices = tuple(int(i) for i in kernel_indices)
+
+    def forward(
+        self,
+        x1: torch.Tensor,
+        x2: torch.Tensor,
+        **params: Any,
+    ) -> gpytorch.lazy.LazyEvaluatedKernelTensor:
+        return self.kernel(
+            x1[..., self.kernel_indices],
+            x2[..., self.kernel_indices],
+            **params,
+        )
 
 def crps_normal(
     obs: torch.Tensor,
@@ -56,23 +89,23 @@ def crps_normal(
     where y_norm = (y - μ)/σ, Φ is the CDF and φ is the PDF of the
     standard normal.
     """
-    # Create normal distribution
-    normal_dist = dist.Normal(mu, sigma)
+    # # Create normal distribution
+    # normal_dist = dist.Normal(mu, sigma)
 
-    # Compute cumul distr function and prob density function
-    cdf_obs = normal_dist.cdf(obs)
-    pdf_obs = normal_dist.log_prob(obs).exp()
+    # # Compute cumul distr function and prob density function
+    # cdf_obs = normal_dist.cdf(obs)
+    # pdf_obs = normal_dist.log_prob(obs).exp()
 
-    # Compute CRPS
-    term1 = (obs - mu) * (2 * cdf_obs - 1)
-    term2 = sigma * (2 * pdf_obs * sigma - 1 / torch.sqrt(torch.tensor(torch.pi)))
-    crps = term1 + term2
-    # normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
-    # scaled = (obs - mu) / sigma
+    # # Compute CRPS
+    # term1 = (obs - mu) * (2 * cdf_obs - 1)
+    # term2 = sigma * (2 * pdf_obs * sigma - 1 / torch.sqrt(torch.tensor(torch.pi)))
+    # crps = term1 + term2
+    normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
+    scaled = (obs - mu) / sigma
 
-    # Phi = normal.cdf(scaled)
-    # phi = torch.exp(normal.log_prob(scaled))
-    # crps = sigma * (scaled * (2 * Phi - 1) + 2 * phi - (1 / torch.sqrt(torch.tensor(torch.pi, device=sigma.device))))
+    Phi = normal.cdf(scaled)
+    phi = torch.exp(normal.log_prob(scaled))
+    crps = sigma * (scaled * (2 * Phi - 1) + 2 * phi - (1 / torch.sqrt(torch.tensor(torch.pi, device=sigma.device))))
 
     return crps.mean()
 
@@ -89,6 +122,8 @@ class GPBaselineConfig:
     mean_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
+    mean_groups: List[str] = field(default_factory=lambda: ["nwp", "topo"])
+    cov_groups: List[str] = field(default_factory=lambda: ["geo", "nwp", "topo"])
     noise_variance: float = 1.0
     loss_fn: str = "crps"
     num_samples: int = 100
@@ -111,11 +146,41 @@ class GPBaseline(nn.Module):
             )
 
         self.config = config
-        self.feature_dim = 3
+
+        mean_indices: List[int] = []
+        covar_indices: List[int] = []
+        offset = 0
+
+        # geo
+        geo_indices = list(range(offset, offset + 3))
+        offset += 3
+        if "geo" in config.mean_groups:
+            mean_indices += geo_indices
+        if "geo" in config.cov_groups:
+            covar_indices += geo_indices
+
         if config.use_nwp:
-            self.feature_dim += len(config.nwp_vars)
+            n = len(config.nwp_vars)
+            nwp_indices = list(range(offset, offset + n))
+            offset += n
+            if "nwp" in config.mean_groups:
+                mean_indices += nwp_indices
+            if "nwp" in config.cov_groups:
+                covar_indices += nwp_indices
+            self.nwp_interpolator: Optional[NWPInterpolator] = NWPInterpolator(
+                NWPInterpolatorConfig(field_extent=config.field_extent)
+            )
+        else:
+            self.nwp_interpolator = None
+
         if config.use_time_emb:
-            self.feature_dim += 4
+            time_emb_indices = list(range(offset, offset + 4))
+            offset += 4
+            if "time_emb" in config.mean_groups:
+                mean_indices += time_emb_indices
+            if "time_emb" in config.cov_groups:
+                covar_indices += time_emb_indices
+
         if config.use_topography:
             if config.topography_encoder_kwargs is None:
                 raise ValueError(
@@ -125,35 +190,47 @@ class GPBaseline(nn.Module):
             self.topography_encoder: Optional[CNNTopographyEncoder] = (
                 CNNTopographyEncoder(**config.topography_encoder_kwargs)
             )
-            self.feature_dim += int(config.topography_encoder_kwargs["out_channels"])
+            n = int(config.topography_encoder_kwargs["out_channels"])
+            topo_indices = list(range(offset, offset + n))
+            offset += n
+            if "topo" in config.mean_groups:
+                mean_indices += topo_indices
+            if "topo" in config.cov_groups:
+                covar_indices += topo_indices
         else:
             self.topography_encoder = None
 
-        if config.use_nwp:
-            self.nwp_interpolator: Optional[NWPInterpolator] = NWPInterpolator(
-                NWPInterpolatorConfig(field_extent=config.field_extent)
-            )
-        else:
-            self.nwp_interpolator = None
+        self.feature_dim = offset
+        self.mean_indices = tuple(mean_indices)
+        self.covar_indices = tuple(covar_indices)
 
-        feature_dim = self.feature_dim
-        mean_net = MLP(dimensions=[feature_dim, *config.mean_hidden_dims, 1])
+        mean_net = MLP(dimensions=[len(self.mean_indices), *config.mean_hidden_dims, 1])
         kernel_net = MLP(
-            dimensions=[feature_dim, *config.kernel_hidden_dims, config.kernel_embed_dim]
+            dimensions=[
+                len(self.covar_indices),
+                *config.kernel_hidden_dims,
+                config.kernel_embed_dim,
+            ]
         )
 
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
         with torch.no_grad():
             likelihood.noise = torch.tensor(float(config.noise_variance))
 
-        dummy_x = torch.zeros(2, feature_dim)
+        dummy_x = torch.zeros(2, self.feature_dim)
         dummy_y = torch.zeros(2)
         self.gp = GPModel(
             train_x=dummy_x,
             train_y=dummy_y,
             likelihood=likelihood,
-            mean_module=NeuralMean(net=mean_net),
-            covar_module=NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel()),
+            mean_module=MeanWithFeatureSlice(
+                mean_module=NeuralMean(net=mean_net),
+                mean_indices=self.mean_indices,
+            ),
+            covar_module=KernelWithFeatureSlice(
+                kernel=NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=1e-3)),
+                kernel_indices=self.covar_indices,
+            ),
         )
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.gp.likelihood, self.gp)
 

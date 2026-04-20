@@ -10,6 +10,8 @@ use_topography: true
 mean_hidden_dims: [32]
 kernel_hidden_dims: [32]
 kernel_embed_dim: 4
+mean_groups: [nwp, time_emb, topo]
+cov_groups: [nwp, geo,]
 
 noise_variance: 1.0
 loss_fn: crps
