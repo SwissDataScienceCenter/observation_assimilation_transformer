@@ -26,6 +26,7 @@ class MeanWithFeatureSlice(gpytorch.means.Mean):
         super().__init__()
         self.mean_module = mean_module
         self.mean_indices = tuple(int(i) for i in mean_indices)
+        
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mean_module(x[..., self.mean_indices])
@@ -89,17 +90,6 @@ def crps_normal(
     where y_norm = (y - μ)/σ, Φ is the CDF and φ is the PDF of the
     standard normal.
     """
-    # # Create normal distribution
-    # normal_dist = dist.Normal(mu, sigma)
-
-    # # Compute cumul distr function and prob density function
-    # cdf_obs = normal_dist.cdf(obs)
-    # pdf_obs = normal_dist.log_prob(obs).exp()
-
-    # # Compute CRPS
-    # term1 = (obs - mu) * (2 * cdf_obs - 1)
-    # term2 = sigma * (2 * pdf_obs * sigma - 1 / torch.sqrt(torch.tensor(torch.pi)))
-    # crps = term1 + term2
     normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
     scaled = (obs - mu) / sigma
 

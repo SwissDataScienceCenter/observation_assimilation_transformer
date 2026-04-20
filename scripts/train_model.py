@@ -121,7 +121,7 @@ def setup_gp_predictor(
     cfg: DictConfig,
     field_extent: Dict,
     obs_vars: List[str],
-    transforms: tuple[Transform],
+    transforms: tuple[Transform, Transform],
 ) -> "GPPredictor":
     from importlib import import_module
     from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
@@ -148,7 +148,10 @@ def setup_gp_predictor(
         mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
         kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),
+        mean_groups=model_cfg.get("mean_groups"),
+        cov_groups=model_cfg.get("cov_groups"),
         noise_variance=float(model_cfg.noise_variance),
+        eps=float(model_cfg.get("eps", 1e-3)),
         loss_fn=str(model_cfg.loss_fn),
         num_samples=int(model_cfg.num_samples),
     )
