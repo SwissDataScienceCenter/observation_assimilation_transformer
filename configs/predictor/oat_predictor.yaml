@@ -3,6 +3,6 @@ kwargs:
   optimizer_class: "torch.optim.AdamW"
   optimizer_params:
     weight_decay: 0.01
-  scheduler_class: "torch.optim.lr_scheduler.CosineAnnealingLR"
-  scheduler_params:
+  lr_scheduler_class: "torch.optim.lr_scheduler.CosineAnnealingLR"
+  lr_scheduler_params:
     T_max: ${trainer.max_epochs}

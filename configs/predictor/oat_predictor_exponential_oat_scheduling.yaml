@@ -1,0 +1,11 @@
+defaults: 
+  - oat_predictor
+  - _self_
+
+kwargs:
+  oat_loss_scheduler_class: "oat.predictor_module.schedulers.ExponentialWeightScheduler"
+  oat_loss_scheduler_params:
+    start_weight: 0.4 #${model.pre_oat_loss_weight}
+    flat_warmup_steps: 200
+    end_weight: 0.05 #${model.pre_oat_loss_weight}
+    total_steps: null
