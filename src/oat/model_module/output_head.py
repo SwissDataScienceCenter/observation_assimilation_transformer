@@ -624,8 +624,11 @@ class MultipleUnivariateHeads(nn.Module):
     def __init__(
         self,
         in_features: int,
-        heads: Dict[str, Tuple[Type[BaseOutputHead], Dict[str, Any]]]
+        heads: Dict[str, Tuple[Type[BaseOutputHead], Dict[str, Any]]],
+        loss_scaling: torch.Tensor | None = None,
     ):
+        
+        # TODO must ensure that the order of the "name" keys is the same across the whole code.
         
         super().__init__()
         self.heads = nn.ModuleDict({
@@ -633,6 +636,9 @@ class MultipleUnivariateHeads(nn.Module):
             for name, (head_cls, head_kwargs) in heads.items()
         })
     
+    
+        self.loss_scaling = loss_scaling
+        
     def forward(self, x: torch.Tensor) -> Dict[str, Dict[str, torch.Tensor]]:
         return {name: head(x) for name, head in self.heads.items()}
     
@@ -647,6 +653,24 @@ class MultipleUnivariateHeads(nn.Module):
         
     # TODO loss 
     # TODO innovations
+    
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, Dict[str, torch.Tensor]], torch.Tensor]:
 
+        losses = []
+        outs = []
+        for i, (name, head) in enumerate(self.heads.items()):
+            out, loss = head.loss(x, target[..., i:i+1], mask[..., i:i+1])
+            losses.append(loss)
+            outs.append(out)
+            
+            
+        total_loss = torch.stack(losses, dim=0)
+        if self.loss_scaling is not None:
+            loss_scaling = self.loss_scaling
+        else:
+            loss_scaling = torch.ones_like(total_loss)
+            
+        total_loss = (total_loss * loss_scaling).mean()
+        return outs, total_loss
     
     

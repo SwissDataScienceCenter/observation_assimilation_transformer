@@ -125,3 +125,11 @@ def test_multiple_univariate_heads() -> None:
     # assert that we can also get concatenated samples across variables
     concat_samples = multi_head.sample(out, num_samples, as_dict=False)
     assert concat_samples.shape == (batch_dim, n_stations, num_samples, len(heads_config))
+    
+    
+    # test loss
+    target = torch.randn(batch_dim, n_stations, len(heads_config))
+    mask = torch.randint(0, 2, (batch_dim, n_stations, len(heads_config))).bool()
+    outs, total_loss = multi_head.loss(input_tensor, target, mask)
+    assert total_loss.dim() == 0  # Check that loss is a scalar
+    assert total_loss >= 0.0  # Loss should be non-negative
