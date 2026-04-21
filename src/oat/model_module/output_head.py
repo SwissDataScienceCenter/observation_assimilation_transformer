@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from abc import abstractmethod, ABC
-from typing import Dict, Any, Literal, Tuple
+from typing import Dict, Any, List, Literal, Tuple, Type
 
 class BaseOutputHead(nn.Module, ABC):
     
@@ -616,3 +616,37 @@ class QuantileOutputHead(BaseOutputHead):
         samples = self._compute_inv_cdf(q, coeffs)  # [..., num_samples, target_features]
         
         return samples
+
+
+
+class MultipleUnivariateHeads(nn.Module):
+    
+    def __init__(
+        self,
+        in_features: int,
+        heads: Dict[str, Tuple[Type[BaseOutputHead], Dict[str, Any]]]
+    ):
+        
+        super().__init__()
+        self.heads = nn.ModuleDict({
+            name: head_cls(in_features=in_features,target_features=1, **head_kwargs)
+            for name, (head_cls, head_kwargs) in heads.items()
+        })
+    
+    def forward(self, x: torch.Tensor) -> Dict[str, Dict[str, torch.Tensor]]:
+        return {name: head(x) for name, head in self.heads.items()}
+    
+    def sample(self, out: Dict[str, Dict[str, torch.Tensor]], num_samples: int, as_dict: bool = True) -> Dict[str, torch.Tensor]:
+        if as_dict:
+            return {name: head.sample(out[name], num_samples) for name, head in self.heads.items()}
+        else:
+            # cat samples along feature dimension
+            samples = [head.sample(out[name], num_samples) for name, head in self.heads.items()]
+            return torch.cat(samples, dim=-1) # [..., num_samples, total_target_features]
+        
+        
+    # TODO loss 
+    # TODO innovations
+
+    
+    

@@ -86,3 +86,42 @@ def test_quantile_output_head() -> None:
     assert loss_none_masked >= 0.0  # Loss should be non-negative
     samples = quantile_output_head.sample(out, num_samples)  # Sampling from output distribution
     assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)
+    
+    
+    
+def test_multiple_univariate_heads() -> None:
+    
+    batch_dim = 64
+
+    input_dim = 10
+    n_stations = 23
+    
+    input_tensor = torch.randn(batch_dim, n_stations, input_dim)
+    
+    heads_config = {
+        "T_2M": (output_head.LinearOutputHead, {"loss_fn": "mse"}),
+        "V_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
+        "U_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
+    }
+    
+    multi_head = output_head.MultipleUnivariateHeads(in_features=input_dim, heads=heads_config)
+    out = multi_head(input_tensor)  # Forward pass
+    assert set(out.keys()) == set(heads_config.keys())  # Check all heads are present
+    assert out["T_2M"]["val_pred"].shape == (batch_dim, n_stations, 1)
+    assert out["V_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
+    assert out["V_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
+    assert out["U_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
+    assert out["U_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
+    
+    num_samples = 11
+    dict_samples = multi_head.sample(out, num_samples)
+    
+    # assert that for each variable we have 11 univariate samples
+    assert set(dict_samples.keys()) == set(heads_config.keys())
+    assert dict_samples["T_2M"].shape == (batch_dim, n_stations, num_samples, 1)
+    assert dict_samples["V_10"].shape == (batch_dim, n_stations, num_samples, 1)
+    assert dict_samples["U_10"].shape == (batch_dim, n_stations, num_samples, 1) 
+    
+    # assert that we can also get concatenated samples across variables
+    concat_samples = multi_head.sample(out, num_samples, as_dict=False)
+    assert concat_samples.shape == (batch_dim, n_stations, num_samples, len(heads_config))
