@@ -191,7 +191,7 @@ class GeometryAwareMHA(nn.Module):
             geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
             geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
             
-            dist_qk = torch.abs(geo_q_flat[attn_edges[0]] - geo_k_flat[attn_edges[1]])  # [E, d_geo]
+            dist_qk = geo_q_flat[attn_edges[0]] - geo_k_flat[attn_edges[1]]  # [E, d_geo]
             b_attn = self.f_geo(dist_qk)  # [E, H]
             attn_logits = attn_logits + b_attn
         
