@@ -180,7 +180,7 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
         return torch.where(
             value == 0,
             log_gate,
-            log_not_gate + lognormal.log_prob(value),
+            log_not_gate + lognormal.log_prob(value.clamp(min=eps)),
         )
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
