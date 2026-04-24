@@ -359,6 +359,18 @@ def test_ziln_sample_non_negative() -> None:
     d = ZeroInflatedLogNormal(gate=torch.rand(B, S), loc=torch.randn(B, S), scale=torch.rand(B, S) + 0.3)
     samples = d.sample((200,))
     assert (samples >= 0).all()
+    
+    
+def test_ziln_log_prob_zero_in_support() -> None:
+    """log_prob should not return -inf for zero values (which are in the support)."""
+    torch.manual_seed(0)
+    B, S = 4, 10
+    d = ZeroInflatedLogNormal(gate=torch.rand(B, S), loc=torch.randn(B, S), scale=torch.rand(B, S) + 0.3)
+    zeros = torch.zeros(B, S)
+    log_probs = d.log_prob(zeros)
+    assert log_probs.shape == torch.Size([B, S])
+    assert torch.isfinite(log_probs).all(), "log_prob returns -inf for zero values"
+    assert torch.allclose(log_probs, torch.log(d.gate)), "log_prob for zero values should equal log(gate)"
 
 
 def test_ziln_sample_zero_fraction_matches_gate() -> None:
