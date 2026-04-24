@@ -171,15 +171,16 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:
         eps = torch.finfo(value.dtype).eps
-        log_gate = torch.log(self.gate.clamp(min=eps))
-        log_not_gate = torch.log((1 - self.gate).clamp(min=eps))
+        gate = self.gate.clamp(min=eps, max=1 - eps)  # Avoid log(0) issues
+        log_gate = torch.log(gate)
+        log_not_gate = torch.log((1 - gate))
         # Clamp value before passing to LogNormal to avoid log(0) = -inf in the
         # false branch of torch.where (both branches are evaluated eagerly).
         lognormal = dist.LogNormal(self.loc, self.scale)
         return torch.where(
             value == 0,
             log_gate,
-            log_not_gate + lognormal.log_prob(value.clamp(min=eps)),
+            log_not_gate + lognormal.log_prob(value),
         )
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
@@ -198,23 +199,23 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
         # where m = exp(loc + scale²/2) and Φ is the standard normal CDF.
         # The cross-term 2*gate*(1-gate)*m*(Φ(σ/√2)-1) is always ≤ 0, reflecting
         # the sharpening effect of the point mass at zero.
-        # Numerical edge cases: target=0 is clamped for log stability; the
-        # (1-gate) weight naturally suppresses the LogNormal term when gate→1.
+        # At target=0 the formula simplifies to 2*m*(1-gate)²*Φ(−σ/√2), avoiding
+        # the log(0) singularity in the LogNormal branch.
         pi = self.gate
         mu, sigma = self.loc, self.scale
         m = torch.exp(mu + 0.5 * sigma ** 2)
         std_normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
-
         eps = torch.finfo(target.dtype).eps
-        safe_log_target = torch.log(target.clamp(min=eps))
-        z = (safe_log_target - mu) / sigma
+        z = (torch.log(target.clamp(min=eps)) - mu) / sigma
         lognormal_crps = (
             target * (2 * std_normal.cdf(z) - 1)
             - 2 * m * (std_normal.cdf(z - sigma) - std_normal.cdf(-sigma / math.sqrt(2)))
         )
-
         cross_term = 2 * pi * (1 - pi) * m * (std_normal.cdf(sigma / math.sqrt(2)) - 1)
-        return pi * target + (1 - pi) * lognormal_crps + cross_term
+        crps_at_pos = pi * target + (1 - pi) * lognormal_crps + cross_term
+
+        crps_at_zero = 2 * m * (1 - pi) ** 2 * std_normal.cdf(-sigma / math.sqrt(2))
+        return torch.where(target == 0, crps_at_zero, crps_at_pos)
 
 
 class DistributionMap(torch.nn.Module):
