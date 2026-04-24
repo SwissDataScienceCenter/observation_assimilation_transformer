@@ -499,3 +499,72 @@ def test_distribution_map_crps_gradients_through_network() -> None:
     assert torch.isfinite(layer.net.weight.grad).all()
     assert layer.net.bias.grad is not None
     assert torch.isfinite(layer.net.bias.grad).all()
+
+@pytest.mark.parametrize("dist_class", _VALID_DISTRIBUTIONS, ids=lambda d: d.__name__)
+def test_distribution_map_allows_gradients(dist_class: type) -> None:
+    batch, stations, in_features = 4, 10, 8
+    layer = DistributionMap(dist_class, in_features=in_features)
+    x = torch.randn(batch, stations, in_features, requires_grad=True)
+
+    d = layer(x)
+
+    with torch.no_grad():
+        # get a sample in the correct support (no gradients)
+        target = d.sample()
+    # get an output that is differentiable wrt to x
+    log_probs = d.log_prob(target)
+
+    assert x.grad is None
+    log_probs.sum().backward() # sum needed to make it a scalar (no need for grad_in input)
+    assert x.grad is not None
+    
+    # check the same from samples obtained from d
+    x = torch.randn(batch, stations, in_features, requires_grad=True)
+    d = layer(x)
+    if d.has_rsample:
+        d.rsample(sample_shape=(5,)).sum().backward()
+        assert x.grad is not None
+        
+        
+def test_ziln_crps_vs_montecarlo():
+    
+    torch.manual_seed(0)
+    batch, stations, in_features = 4, 10, 8
+    
+    layer = DistributionMap(ZeroInflatedLogNormal, in_features=in_features)
+    x = torch.randn(batch, stations, in_features)
+    d = layer(x)
+    
+    from oat.predictor_module.functional_metrics import mc_crps
+    
+    # [100,4,10]
+    samples = d.sample((5000,))
+    samples = samples.permute(1,2,0)  # [4,10,100]
+    samples = samples.unsqueeze(-1)  # [4,10,100,1]
+    # put some true zeros in the samples to make sure the zero-inflation is tested 
+    # at random locations
+    zero_mask = torch.rand_like(samples) < 0.1
+    samples = torch.where(zero_mask, torch.zeros_like(samples), samples) 
+    
+    
+    target = d.sample()  # [4,10]
+    target = target.unsqueeze(-1)  # [4,10,1]
+    # put true zeros in the target to make sure the zero-inflation is tested at random locations
+    zero_mask_target = torch.rand_like(target) < 0.1
+    target = torch.where(zero_mask_target, torch.zeros_like(target), target)
+    
+    mask = torch.ones_like(target)  # [4,10,1]
+    
+    
+    crps_estimate = mc_crps(y_target=target, y_hat=samples, mask=mask, aggregation="variable")
+    
+    closed_crps = d.crps(target.squeeze(-1)).mean()
+    
+    
+    # check the MC estimate is close to the closed-form CRPS, up to the first comma
+    assert torch.allclose(crps_estimate, closed_crps, atol=0.01), (
+        f"MC CRPS: {crps_estimate}, Closed-form CRPS: {closed_crps}"
+    )
+    
+
+# TODO add the other CRPS tests for the other distributions, similar to the above test for ZILN
