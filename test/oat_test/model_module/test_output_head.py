@@ -88,48 +88,92 @@ def test_quantile_output_head() -> None:
     assert samples.shape == (batch_dim, n_stations, num_samples, target_dim)
     
     
+def test_output_head():
     
-def test_multiple_univariate_heads() -> None:
+    batch_size = 32
+    n_stations = 12
+    in_features = 10
     
-    batch_dim = 64
+    x = torch.randn(batch_size, n_stations, in_features)
 
-    input_dim = 10
-    n_stations = 23
-    
-    input_tensor = torch.randn(batch_dim, n_stations, input_dim)
-    
-    heads_config = {
-        "T_2M": (output_head.LinearOutputHead, {"loss_fn": "mse"}),
-        "V_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
-        "U_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
+    variable_to_distribution = {
+        "var1": "normal",
+        "var2": "lognormal",
+        "var3": "zero_inflated_lognormal",
     }
     
-    multi_head = output_head.MultipleUnivariateHeads(in_features=input_dim, heads=heads_config)
-    out = multi_head(input_tensor)  # Forward pass
-    assert set(out.keys()) == set(heads_config.keys())  # Check all heads are present
-    assert out["T_2M"]["val_pred"].shape == (batch_dim, n_stations, 1)
-    assert out["V_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
-    assert out["V_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
-    assert out["U_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
-    assert out["U_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
+    loss_scaling = torch.tensor([1.0, 0.5, 2.0])
     
-    num_samples = 11
-    dict_samples = multi_head.sample(out, num_samples)
+    head = output_head.OutputHead(
+        in_features=in_features,
+        variable_to_distribution=variable_to_distribution,
+        loss_scaling=loss_scaling
+    )
     
-    # assert that for each variable we have 11 univariate samples
-    assert set(dict_samples.keys()) == set(heads_config.keys())
-    assert dict_samples["T_2M"].shape == (batch_dim, n_stations, num_samples, 1)
-    assert dict_samples["V_10"].shape == (batch_dim, n_stations, num_samples, 1)
-    assert dict_samples["U_10"].shape == (batch_dim, n_stations, num_samples, 1) 
+    pred_distributions = head.forward(x, as_dict=True)
+    assert set(pred_distributions.keys()) == set(variable_to_distribution.keys())
+    for var_name, dist in pred_distributions.items():
+        assert isinstance(dist, output_head.OATDistribution)
+        assert dist.batch_shape == (batch_size, n_stations)
+        assert dist.event_shape == () 
+        
+    num_samples = 5
+    samples_dict = head.sample(x, num_samples=num_samples, differentiable=False, as_dict=True)
     
-    # assert that we can also get concatenated samples across variables
-    concat_samples = multi_head.sample(out, num_samples, as_dict=False)
-    assert concat_samples.shape == (batch_dim, n_stations, num_samples, len(heads_config))
+    for var_name, samples in samples_dict.items():
+        assert samples.shape == (batch_size, n_stations, num_samples, 1)
+    
+    samples_tensor = head.sample(x, num_samples=num_samples, differentiable=False, as_dict=False)
+    
+    assert samples_tensor.shape == (batch_size, n_stations, num_samples, len(variable_to_distribution))
     
     
-    # test loss
-    target = torch.randn(batch_dim, n_stations, len(heads_config))
-    mask = torch.randint(0, 2, (batch_dim, n_stations, len(heads_config))).bool()
-    outs, total_loss = multi_head.loss(input_tensor, target, mask)
-    assert total_loss.dim() == 0  # Check that loss is a scalar
-    assert total_loss >= 0.0  # Loss should be non-negative
+    target = samples_tensor[...,0,:] # get a target that fits the support 
+    loss = head.loss(x=x, target=target, mask=torch.ones_like(target))
+        
+
+    
+# def test_multiple_univariate_heads() -> None:
+    # 
+    # batch_dim = 64
+
+    # input_dim = 10
+    # n_stations = 23
+    
+    # input_tensor = torch.randn(batch_dim, n_stations, input_dim)
+    
+    # heads_config = {
+    #     "T_2M": (output_head.LinearOutputHead, {"loss_fn": "mse"}),
+    #     "V_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
+    #     "U_10": (output_head.GaussianOutputHead, {"std_fn": "softplus", "loss_fn": "crps"}),
+    # }
+    
+    # multi_head = output_head.MultipleUnivariateHeads(in_features=input_dim, heads=heads_config)
+    # out = multi_head(input_tensor)  # Forward pass
+    # assert set(out.keys()) == set(heads_config.keys())  # Check all heads are present
+    # assert out["T_2M"]["val_pred"].shape == (batch_dim, n_stations, 1)
+    # assert out["V_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
+    # assert out["V_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
+    # assert out["U_10"]["mu_pred"].shape == (batch_dim, n_stations, 1)  
+    # assert out["U_10"]["std_pred"].shape == (batch_dim, n_stations, 1) 
+    
+    # num_samples = 11
+    # dict_samples = multi_head.sample(out, num_samples)
+    
+    # # assert that for each variable we have 11 univariate samples
+    # assert set(dict_samples.keys()) == set(heads_config.keys())
+    # assert dict_samples["T_2M"].shape == (batch_dim, n_stations, num_samples, 1)
+    # assert dict_samples["V_10"].shape == (batch_dim, n_stations, num_samples, 1)
+    # assert dict_samples["U_10"].shape == (batch_dim, n_stations, num_samples, 1) 
+    
+    # # assert that we can also get concatenated samples across variables
+    # concat_samples = multi_head.sample(out, num_samples, as_dict=False)
+    # assert concat_samples.shape == (batch_dim, n_stations, num_samples, len(heads_config))
+    
+    
+    # # test loss
+    # target = torch.randn(batch_dim, n_stations, len(heads_config))
+    # mask = torch.randint(0, 2, (batch_dim, n_stations, len(heads_config))).bool()
+    # outs, total_loss = multi_head.loss(input_tensor, target, mask)
+    # assert total_loss.dim() == 0  # Check that loss is a scalar
+    # assert total_loss >= 0.0  # Loss should be non-negative

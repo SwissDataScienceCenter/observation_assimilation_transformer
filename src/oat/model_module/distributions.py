@@ -18,6 +18,9 @@ def check_if_valid_distribution(dist_class):
         raise ValueError(
             f"{dist_class} does not support rsample() and provides no analytical crps() override."
         )
+    
+    if getattr(dist_class, "name", None) is None:
+        raise ValueError(f"{dist_class} must define a 'name' attribute.")
 
 
 class OATDistribution(Distribution):
@@ -27,8 +30,12 @@ class OATDistribution(Distribution):
     analytical solutions. Future distribution-level utilities (e.g. PIT,
     energy score) belong here.
     """
+    
+    name: str | None = None
 
     def crps(self, target: torch.Tensor, num_samples: int = 50) -> torch.Tensor:
+        # TODO to double check with oat.predictor_module.functional_metrics.crps_mc
+        
         """MC-CRPS:  E|X-y| - 0.5 * E|X-X'|  via differentiable rsample.
 
         Args:
@@ -51,18 +58,17 @@ class OATDistribution(Distribution):
 
 
 _REGISTRY: dict[type[Distribution], type[OATDistribution]] = {}
+_ALL_DISTRIBUTIONS: set[type[OATDistribution]] = set()
 
-
-def register_oat_distribution(
-    base: type[Distribution],
-) -> "Callable[[type[OATDistribution]], type[OATDistribution]]":
-    """Decorator that registers a manually-written OATDistribution subclass for a base distribution.
-
-    When as_oat_distribution(base) is called, the registered class is returned
-    instead of generating a generic wrapper.
-    """
+def register_oat_distribution(base: type[Distribution] | None = None):
     def decorator(cls: type[OATDistribution]) -> type[OATDistribution]:
-        _REGISTRY[base] = cls
+        # always track as available distribution
+        _ALL_DISTRIBUTIONS.add(cls)
+
+        # optionally map from base torch distribution
+        if base is not None:
+            _REGISTRY[base] = cls
+
         return cls
     return decorator
 
@@ -85,6 +91,8 @@ def as_oat_distribution(dist_class: type[Distribution]) -> type[OATDistribution]
 @register_oat_distribution(dist.Normal)
 class NormalOAT(OATDistribution, dist.Normal):
     """Normal distribution with closed-form CRPS."""
+    
+    name = "normal"
 
     def crps(self, target: torch.Tensor, num_samples: int | None = None) -> torch.Tensor:
         """Analytical CRPS for a Normal distribution.
@@ -104,6 +112,8 @@ class NormalOAT(OATDistribution, dist.Normal):
 @register_oat_distribution(dist.Laplace)
 class LaplaceOAT(OATDistribution, dist.Laplace):
     """Laplace distribution with closed-form CRPS."""
+    
+    name = "laplace"
 
     def crps(self, target: torch.Tensor, num_samples: int | None = None) -> torch.Tensor:
         """CRPS(Laplace(μ, b), y) = |y−μ| + b·exp(−|y−μ|/b) − 3b/4"""
@@ -115,6 +125,8 @@ class LaplaceOAT(OATDistribution, dist.Laplace):
 @register_oat_distribution(dist.Exponential)
 class ExponentialOAT(OATDistribution, dist.Exponential):
     """Exponential distribution with closed-form CRPS."""
+    
+    name = "exponential"
 
     def crps(self, target: torch.Tensor, num_samples: int | None = None) -> torch.Tensor:
         """CRPS(Exp(λ), y) = y − 3/(2λ) + (2/λ)·exp(−λy)   [y ≥ 0]"""
@@ -125,21 +137,27 @@ class ExponentialOAT(OATDistribution, dist.Exponential):
 @register_oat_distribution(dist.LogNormal)
 class LogNormalOAT(OATDistribution, dist.LogNormal):
     """Log-Normal distribution with closed-form CRPS."""
+    
+    name = "lognormal"
 
     def crps(self, target: torch.Tensor, num_samples: int | None = None) -> torch.Tensor:
         """CRPS(LogNormal(μ, σ), y) = y·(2Φ(z)−1) − 2m·(Φ(z−σ) − Φ(−σ/√2))
         where z = (log y − μ)/σ, m = exp(μ + σ²/2).
         """
         mu, sigma = self.loc, self.scale
+        
+        #TODO consider a safety clamp
         m = torch.exp(mu + 0.5 * sigma ** 2)
-        z = (torch.log(target) - mu) / sigma
+        # TODO if applied on normalized space, target needs to be correctly transformer to preserve positivity
+        # consider clamp? 
+        z = (torch.log(target) - mu) / sigma 
         std_normal = dist.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
         return (
             target * (2 * std_normal.cdf(z) - 1)
             - 2 * m * (std_normal.cdf(z - sigma) - std_normal.cdf(-sigma / math.sqrt(2)))
         )
 
-
+@register_oat_distribution(None)  # placeholder for custom distribution without a base torch class
 class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
     """Zero-inflated LogNormal: P(X=0) = gate, P(X ~ LogN(loc, scale)) = 1 - gate.
 
@@ -147,6 +165,8 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
     wind gusts). The analytical CRPS gives full gradients through all three
     parameters even though the Bernoulli gate is not reparameterizable.
     """
+    
+    name = "zero_inflated_lognormal"
 
     arg_constraints = {
         "gate": constraints.unit_interval,

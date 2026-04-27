@@ -17,7 +17,7 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
 
@@ -36,7 +36,7 @@ def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     
@@ -55,7 +55,7 @@ def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninf
     pred = OATPredictor(oat_model_cfg=uninformed_model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(uninformed_model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(uninformed_model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     
@@ -71,7 +71,7 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
 

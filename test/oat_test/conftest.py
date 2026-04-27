@@ -50,8 +50,9 @@ def model_cfg_fixture(batch_fixture):
     )
     output_head_cfg = OutputHeadConfig(
         in_features=4,
-        target_features=batch_fixture['observation_data']['obs'].shape[-1],
-        type='gaussian'
+        variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
+        loss_scaling=None,
+        crps_mc_samples=50
     )
     
     oat_cfg = OATConfig(

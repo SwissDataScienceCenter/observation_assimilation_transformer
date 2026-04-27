@@ -91,14 +91,10 @@ class MaskingConfig:
 @dataclass
 class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
-    target_features: int
-    type: str
-    in_features: int = 64
-    std_fn: Optional[str] = 'softplus'
-    loss_fn: str = 'crps'
-    min_std_val: float = 1e-3
-    degree: int = 20
-    num_train_taus: int = 10
+    in_features: int
+    variable_to_distribution: Dict[str, str]
+    loss_scaling: torch.Tensor | None = None
+    crps_mc_samples: int = 50
 
 
 @dataclass
@@ -252,31 +248,14 @@ class UninformedOAT(nn.Module):
         raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', and 'ResNetCNN'.")
     
     def _init_output_head(self, config):
-        # Output head for innovation computation (Eq. 8-12)
-        if config.output_head.type == "linear":
-            return output_head.LinearOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                loss_fn=config.output_head.loss_fn,
-            )
-        elif config.output_head.type == "gaussian":
-            return output_head.GaussianOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                loss_fn=config.output_head.loss_fn,
-                std_fn=config.output_head.std_fn,
-                min_std_val=config.output_head.min_std_val,
-            )
-        elif config.output_head.type == "quantile":
-            train_taus = torch.linspace(0.0, 1.0, config.output_head.num_train_taus + 2)[1:-1]
-            return output_head.QuantileOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                degree=config.output_head.degree,
-                train_taus=train_taus,
-            )
-        raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear', 'Gaussian', 'Quantile'.")
-    
+        
+        return output_head.OutputHead(
+            in_features=config.output_head.in_features,
+            variable_to_distribution=config.output_head.variable_to_distribution,
+            loss_scaling=config.output_head.loss_scaling,
+            crps_mc_samples=config.output_head.crps_mc_samples
+        )
+   
     def forward(
         self,
         global_data: Dict[str, torch.Tensor],
@@ -448,7 +427,7 @@ class OAT(UninformedOAT):
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
         self.fusion_layer2 = fusion_layer.GatedLinearUnitFusionLayer(
-            in_channels=[d_model, config.output_head.target_features],
+            in_channels=[d_model, self.output_head.target_features],
             out_channels=config.fusion_layer.out_channels,
             hidden_channels=config.fusion_layer.hidden_channels,
             cond_dim=config.fusion_layer.cond_dim,
