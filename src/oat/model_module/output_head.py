@@ -704,19 +704,24 @@ class OutputHead(nn.Module):
         
         return einops.rearrange(samples, 'sample batch station -> batch station sample 1')
         
-    def sample(self, x: torch.Tensor, num_samples: int, differentiable: bool, as_dict: bool = False) -> Dict[str, torch.Tensor] | torch.Tensor:
+    def sample(self, x: torch.Tensor, num_samples: int, differentiable: bool, pred_dist: Dict[str, OATDistribution] = None, as_dict: bool = False) -> Dict[str, torch.Tensor] | torch.Tensor:
         '''
         Return samples from the predicted distribututions given input features x. 
         If as_dict is True, returns a dictionary mapping each variable to samples of shape [batch, station, num_samples, 1].
         If as_dict is False, returns samples of shape [batch, station, num_samples, len(variable_to_distribution)].
         If differentiable is True, will try to use the reparameterized sampling method (rsample) 
         if the distribution supports it, otherwise will raise an error. 
+        If the output distributions were already computed, those can be passed as pred_dist and x set to None.
         '''
         
         # TODO for now the only "covariance" we can model is given by the shared input features (not really a valid model).
         # In the future, we might need a better approach.
         
-        distributions = self.forward(x, as_dict=True)
+        if pred_dist is None:
+            distributions = self.forward(x, as_dict=True)
+        else:
+            assert x is None
+            distributions = pred_dist
         
         output = {} if as_dict else []
 
@@ -764,7 +769,8 @@ class OutputHead(nn.Module):
         
         assert num_vars == len(self.variable_to_distribution)
 
-        for i, (var_name, dist) in enumerate(self.forward(x, as_dict=True).items()):
+        out = self.forward(x, as_dict=True)
+        for i, (var_name, dist) in enumerate(out.items()):
             
             # mask=mask[..., i:i+1]
             if dist.event_shape == ():
@@ -782,7 +788,7 @@ class OutputHead(nn.Module):
             
             overall_loss = overall_loss + loss_scalar
         
-        return overall_loss
+        return out, overall_loss
 
     
     # TODO innovations

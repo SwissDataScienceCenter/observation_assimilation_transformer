@@ -95,6 +95,7 @@ class OutputHeadConfig:
     variable_to_distribution: Dict[str, str]
     loss_scaling: torch.Tensor | None = None
     crps_mc_samples: int = 50
+    use_explicit_innovation: bool = True
 
 
 @dataclass
@@ -253,7 +254,8 @@ class UninformedOAT(nn.Module):
             in_features=config.output_head.in_features,
             variable_to_distribution=config.output_head.variable_to_distribution,
             loss_scaling=config.output_head.loss_scaling,
-            crps_mc_samples=config.output_head.crps_mc_samples
+            crps_mc_samples=config.output_head.crps_mc_samples,
+            use_explicit_innovation=config.output_head.use_explicit_innovation
         )
    
     def forward(
@@ -261,6 +263,7 @@ class UninformedOAT(nn.Module):
         global_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         num_samples: int | None = None,
+        differentiable_samples: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass.
@@ -276,6 +279,7 @@ class UninformedOAT(nn.Module):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
         
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
@@ -289,7 +293,7 @@ class UninformedOAT(nn.Module):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)          
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)          
         out['samples'] = samples
         
         return out
@@ -300,7 +304,8 @@ class UninformedOAT(nn.Module):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None
+        num_samples: int | None = None,
+        differentiable_samples: bool = False,
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass.
@@ -318,6 +323,7 @@ class UninformedOAT(nn.Module):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
         
         Returns:
             predictions: Dict with model outputs
@@ -333,7 +339,7 @@ class UninformedOAT(nn.Module):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)
 
         out['samples'] = samples
         
@@ -473,6 +479,7 @@ class OAT(UninformedOAT):
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         num_samples: int | None = None,
+        differentiable_samples: bool = False,
         return_pre_oat_output: bool = False
     ) -> Dict[str, Any]:
         """
@@ -496,6 +503,7 @@ class OAT(UninformedOAT):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
             return_pre_oat_output: If True, also returns output before final output head for analysis.
         
         Returns:
@@ -508,7 +516,7 @@ class OAT(UninformedOAT):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)          
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)          
         out['samples'] = samples
         
         if return_pre_oat_output:
@@ -516,7 +524,7 @@ class OAT(UninformedOAT):
             if num_samples is None:
                 num_samples = self.num_samples
             with torch.no_grad():
-                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+                pre_oat_samples = self.output_head.sample(x=None, pred_dist=pre_oat_output, num_samples=num_samples, differentiable=differentiable_samples)
             pre_oat_output['samples'] = pre_oat_samples
             out['pre_oat_output'] = pre_oat_output
             
@@ -529,7 +537,8 @@ class OAT(UninformedOAT):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None,    
+        num_samples: int | None = None,
+        differentiable_samples: bool = False,    
         return_pre_oat_output: bool = False
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
@@ -557,14 +566,14 @@ class OAT(UninformedOAT):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)
         
         if return_pre_oat_output:
             with torch.no_grad():
                 pre_oat_output = self.output_head(pre_oat_out)
                 if num_samples is None:
                     num_samples = self.num_samples
-                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+                pre_oat_samples = self.output_head.sample(x=None, pred_dist=pre_oat_output, num_samples=num_samples, differentiable=differentiable_samples)
             pre_oat_output['samples'] = pre_oat_samples
             out['pre_oat_output'] = pre_oat_output
             
