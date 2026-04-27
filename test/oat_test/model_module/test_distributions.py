@@ -302,6 +302,7 @@ _VALID_DISTRIBUTIONS = [
     dist.Gumbel,
     dist.Normal,
     dist.Cauchy,
+    ZeroInflatedLogNormal,
 ]
 
 
@@ -325,8 +326,9 @@ def test_distribution_map_all_valid_distributions(dist_class: type) -> None:
     assert log_probs.shape == torch.Size([batch, stations])
     assert torch.isfinite(log_probs).all()
 
-    samples = d.rsample(sample_shape=(5,))
-    assert samples.shape == torch.Size([5, batch, stations])
+    if d.has_rsample:
+        samples = d.rsample(sample_shape=(5,))
+        assert samples.shape == torch.Size([5, batch, stations])
 
     crps = d.crps(target, num_samples=10)
     assert crps.shape == torch.Size([batch, stations])
