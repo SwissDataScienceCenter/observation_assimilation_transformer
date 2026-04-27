@@ -612,6 +612,7 @@ class OAT(UninformedOAT):
         n_kv = uninformed_kv_token.shape[1]
         cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
         
+        # TODO should we use the mask when fusing, as the mask is used for computing the innovation?
         station_token = self.fusion_layer2(
             uninformed_kv_token,
             innovation,

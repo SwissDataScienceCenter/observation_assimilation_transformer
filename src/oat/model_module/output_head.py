@@ -632,6 +632,9 @@ class OutputHead(nn.Module):
     and follow the same order as the variable names in the variable_to_distribution dictionary.
     If one of the distributions does not have a closed form CRPS, crps_mc_samples is then the number of samples used to 
     estimate the CRPS value.
+    use_explicit_innovation is a flag used to control the kind of innovation used. If true, the innovation is computed
+    in a distribution-specific manner. If false, the raw observations are used and the fusion layer is responsible to 
+    learn an update from them.
     
     To get the predicted distributions as objects, call forward() with the input features. 
     To get samples from the predicted distributions, call sample().
@@ -642,7 +645,8 @@ class OutputHead(nn.Module):
                  in_features: int,
                  variable_to_distribution: Dict[str, str],
                  loss_scaling: torch.Tensor | None = None,
-                 crps_mc_samples: int = 50
+                 crps_mc_samples: int = 50,
+                 use_explicit_innovation: bool = True
                  ):
         super().__init__()
         
@@ -665,6 +669,7 @@ class OutputHead(nn.Module):
         
         self.loss_scaling = loss_scaling
         self.crps_mc_samples = crps_mc_samples
+        self.use_explicit_innovation = use_explicit_innovation
 
     @classmethod
     def supported_distributions(cls):
@@ -783,8 +788,11 @@ class OutputHead(nn.Module):
     # TODO innovations
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
-        # TODO placeholder implementation to make the network run
-        # must be implemented!!
-        return torch.zeros_like(target)
+        
+        if self.use_explicit_innovation:
+            # TODO implement. For each distribution, compute the innovation given the observed targets.
+            raise NotImplementedError()
+        
+        return target
 
     
