@@ -52,7 +52,8 @@ def model_cfg_fixture(batch_fixture):
         in_features=4,
         variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
         loss_scaling=None,
-        crps_mc_samples=50
+        crps_mc_samples=50,
+        use_explicit_innovation=False # TODO Set to true once implemented
     )
     
     oat_cfg = OATConfig(
@@ -86,8 +87,10 @@ def uninformed_model_cfg_fixture(batch_fixture):
 
     output_head_cfg = OutputHeadConfig(
         in_features=4,
-        target_features=batch_fixture['observation_data']['obs'].shape[-1],
-        type='gaussian'
+        variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
+        loss_scaling=None,
+        crps_mc_samples=50,
+        use_explicit_innovation=False # TODO Set to true once implemented
     )
     
     uninformed_oat_cfg = UninformedOATConfig(
