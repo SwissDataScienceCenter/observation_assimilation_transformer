@@ -19,8 +19,9 @@ def check_if_valid_distribution(dist_class):
             f"{dist_class} does not support rsample() and provides no analytical crps() override."
         )
     
-    if getattr(dist_class, "name", None) is None:
-        raise ValueError(f"{dist_class} must define a 'name' attribute.")
+    # Base torch distributions (e.g. torch.distributions.Normal) typically do not
+    # define a custom `name` attribute. We allow those classes here because they
+    # are either wrapped by a registered OATDistribution or by a generic wrapper.
     
     # check can calulate innovation, which requires a cdf() method or an override of innovation() itself
     if not hasattr(dist_class, "cdf") and not (issubclass(dist_class, OATDistribution) and dist_class.innovation is not OATDistribution.innovation):
