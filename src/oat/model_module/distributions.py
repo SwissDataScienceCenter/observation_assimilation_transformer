@@ -21,6 +21,12 @@ def check_if_valid_distribution(dist_class):
     
     if getattr(dist_class, "name", None) is None:
         raise ValueError(f"{dist_class} must define a 'name' attribute.")
+    
+    # check can calulate innovation, which requires a cdf() method or an override of innovation() itself
+    if not hasattr(dist_class, "cdf") and not (issubclass(dist_class, OATDistribution) and dist_class.innovation is not OATDistribution.innovation):
+        raise ValueError(
+            f"{dist_class} must have a cdf() method or an override of innovation() to compute innovations."
+        )
 
 
 class OATDistribution(Distribution):
@@ -55,6 +61,20 @@ class OATDistribution(Distribution):
         xj = samples.unsqueeze(1)   # [n, 1, *batch]
         second_term = torch.abs(xi - xj).sum((0, 1)) / (num_samples * (num_samples - 1))
         return first_term - 0.5 * second_term
+    
+    def innovation(self, target: torch.Tensor) -> torch.Tensor:
+        """Compute the innovation by projecting the target through the distribution's CDF and then applying the inverse CDF of a standard normal distribution."""
+        
+        # Get the CDF of the distribution at the target value
+        cdf_values = self.cdf(target)
+        eps = torch.finfo(cdf_values.dtype).eps
+        cdf_values = cdf_values.clamp(min=eps, max=1 - eps)
+        
+        # Apply the inverse CDF (quantile function) of a standard normal distribution to the CDF values
+        std_normal = dist.Normal(torch.zeros_like(cdf_values), torch.ones_like(cdf_values))
+        innovation_values = std_normal.icdf(cdf_values)
+        
+        return innovation_values
 
 
 _REGISTRY: dict[type[Distribution], type[OATDistribution]] = {}
@@ -107,6 +127,10 @@ class NormalOAT(OATDistribution, dist.Normal):
         phi = torch.exp(std_normal.log_prob(z))
         inv_sqrt_pi = 1.0 / torch.sqrt(torch.tensor(torch.pi, device=std.device, dtype=std.dtype))
         return std * (z * (2 * Phi - 1) + 2 * phi - inv_sqrt_pi)
+    
+    def innovation(self, target: torch.Tensor) -> torch.Tensor:
+        """For a Normal distribution, the innovation is simply the standardized residual."""
+        return (target - self.loc) / self.scale
 
 
 @register_oat_distribution(dist.Laplace)
@@ -201,6 +225,14 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
             value == 0,
             log_gate,
             log_not_gate + lognormal.log_prob(value.clamp(min=eps)),
+        )
+        
+    def cdf(self, value: torch.Tensor) -> torch.Tensor:
+        lognormal = dist.LogNormal(self.loc, self.scale)
+        return torch.where(
+            value == 0,
+            self.gate,
+            self.gate + (1 - self.gate) * lognormal.cdf(value)
         )
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
