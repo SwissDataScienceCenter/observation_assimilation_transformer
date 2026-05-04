@@ -4,7 +4,8 @@ version = "0.1.0"
 description = ""
 authors = ["Christian Donner <christian.donner@meteoswiss.ch>", "Michele Cattaneo <michele.cattaneo@meteoswiss.ch>"]
 packages = [{include = "oat", from = "src"},
-            {include = "oat_test", from = "test"}]
+            {include = "oat_test", from = "test"},
+            {include = "scripts"}]
 include = ["test/oat_test/**/*.py"]
 
 [tool.poetry.dependencies]
