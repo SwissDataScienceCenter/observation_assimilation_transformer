@@ -796,9 +796,19 @@ class OutputHead(nn.Module):
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
         
         if self.use_explicit_innovation:
-            # TODO implement. For each distribution, compute the innovation given the observed targets.
-            raise NotImplementedError()
-        
+            predicted_distributions = self.forward(x, as_dict=True) # predict the distribution
+            innovations = []
+            for i, (var_name, dist) in enumerate(predicted_distributions.items()): # for each variable, compute the innovation according to the distribution-specific method
+                # extract the univariate target (assumes the order of the dictionary is the same as the order of the variables in the target tensor)
+                target_i = target[..., i] if dist.event_shape == () else target[..., i:i+1]
+                mask_i = mask[..., i] if dist.event_shape == () else mask[..., i:i+1]
+                
+                innovation_i = dist.innovation(target=target_i)
+                innovations.append(innovation_i * mask_i)
+                
+            return torch.stack(innovations, dim=-1)
+
+        # straight-through: return the raw observations and let the fusion layer learn how to use them
         return target
 
     

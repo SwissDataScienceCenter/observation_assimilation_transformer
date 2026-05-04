@@ -27,8 +27,14 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
         out, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
 
 
-@pytest.mark.parametrize("compile", [True, False])
-def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile):
+@pytest.mark.parametrize("compile", [True, False], ids=["compile", "no_compile"])
+@pytest.mark.parametrize("innovation_type", ['explicit', 'implicit'], ids=["explicit_innovation", "implicit_innovation"])
+def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile, innovation_type):
+    
+    if innovation_type == 'explicit':
+        model_cfg_fixture.output_head.use_explicit_innovation = True
+    else:
+        model_cfg_fixture.output_head.use_explicit_innovation = False
 
     output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
