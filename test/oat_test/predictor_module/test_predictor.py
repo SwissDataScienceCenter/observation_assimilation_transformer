@@ -30,13 +30,13 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
 @pytest.mark.parametrize("compile", [True, False])
 def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile):
 
-
+    output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
     
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+                        output_var_names=output_var_names,
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     
@@ -65,13 +65,13 @@ def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninf
 
 def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
 
-
+    output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
     
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+                        output_var_names=output_var_names,
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
 
@@ -95,15 +95,44 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     pred = pred.eval()
     reloaded_pred = reloaded_pred.eval()
     
+    # Verify they are different instances
+    assert pred is not reloaded_pred
+    
+    pl.seed_everything(42)
     prediction = pred(batch_fixture)
+    
+    pl.seed_everything(42)
     prediction_reloaded = reloaded_pred(batch_fixture)
     # Check that all outputs apart from the samples are equivalent before and 
     # after checkpointing
-    for k in [key for key in prediction.keys() if key != "samples"]:
-        if k == "pre_oat_output":
-            for kk in [key for key in prediction[k].keys() if key != "samples"]:
-                assert (prediction[k][kk] == prediction_reloaded[k][kk]).all()
-        else:
-            assert (prediction[k] == prediction_reloaded[k]).all()
+
+    def same_distribution(d1, d2):
+        if type(d1) != type(d2):
+            return False
+        
+        params1 = d1.__dict__
+        params2 = d2.__dict__
+        
+        if params1.keys() != params2.keys():
+            return False
+        
+        for k in params1:
+            v1, v2 = params1[k], params2[k]
+            if torch.is_tensor(v1):
+                if not torch.allclose(v1, v2):
+                    return False
+            else:
+                if v1 != v2:
+                    return False
+        return True
+
+    # assert predicted distributions are the same (same parametrization)
+    for var_name in output_var_names:
+        assert same_distribution(prediction[var_name], prediction_reloaded[var_name])
+
+        assert same_distribution(prediction['pre_oat_output'][var_name], prediction_reloaded['pre_oat_output'][var_name])
+    # assert that the samples, given that we forced a seed, are the same before and after checkpointing
+    assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
+    assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
     
     
