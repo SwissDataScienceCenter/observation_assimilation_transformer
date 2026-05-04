@@ -20,40 +20,6 @@ from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 _VALID_LOSS_FNS = ("mll", "crps")
 
-
-class MeanWithFeatureSlice(gpytorch.means.Mean):
-    def __init__(self, mean_module: gpytorch.means.Mean, mean_indices: Sequence[int]) -> None:
-        super().__init__()
-        self.mean_module = mean_module
-        self.mean_indices = tuple(int(i) for i in mean_indices)
-        
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.mean_module(x[..., self.mean_indices])
-
-
-class KernelWithFeatureSlice(gpytorch.kernels.Kernel):
-    def __init__(
-        self,
-        kernel: gpytorch.kernels.Kernel,
-        kernel_indices: Sequence[int],
-    ) -> None:
-        super().__init__()
-        self.kernel = kernel
-        self.kernel_indices = tuple(int(i) for i in kernel_indices)
-
-    def forward(
-        self,
-        x1: torch.Tensor,
-        x2: torch.Tensor,
-        **params: Any,
-    ) -> gpytorch.lazy.LazyEvaluatedKernelTensor:
-        return self.kernel(
-            x1[..., self.kernel_indices],
-            x2[..., self.kernel_indices],
-            **params,
-        )
-
 def crps_normal(
     obs: torch.Tensor,
     mu: torch.Tensor,
@@ -113,7 +79,9 @@ class GPBaselineConfig:
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
     mean_groups: List[str] = field(default_factory=lambda: ["nwp", "topo"])
-    cov_groups: List[str] = field(default_factory=lambda: ["geo", "nwp", "topo"])
+    stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", ])
+    non_stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", "nwp", "topo"])
+
     noise_variance: float = 1.0
     loss_fn: str = "crps"
     num_samples: int = 100
@@ -139,7 +107,8 @@ class GPBaseline(nn.Module):
         self.config = config
 
         mean_indices: List[int] = []
-        covar_indices: List[int] = []
+        stationary_covar_indices: List[int] = []
+        non_stationary_covar_indices: List[int] = []
         offset = 0
 
         # geo
@@ -147,8 +116,10 @@ class GPBaseline(nn.Module):
         offset += 3
         if "geo" in config.mean_groups:
             mean_indices += geo_indices
-        if "geo" in config.cov_groups:
-            covar_indices += geo_indices
+        if "geo" in config.stationary_cov_groups:
+            stationary_covar_indices += geo_indices
+        if "geo" in config.non_stationary_cov_groups:
+            non_stationary_covar_indices += geo_indices
 
         if config.use_nwp:
             n = len(config.nwp_vars)
@@ -156,8 +127,10 @@ class GPBaseline(nn.Module):
             offset += n
             if "nwp" in config.mean_groups:
                 mean_indices += nwp_indices
-            if "nwp" in config.cov_groups:
-                covar_indices += nwp_indices
+            if "nwp" in config.stationary_cov_groups:
+                stationary_covar_indices += nwp_indices
+            if "nwp" in config.non_stationary_cov_groups:
+                non_stationary_covar_indices += nwp_indices
             self.nwp_interpolator: Optional[NWPInterpolator] = NWPInterpolator(
                 NWPInterpolatorConfig(field_extent=config.field_extent)
             )
@@ -169,8 +142,10 @@ class GPBaseline(nn.Module):
             offset += 4
             if "time_emb" in config.mean_groups:
                 mean_indices += time_emb_indices
-            if "time_emb" in config.cov_groups:
-                covar_indices += time_emb_indices
+            if "time_emb" in config.stationary_cov_groups:
+                stationary_covar_indices += time_emb_indices
+            if "time_emb" in config.non_stationary_cov_groups:
+                non_stationary_covar_indices += time_emb_indices
 
         if config.use_topography:
             if config.topography_encoder_kwargs is None:
@@ -186,23 +161,39 @@ class GPBaseline(nn.Module):
             offset += n
             if "topo" in config.mean_groups:
                 mean_indices += topo_indices
-            if "topo" in config.cov_groups:
-                covar_indices += topo_indices
+            if "topo" in config.stationary_cov_groups:
+                stationary_covar_indices += topo_indices
+            if "topo" in config.non_stationary_cov_groups:
+                non_stationary_covar_indices += topo_indices
         else:
             self.topography_encoder = None
 
         self.feature_dim = offset
         self.mean_indices = tuple(mean_indices)
-        self.covar_indices = tuple(covar_indices)
+        self.stationary_covar_indices = tuple(stationary_covar_indices)
+        self.non_stationary_covar_indices = tuple(non_stationary_covar_indices)
 
-        mean_net = MLP(dimensions=[len(self.mean_indices), *config.mean_hidden_dims, 1])
+        # Mean function
+        mean_net = MLP(dimensions=[len(self.mean_indices), *config.mean_hidden_dims, 1],
+                       active_dims=mean_indices)
+        mean_function = NeuralMean(net=mean_net)
+        
+        # Stationary kernel on specified groups
+        rbf_kernel = ScaledRBFKernel(eps=config.eps, active_dims=stationary_covar_indices)
+        
+        # Non-stationary kernel on specified groups
         kernel_net = MLP(
             dimensions=[
-                len(self.covar_indices),
+                len(self.non_stationary_covar_indices),
                 *config.kernel_hidden_dims,
                 config.kernel_embed_dim,
-            ]
+            ],
+            active_dims=non_stationary_covar_indices
         )
+        non_stationary_kernel = NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps))
+        
+        # Combine stationary and non-stationary kernels
+        kernel_function = rbf_kernel * non_stationary_kernel
 
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
         with torch.no_grad():
@@ -210,18 +201,14 @@ class GPBaseline(nn.Module):
 
         dummy_x = torch.zeros(2, self.feature_dim)
         dummy_y = torch.zeros(2)
+        
+        
         self.gp = GPModel(
             train_x=dummy_x,
             train_y=dummy_y,
             likelihood=likelihood,
-            mean_module=MeanWithFeatureSlice(
-                mean_module=NeuralMean(net=mean_net),
-                mean_indices=self.mean_indices,
-            ),
-            covar_module=KernelWithFeatureSlice(
-                kernel=NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps)),
-                kernel_indices=self.covar_indices,
-            ),
+            mean_module=mean_function,
+            covar_module=kernel_function,
         )
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.gp.likelihood, self.gp)
 
