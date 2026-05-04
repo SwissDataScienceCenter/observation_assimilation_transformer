@@ -54,8 +54,17 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         **model_cfg.fusion_layer,
         out_channels=model_cfg.d_model)
 
+    if cfg.dataset.obs_variable_to_distribution != cfg.model.output_head.variable_to_distribution:
+        raise ValueError("Mismatch between observations variable distributions and output head variable distributions")
+    if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
+        raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
+    logger.info(
+        f"Model will assume the following index to variable mapping: "
+        f"{ {idx: var for idx, var in enumerate(cfg.dataset.obs_vars)} }"
+        "\n And variable to distribution mapping: "
+        f"{ cfg.model.output_head.variable_to_distribution }"
+    )
     output_head_cfg = model.OutputHeadConfig(
-        target_features=len(data_cfg.obs_vars),
         in_features=model_cfg.d_model,
         **model_cfg.output_head)
     

@@ -1,4 +1,0 @@
-type: linear
-# in_features: int = 64
-# target_features: int = 4  # data dependent
-loss_fn: huber

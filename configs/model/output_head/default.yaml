@@ -1,0 +1,4 @@
+variable_to_distribution: ${dataset.obs_variable_to_distribution}
+use_explicit_innovation: true
+loss_scaling: null
+crps_mc_samples: 50

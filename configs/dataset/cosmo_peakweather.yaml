@@ -22,8 +22,14 @@ topo_vars:
   - SN_DERIVATIVE_2000M_SIGRATIO1          # South-north derivative
 
 # Observation variables (PeakWeather)
+# If you change these, make sure to also update obs_variable_to_distribution
 obs_vars:
   - temperature
+
+# obs variables are the target variables for downscaling
+# here we assign each variable a distribution type (will be used by output_head)
+obs_variable_to_distribution:
+  temperature: "normal"
 
 coord_vars:
   - swiss_easting
