@@ -1,12 +1,17 @@
 import tempfile
+from pathlib import Path
 import pytorch_lightning as pl
+from hydra import compose, initialize_config_dir
 
 from oat.predictor_module import OATPredictor
 from oat.model_module import OAT
 import torch
 import os
 import pytest
+import logging
 from pytorch_lightning.loggers.logger import DummyLogger
+from scripts.train_model import setup_oat_cfg
+from oat.model_module.model import OATConfig
 
 
 @pytest.mark.parametrize("compute_loss", [True, False])
@@ -140,5 +145,40 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     # assert that the samples, given that we forced a seed, are the same before and after checkpointing
     assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
     assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
+    
+    
+def test_default_hydra_config(transform_fixture):
+    # this test checks if the default hydra config can be used to instantiate a predictor (without using the cfg fixture)
+    input_transform, output_transform = transform_fixture
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+
+    dummy_field_extent = {
+        "min": [2255500.0, 840500.0],
+        "max": [2964500.0, 1479500.0],
+    }
+
+
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        cfg = compose(config_name="config") # TODO potentially use all configs in this dir, not just config
+
+    logger = logging.getLogger(__name__)
+    oat_cfg = setup_oat_cfg(cfg, dummy_field_extent, logger)
+
+    assert isinstance(oat_cfg, OATConfig)
+    assert oat_cfg.output_head.in_features == cfg.model.d_model
+    assert oat_cfg.output_head.variable_to_distribution == dict(
+        cfg.dataset.obs_variable_to_distribution
+    )
+    assert set(oat_cfg.output_head.variable_to_distribution.keys()) == set(
+        cfg.dataset.obs_vars
+    )
+    
+    
+    pred = OATPredictor(oat_model_cfg=oat_cfg,
+                        input_transform=input_transform,
+                        output_transform=output_transform,
+                        output_var_names=cfg.dataset.obs_vars,
+                        lr=1e-3,
+                        optimizer_class=torch.optim.AdamW)
     
     
