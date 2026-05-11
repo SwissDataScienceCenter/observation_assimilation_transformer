@@ -1,7 +1,7 @@
 """
 Benchmark DataLoader throughput vs. number of workers.
 
-Loads dataset config from configs/dataset/cosmo_peakweather.yaml (via OmegaConf).
+Loads dataset config from configs/dataset/cosmo_peakweather/config.yaml (via OmegaConf).
 
 Usage:
     python -m scripts.benchmark_dataloader
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 
-CONFIG_PATH = Path(__file__).parent.parent / "configs" / "dataset" / "cosmo_peakweather.yaml"
+CONFIG_PATH = Path(__file__).parent.parent / "configs" / "dataset" / "cosmo_peakweather" / "config.yaml"
 
 
 def benchmark(dataset: CosmoPeakWeatherDataset, num_workers: int, batch_size: int,
