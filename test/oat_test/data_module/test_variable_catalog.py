@@ -179,7 +179,8 @@ def _make_mock_dataset(obs_vars, var_settings=None, catalog_path=None, obs_varia
     n_obs_vars = len(obs_vars)
     n_nwp_vars = 3
     n_topo_vars = 2
-    obs_tensor = torch.ones(n_stations, n_obs_vars)
+    # Use varied positive values (1..5) so std != 0 and max != 0.
+    obs_tensor = (torch.arange(n_stations, dtype=torch.float32) + 1.0).unsqueeze(1).expand(-1, n_obs_vars)
     obs_mask = torch.ones(n_stations, n_obs_vars)
     geo_tensor = torch.zeros(n_stations, 3)
     topo_tensor = torch.zeros(n_stations, n_topo_vars, 4, 4)
@@ -267,9 +268,8 @@ def test_get_transform_no_log_by_default(two_var_catalog):
         obs_variable_to_distribution={"real_var": "normal"},
     )
     post_transform, output_transform = ds.get_transform(num_data_points=2)
-    from oat.data_module.transform import LogTransform, TranslateScaleTransform
+    from oat.data_module.transform import TranslateScaleTransform
     assert isinstance(output_transform, TranslateScaleTransform)
-    assert not isinstance(output_transform, LogTransform)
 
 
 def test_get_transform_incompatible_dist_raises(two_var_catalog):
@@ -385,7 +385,7 @@ def test_train_dataset_get_transform_no_catalog_no_error():
 
 
 def test_train_dataset_get_transform_no_log_by_default(two_var_catalog):
-    from oat.data_module.transform import LogTransform, TranslateScaleTransform
+    from oat.data_module.transform import TranslateScaleTransform
     td = _make_train_dataset(
         obs_vars=["real_var"],
         catalog_path=two_var_catalog,
@@ -393,7 +393,6 @@ def test_train_dataset_get_transform_no_log_by_default(two_var_catalog):
     )
     _post, output_transform = td.get_transform(num_data_points=2)
     assert isinstance(output_transform, TranslateScaleTransform)
-    assert not isinstance(output_transform, LogTransform)
 
 
 def test_train_dataset_get_transform_use_log_positive_var_ok(two_var_catalog):
@@ -438,3 +437,46 @@ def test_train_dataset_get_transform_wider_dist_warns(two_var_catalog):
     )
     with pytest.warns(UserWarning, match="broader support"):
         td.get_transform(num_data_points=2)
+
+
+def test_get_transform_nonneg_max_scale(two_var_catalog):
+    """Nonneg variable: translate=0, scale=1/max (no z-score normalisation)."""
+    from oat.data_module.transform import TranslateScaleTransform
+
+    # Use a nonneg_var with obs value 2.0 so max=2.0 and expected scale=0.5.
+    obs_value = 2.0
+    n_stations = 5
+    obs_tensor = torch.full((n_stations, 1), obs_value)
+
+    # Build a mock dataset using nonneg_var (support="nonnegative", not log-transformed)
+    ds = _make_mock_dataset(
+        obs_vars=["nonneg_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"nonneg_var": "zero_inflated_lognormal"},
+    )
+    # Override the fake sample so obs values are obs_value rather than 1.0
+    obs_mask = torch.ones(n_stations, 1)
+    geo_tensor = torch.zeros(n_stations, 3)
+    topo_tensor = torch.zeros(n_stations, 2, 4, 4)
+    n_nwp_vars, n_topo_vars = 3, 2
+    nwp_field = torch.zeros(n_nwp_vars + n_topo_vars, 8, 8)
+    ds.__getitem__ = MagicMock(return_value={
+        "global_data": {"global_field": nwp_field},
+        "observation_data": {
+            "obs": obs_tensor,
+            "mask_obs": obs_mask,
+            "topo": topo_tensor,
+            "geo": geo_tensor,
+        },
+    })
+
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        _post, output_transform = ds.get_transform(num_data_points=2)
+
+    assert isinstance(output_transform, TranslateScaleTransform)
+    # translate must be 0 (no mean subtraction for nonneg variables)
+    assert output_transform.translate[0].item() == pytest.approx(0.0)
+    # scale must be 1/max = 1/obs_value
+    assert output_transform.scale[0].item() == pytest.approx(1.0 / obs_value)

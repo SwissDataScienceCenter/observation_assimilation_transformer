@@ -679,6 +679,11 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             else:
                 translate[i] = -obs_stats.mean[i]
                 scale[i] = 1.0 / obs_stats.std[i]
+        if not torch.all(torch.isfinite(scale)):
+            raise ValueError(
+                "Obs normalization scale contains non-finite values. "
+                "Ensure sufficient non-constant training samples were collected."
+            )
         obs_normalization = transform.TranslateScaleTransform(
             translate=translate, scale=scale, channel_dim=-1
         )
