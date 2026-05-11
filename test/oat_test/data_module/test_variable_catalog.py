@@ -343,7 +343,8 @@ def _make_train_dataset(obs_vars, var_settings=None, catalog_path=None, obs_vari
     n_geo_vars = 3
     n_nwp_vars = 3
 
-    obs_tensor = torch.ones(n_stations, n_obs_vars)
+    # Use varied positive values (1..5) so std != 0 and max != 0.
+    obs_tensor = (torch.arange(n_stations, dtype=torch.float32) + 1.0).unsqueeze(1).expand(-1, n_obs_vars)
     topo_tensor = torch.zeros(n_stations, n_topo_vars, 4, 4)
     geo_tensor = torch.zeros(n_stations, n_geo_vars)
     nwp_field = torch.zeros(n_nwp_vars + n_topo_vars, 8, 8)
