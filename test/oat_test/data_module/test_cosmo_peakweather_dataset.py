@@ -53,7 +53,7 @@ def test_cosmo_peakweather_dataset() -> None:
     
     
     
-    transforms = dataset.get_transform(0)
+    transforms = dataset.get_transform(32)
 
     assert isinstance(transforms[0], NestedTransform)
     assert isinstance(transforms[1], Transform)
@@ -141,3 +141,30 @@ def test_derived_feature_output_order() -> None:
     assert result.shape[0] == 2
     torch.testing.assert_close(result[0], torch.full((2, 2), 5.0))   # wind_speed
     torch.testing.assert_close(result[1], torch.full((2, 2), 280.0)) # T_2M
+
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
+def test_get_transform_per_variable_obs_normalization() -> None:
+    """Nonneg obs vars get max-scale (translate=0); real vars get standard normalize."""
+    from oat.data_module.transform import TranslateScaleTransform
+
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "dataset.obs_vars=[temperature,wind_speed]",
+                "++dataset.obs_variable_to_distribution={temperature:normal,wind_speed:normal}",
+            ],
+        )
+
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    _, output_transform = dataset.get_transform(num_data_points=32)
+
+    assert isinstance(output_transform, TranslateScaleTransform)
+    # temperature (index 0, real support) — mean-centered
+    assert output_transform.translate[0] != 0.0
+    # wind_speed (index 1, nonnegative support) — not mean-centered
+    assert output_transform.translate[1] == 0.0
+    assert output_transform.scale[1] > 0.0
