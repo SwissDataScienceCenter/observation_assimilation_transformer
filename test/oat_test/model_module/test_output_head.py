@@ -2,8 +2,9 @@ from oat.model_module import output_head
 import torch
 import pytest
     
-    
-def test_output_head():
+
+@pytest.mark.parametrize("observation_assimilation_as", ["innovation", "target"], ids=["innovation", "target"])
+def test_output_head(observation_assimilation_as):
     
     batch_size = 32
     n_stations = 12
@@ -22,7 +23,8 @@ def test_output_head():
     head = output_head.OutputHead(
         in_features=in_features,
         variable_to_distribution=variable_to_distribution,
-        loss_scaling=loss_scaling
+        loss_scaling=loss_scaling,
+        observation_assimilation_as=observation_assimilation_as
     )
     
     pred_distributions = head.forward(x, as_dict=True)

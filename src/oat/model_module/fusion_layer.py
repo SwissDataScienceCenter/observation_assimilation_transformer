@@ -280,3 +280,36 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         for block in self.blocks:
             x = block(x, cond)
         return self.readout(x)
+
+
+class MultiCondGLUFusionLayer(GatedLinearUnitFusionLayer):
+    """
+    Like GatedLinearUnitFusionLayer but accepts multiple conditioning tensors,
+    which are concatenated along the last dimension before being passed to the
+    fusion blocks.
+
+    Args:
+        in_channels: List of input channel dimensions to be concatenated.
+        out_channels: Number of output channels after the final readout layer.
+        cond_dims: List of conditioning dimensions, one per conditioning tensor.
+                   The effective cond_dim is sum(cond_dims).
+        **kwargs: Forwarded to GatedLinearUnitFusionLayer (dropout_p, norm_layer, etc.)
+    """
+
+    def __init__(self,
+                 in_channels: list[int],
+                 out_channels: int,
+                 cond_dims: list[int],
+                 **kwargs):
+        super().__init__(in_channels=in_channels,
+                         out_channels=out_channels,
+                         cond_dim=sum(cond_dims),
+                         **kwargs)
+
+    def forward(self, *inputs: torch.Tensor, cond: tuple[torch.Tensor, ...]) -> torch.Tensor:
+        """
+        Args:
+            *inputs: Variable number of input tensors concatenated along the last dim.
+            cond: Tuple of conditioning tensors, will beconcatenated along the last dim.
+        """
+        return super().forward(*inputs, cond=torch.cat(cond, dim=-1))
