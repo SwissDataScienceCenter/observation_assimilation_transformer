@@ -161,3 +161,155 @@ def test_cosmo_peak_weather_config_accepts_new_fields():
     )
     assert cfg.variable_catalog_path == "/tmp/catalog.yaml"
     assert cfg.var_settings == {"temperature": {"use_log": False}}
+
+
+# ──────────────────────────────────────────────
+# get_transform() integration tests (no real data)
+# ──────────────────────────────────────────────
+
+from unittest.mock import MagicMock, patch
+import tempfile
+
+
+def _make_mock_dataset(obs_vars, var_settings=None, catalog_path=None, obs_variable_to_distribution=None):
+    """Build a minimal mock that exercises get_transform() without real data."""
+    from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+
+    n_stations = 5
+    n_obs_vars = len(obs_vars)
+    n_nwp_vars = 3
+    n_topo_vars = 2
+    obs_tensor = torch.ones(n_stations, n_obs_vars)
+    obs_mask = torch.ones(n_stations, n_obs_vars)
+    geo_tensor = torch.zeros(n_stations, 3)
+    topo_tensor = torch.zeros(n_stations, n_topo_vars, 4, 4)
+    nwp_field = torch.zeros(n_nwp_vars + n_topo_vars, 8, 8)
+
+    fake_sample = {
+        "global_data": {"global_field": nwp_field},
+        "observation_data": {
+            "obs": obs_tensor,
+            "mask_obs": obs_mask,
+            "topo": topo_tensor,
+            "geo": geo_tensor,
+        },
+    }
+
+    ds = MagicMock(spec=CosmoPeakWeatherDataset)
+    ds.__len__ = MagicMock(return_value=10)
+    ds.__getitem__ = MagicMock(return_value=fake_sample)
+    cfg = MagicMock()
+    cfg.obs_vars = obs_vars
+    cfg.nwp_vars = ["T_2M", "T_G", "DEM"]
+    cfg.topo_vars = ["DEM", "TPI_500M"]
+    cfg.var_settings = var_settings or {}
+    cfg.variable_catalog_path = catalog_path
+    cfg.obs_variable_to_distribution = obs_variable_to_distribution or {v: "normal" for v in obs_vars}
+    ds.config = cfg
+    ds.station_geo = geo_tensor
+    ds.get_transform = lambda *a, **kw: CosmoPeakWeatherDataset.get_transform(ds, *a, **kw)
+    return ds
+
+
+@pytest.fixture
+def two_var_catalog(tmp_path):
+    yaml_content = """
+variables:
+  positive_var:
+    description: "a strictly positive variable"
+    unit: "units"
+    support: "positive"
+    default_distribution: "normal"
+  real_var:
+    description: "a real-valued variable"
+    unit: "units"
+    support: "real"
+    default_distribution: "normal"
+  nonneg_var:
+    description: "a nonneg variable"
+    unit: "units"
+    support: "nonnegative"
+    default_distribution: "zero_inflated_lognormal"
+"""
+    p = tmp_path / "catalog.yaml"
+    p.write_text(yaml_content)
+    return str(p)
+
+
+def test_get_transform_use_log_requires_positive_support(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["real_var"],
+        var_settings={"real_var": {"use_log": True}},
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "normal"},
+    )
+    with pytest.raises(ValueError, match="use_log requires"):
+        ds.get_transform(num_data_points=2)
+
+
+def test_get_transform_use_log_positive_var_ok(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["positive_var"],
+        var_settings={"positive_var": {"use_log": True}},
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"positive_var": "normal"},
+    )
+    post_transform, output_transform = ds.get_transform(num_data_points=2)
+    from oat.data_module.transform import ComposedTransform, LogTransform
+    assert isinstance(output_transform, ComposedTransform)
+    assert any(isinstance(t, LogTransform) for t in output_transform.transforms)
+
+
+def test_get_transform_no_log_by_default(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["real_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "normal"},
+    )
+    post_transform, output_transform = ds.get_transform(num_data_points=2)
+    from oat.data_module.transform import LogTransform, StandardNormalizeTransform
+    assert isinstance(output_transform, StandardNormalizeTransform)
+
+
+def test_get_transform_incompatible_dist_raises(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["real_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "exponential"},
+    )
+    with pytest.raises(ValueError, match="cannot represent all values"):
+        ds.get_transform(num_data_points=2)
+
+
+def test_get_transform_wider_dist_warns(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["nonneg_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"nonneg_var": "normal"},
+    )
+    with pytest.warns(UserWarning, match="broader support"):
+        ds.get_transform(num_data_points=2)
+
+
+def test_get_transform_no_catalog_no_error():
+    """Without a catalog, get_transform() should work with no validation."""
+    ds = _make_mock_dataset(
+        obs_vars=["temperature"],
+        catalog_path=None,
+        obs_variable_to_distribution={"temperature": "normal"},
+    )
+    post_transform, output_transform = ds.get_transform(num_data_points=2)
+    assert post_transform is not None
+    assert output_transform is not None
+
+
+def test_get_transform_returns_correct_types(two_var_catalog):
+    from oat.data_module.transform import NestedTransform, Transform
+    ds = _make_mock_dataset(
+        obs_vars=["real_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "normal"},
+    )
+    post_transform, output_transform = ds.get_transform(num_data_points=2)
+    assert isinstance(post_transform, NestedTransform)
+    assert isinstance(output_transform, Transform)

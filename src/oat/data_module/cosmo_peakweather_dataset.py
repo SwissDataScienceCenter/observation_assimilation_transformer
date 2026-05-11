@@ -559,80 +559,128 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.cos(year_angle)
         ], dtype=dtype_map[self.config.dtype])
         
-    def get_transform(self, num_data_points: int) -> tuple[transform.NestedTransform, transform.Transform]:
-        """
-        Compute data-driven transforms (log, standardization) from random samples.
-            num_data_points: Number of random data points to sample for statistics
-        Returns: NestedTransform to apply to batches, and output_transform for obs-only.
-        """
-        apply_log = ['wind_gust', 'wind_speed']
-        log_indices = [i for i, var in enumerate(self.config.obs_vars) if var in apply_log]
+    def get_transform(
+        self, num_data_points: int, dataloader=None
+    ) -> tuple[transform.NestedTransform, transform.Transform]:
+        """Compute data-driven transforms from random samples.
 
-        # Create pre-transform with log
-        log_transform = transform.LogTransform(apply_to=log_indices, 
-                                               feature_dim=-1, 
-                                               offset=1)
-        pre_transform = transform.NestedTransform({
-            'observation_data': {
-                'obs': log_transform
-            }
-        })
-        
-        # Initialize statistics gatherers
-        stats_dict = {
-            'observation_data': {
-                'obs': statistics.RunningFeatureStats(
-                    num_features=len(self.config.obs_vars),
-                    feature_dim=-1,
+        Uses the variable catalog (if configured) to determine log pre-transforms
+        and validate distribution–support compatibility.
+        """
+        from oat.data_module.variable_catalog import (
+            load_catalog,
+            check_distribution_compatibility,
+        )
+        from oat.model_module.output_head import OutputHead
+
+        obs_vars = list(self.config.obs_vars)
+        var_to_dist: dict[str, str] = dict(self.config.obs_variable_to_distribution)
+        var_settings: dict[str, Any] = dict(self.config.var_settings) if self.config.var_settings else {}
+
+        catalog: dict = {}
+        if self.config.variable_catalog_path is not None:
+            catalog = load_catalog(self.config.variable_catalog_path)
+
+        # Determine which obs_vars get a log pre-transform
+        log_var_indices: list[int] = []
+        for i, var in enumerate(obs_vars):
+            use_log = var_settings.get(var, {}).get("use_log", False)
+            if not use_log:
+                continue
+            if var in catalog and catalog[var].support != "positive":
+                raise ValueError(
+                    f"use_log requires 'positive' support in the variable catalog, but "
+                    f"'{var}' has support '{catalog[var].support}'. "
+                    f"Only strictly positive variables can be modelled in log space."
+                )
+            log_var_indices.append(i)
+
+        if log_var_indices:
+            log_transform: transform.Transform | None = transform.LogTransform(
+                apply_to=log_var_indices, feature_dim=-1, offset=0.0
+            )
+            pre_transform: transform.NestedTransform | None = transform.NestedTransform(
+                {"observation_data": {"obs": log_transform}}
+            )
+        else:
+            log_transform = None
+            pre_transform = None
+
+        # Validate distribution–support compatibility for every obs var
+        name_to_dist_cls = OutputHead.name_to_dist_cls()
+        log_var_names = {obs_vars[i] for i in log_var_indices}
+
+        for var in obs_vars:
+            if var not in var_to_dist or var not in catalog:
+                continue
+            dist_name = var_to_dist[var]
+            dist_cls = name_to_dist_cls.get(dist_name)
+            if dist_cls is None:
+                continue
+            effective_support = "real" if var in log_var_names else catalog[var].support
+            check_distribution_compatibility(var, effective_support, dist_name, dist_cls)
+
+        # Collect statistics on pre-transformed data
+        def gather_stats(
+            sample: dict[str, Any] | torch.Tensor,
+            stats_gatherer: dict[str, Any] | statistics.RunningFeatureStats,
+        ) -> None:
+            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
+                stats_gatherer.update(sample)  # type: ignore[arg-type]
+            elif isinstance(stats_gatherer, dict):
+                for key, stat in stats_gatherer.items():
+                    gather_stats(sample[key], stat)  # type: ignore[index]
+
+        stats_dict: dict[str, Any] = {
+            "observation_data": {
+                "obs": statistics.RunningFeatureStats(
+                    num_features=len(obs_vars), feature_dim=-1
                 ),
-                'topo': statistics.RunningFeatureStats(
-                    num_features=len(self.config.topo_vars),
-                    feature_dim=-3,
+                "topo": statistics.RunningFeatureStats(
+                    num_features=len(self.config.topo_vars), feature_dim=-3
                 ),
-                'geo': statistics.RunningFeatureStats(
-                    num_features=self.station_geo.shape[-1],
-                    feature_dim=-1,
+                "geo": statistics.RunningFeatureStats(
+                    num_features=self.station_geo.shape[-1], feature_dim=-1
                 ),
             },
-            'global_data': {
-                'global_field': statistics.RunningFeatureStats(
+            "global_data": {
+                "global_field": statistics.RunningFeatureStats(
                     num_features=len(self.config.nwp_vars) + len(self.config.topo_vars),
                     feature_dim=-3,
                 )
-            
-            }
+            },
         }
-        # Gather statistics
-        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
-            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
-                stats_gatherer.update(sample)
-            elif isinstance(stats_gatherer, dict):
-                for key, stat in stats_gatherer.items():
-                    gather_stats(sample[key], stat)
-                    
+
         rand_indices = torch.randperm(len(self))[:num_data_points]
-        
         for idx in rand_indices:
             sample = self[int(idx)]
-            pre_transformed_sample = pre_transform(sample)
-            gather_stats(pre_transformed_sample, stats_dict)
-        
-        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
-            
+            if pre_transform is not None:
+                sample = pre_transform(sample)
+            gather_stats(sample, stats_dict)
+
+        obs_normalization = stats_dict["observation_data"]["obs"].get_standard_transform()
+
+        if log_transform is not None:
+            output_transform: transform.Transform = transform.ComposedTransform(
+                [log_transform, obs_normalization]
+            )
+        else:
+            output_transform = obs_normalization
+
         transform_dict = {
-            'observation_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            "observation_data": {
+                "obs": output_transform,
+                "topo": stats_dict["observation_data"]["topo"].get_standard_transform(),
+                "geo": stats_dict["observation_data"]["geo"].get_standard_transform(),
             },
-            'query_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+            "query_data": {
+                "obs": output_transform,
+                "topo": stats_dict["observation_data"]["topo"].get_standard_transform(),
+                "geo": stats_dict["observation_data"]["geo"].get_standard_transform(),
             },
-            'global_data': {
-                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
-            }
+            "global_data": {
+                "global_field": stats_dict["global_data"]["global_field"].get_standard_transform(),
+            },
         }
         post_transform = transform.NestedTransform(transform_dict)
         return post_transform, output_transform
