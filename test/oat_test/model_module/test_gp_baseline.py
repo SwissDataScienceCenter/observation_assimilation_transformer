@@ -146,7 +146,7 @@ class TestGPBaselineFeatureSlicing:
         assert model.stationary_covar_indices == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
         assert model.non_stationary_covar_indices == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
 
-    def test_gp_modules_are_wrapped_with_feature_slices(self):
+    def test_gp_modules_use_neural_mean_and_product_kernel(self):
         model = GPBaseline(make_config(use_nwp=True, use_time_emb=True, use_topography=False))
         assert type(model.gp.mean_module).__name__ == "NeuralMean"
         assert type(model.gp.covar_module).__name__ == "ProductKernel"
