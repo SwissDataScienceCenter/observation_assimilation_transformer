@@ -3,7 +3,6 @@ import pytest
 import torch
 from torch.distributions import constraints
 from pathlib import Path
-import os
 
 from oat.data_module.variable_catalog import (
     VariableDef,
