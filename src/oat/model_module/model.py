@@ -95,7 +95,7 @@ class OutputHeadConfig:
     variable_to_distribution: Dict[str, str]
     loss_scaling: torch.Tensor | None = None
     crps_mc_samples: int = 50
-    use_explicit_innovation: bool = True
+    observation_assimilation_as: str = "innovation"
 
 
 @dataclass
@@ -255,7 +255,7 @@ class UninformedOAT(nn.Module):
             variable_to_distribution=config.output_head.variable_to_distribution,
             loss_scaling=config.output_head.loss_scaling,
             crps_mc_samples=config.output_head.crps_mc_samples,
-            use_explicit_innovation=config.output_head.use_explicit_innovation
+            observation_assimilation_as=config.output_head.observation_assimilation_as
         )
    
     def forward(

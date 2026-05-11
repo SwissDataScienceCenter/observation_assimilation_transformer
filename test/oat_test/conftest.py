@@ -53,7 +53,7 @@ def model_cfg_fixture(batch_fixture):
         variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
         loss_scaling=None,
         crps_mc_samples=50,
-        use_explicit_innovation=False # TODO Set to true once implemented
+        observation_assimilation_as="innovation"
     )
     
     oat_cfg = OATConfig(
@@ -90,7 +90,7 @@ def uninformed_model_cfg_fixture(batch_fixture):
         variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
         loss_scaling=None,
         crps_mc_samples=50,
-        use_explicit_innovation=False # TODO Set to true once implemented
+        observation_assimilation_as="innovation"
     )
     
     uninformed_oat_cfg = UninformedOATConfig(

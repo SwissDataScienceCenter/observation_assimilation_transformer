@@ -632,8 +632,8 @@ class OutputHead(nn.Module):
     and follow the same order as the variable names in the variable_to_distribution dictionary.
     If one of the distributions does not have a closed form CRPS, crps_mc_samples is then the number of samples used to 
     estimate the CRPS value.
-    use_explicit_innovation is a flag used to control the kind of innovation used. If true, the innovation is computed
-    in a distribution-specific manner. If false, the raw observations are used and the fusion layer is responsible to 
+    observation_assimilation_as is a flag used to control the kind of assimilation used. If "innovation", the innovation is computed
+    in a distribution-specific manner. If "target", the target observations are used and the fusion layer is responsible to 
     learn an update from them.
     
     To get the predicted distributions as objects, call forward() with the input features. 
@@ -646,7 +646,7 @@ class OutputHead(nn.Module):
                  variable_to_distribution: Dict[str, str],
                  loss_scaling: torch.Tensor | None = None,
                  crps_mc_samples: int = 50,
-                 use_explicit_innovation: bool = True
+                 observation_assimilation_as: Literal["innovation", "target"] = "innovation"
                  ):
         super().__init__()
         
@@ -669,7 +669,8 @@ class OutputHead(nn.Module):
         
         self.loss_scaling = loss_scaling
         self.crps_mc_samples = crps_mc_samples
-        self.use_explicit_innovation = use_explicit_innovation
+        assert observation_assimilation_as in ["innovation", "target"]
+        self.observation_assimilation_as = observation_assimilation_as
 
     @classmethod
     def supported_distributions(cls):
@@ -795,7 +796,7 @@ class OutputHead(nn.Module):
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
         
-        if self.use_explicit_innovation:
+        if self.observation_assimilation_as == "innovation":
             predicted_distributions = self.forward(x, as_dict=True) # predict the distribution
             innovations = []
             for i, (var_name, dist) in enumerate(predicted_distributions.items()): # for each variable, compute the innovation according to the distribution-specific method
