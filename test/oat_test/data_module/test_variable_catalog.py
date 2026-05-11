@@ -143,3 +143,21 @@ def test_cosmo_peakweather_catalog_default_distributions_are_valid():
                 f"Variable '{name}' default_distribution '{vd.default_distribution}' "
                 f"not in supported distributions: {supported}"
             )
+
+
+def test_cosmo_peak_weather_config_accepts_new_fields():
+    """CosmoPeakWeatherConfig dataclass accepts variable_catalog_path and var_settings."""
+    from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherConfig
+    cfg = CosmoPeakWeatherConfig(
+        nwp_path="/tmp/nwp",
+        topo_path="/tmp/topo",
+        obs_path="/tmp/obs",
+        ref_nwp_path="/tmp/ref",
+        nwp_vars=["T_2M"],
+        topo_vars=["DEM"],
+        obs_vars=["temperature"],
+        variable_catalog_path="/tmp/catalog.yaml",
+        var_settings={"temperature": {"use_log": False}},
+    )
+    assert cfg.variable_catalog_path == "/tmp/catalog.yaml"
+    assert cfg.var_settings == {"temperature": {"use_log": False}}

@@ -5,7 +5,7 @@ Loads coarse NWP fields, high-res topography, and sparse station observations.
 Matches architecture from Neural_Downscaling_with_Station_Observation.pdf
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Optional, Any
 
@@ -70,6 +70,9 @@ class CosmoPeakWeatherConfig:
     
     # Data type
     dtype: str = "float32"
+
+    variable_catalog_path: Optional[str] = None
+    var_settings: dict = field(default_factory=dict)
 
 
 class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
