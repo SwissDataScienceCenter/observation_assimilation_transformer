@@ -72,7 +72,7 @@ class CosmoPeakWeatherConfig:
     dtype: str = "float32"
 
     variable_catalog_path: Optional[str] = None
-    var_settings: dict = field(default_factory=dict)
+    var_settings: dict[str, Any] = field(default_factory=dict)
 
 
 class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
