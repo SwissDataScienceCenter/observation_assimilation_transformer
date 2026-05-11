@@ -108,7 +108,7 @@ class BaseFusionLayer(nn.Module):
         self.out_channels = out_channels
 
     @abstractmethod
-    def forward(self, *inputs: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(self, *inputs: torch.Tensor, cond: torch.Tensor | tuple[torch.Tensor, ...]) -> torch.Tensor:
         pass
 
 
@@ -214,10 +214,12 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
     Args:
         in_channels: List of input channel dimensions to be concatenated
         out_channels: Number of output channels after the final readout layer
-        cond_dim: Dimension of conditioning vector for adaptive normalization layers
+        cond_dim: Conditioning dimension(s). Pass an int for a single conditioning
+                  tensor, or a list[int] when passing multiple conditioning tensors
+                  (they will be concatenated; the list encodes their individual sizes).
         dropout_p: Dropout probability applied after each GLU operation
         residual_learning: Whether to use residual connections in FusionBlocks. First block won't use it due to dimension mismatch.
-        norm_first: If True, apply normalization before the mixing layer; 
+        norm_first: If True, apply normalization before the mixing layer;
                    if False, apply after
         norm_layer: Type of normalization to use. Options are:
                    - "LayerNorm": Standard layer normalization
@@ -227,10 +229,10 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         hidden_channels: Number of channels in intermediate FusionBlocks
     """
 
-    def __init__(self, 
+    def __init__(self,
                  in_channels: list[int],
                  out_channels: int,
-                 cond_dim: int = 0,
+                 cond_dim: int | list[int] = 0,
                  dropout_p: float = 0.0,
                  residual_learning: bool = True,
                  norm_first: bool = True,
@@ -241,9 +243,11 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
 
         super().__init__(in_channels, out_channels)
 
+        total_cond_dim = sum(cond_dim) if isinstance(cond_dim, list) else cond_dim
+
         blocks = [GLUFusionBlock(in_channels=sum(in_channels),
                               out_channels=hidden_channels,
-                              cond_channels=cond_dim,
+                              cond_channels=total_cond_dim,
                               norm_first=norm_first,
                               norm_layer=norm_layer,
                               dropout_p=dropout_p)
@@ -252,7 +256,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         for _ in range(n_blocks-1):
             blocks.append(GLUFusionBlock(in_channels=hidden_channels,
                                       out_channels=hidden_channels,
-                                      cond_channels=cond_dim,
+                                      cond_channels=total_cond_dim,
                                       norm_first=norm_first,
                                       norm_layer=norm_layer,
                                       dropout_p=dropout_p,
@@ -260,7 +264,7 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         self.blocks = nn.ModuleList(blocks)
         self.readout = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, *inputs: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(self, *inputs: torch.Tensor, cond: torch.Tensor | tuple[torch.Tensor, ...]) -> torch.Tensor:
         """
         Forward pass that concatenates inputs and applies normalization and mixing operations.
         The processing order depends on the norm_first flag:
@@ -271,45 +275,16 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         only the input tensor is used.
         Args:
             *inputs: Variable number of input tensors to be concatenated along the last dimension
-            cond: Conditioning tensor used by conditional normalization layers
+            cond: Single conditioning tensor, or a tuple of tensors concatenated along the last
+                  dimension. When a tuple is passed, individual sizes must match cond_dim at
+                  construction time.
         Returns:
             Processed tensor after normalization and mixing operations
         """
         x = torch.cat(inputs, dim=-1)
+        if isinstance(cond, tuple):
+            cond = torch.cat(cond, dim=-1)
 
         for block in self.blocks:
             x = block(x, cond)
         return self.readout(x)
-
-
-class MultiCondGLUFusionLayer(GatedLinearUnitFusionLayer):
-    """
-    Like GatedLinearUnitFusionLayer but accepts multiple conditioning tensors,
-    which are concatenated along the last dimension before being passed to the
-    fusion blocks.
-
-    Args:
-        in_channels: List of input channel dimensions to be concatenated.
-        out_channels: Number of output channels after the final readout layer.
-        cond_dims: List of conditioning dimensions, one per conditioning tensor.
-                   The effective cond_dim is sum(cond_dims).
-        **kwargs: Forwarded to GatedLinearUnitFusionLayer (dropout_p, norm_layer, etc.)
-    """
-
-    def __init__(self,
-                 in_channels: list[int],
-                 out_channels: int,
-                 cond_dims: list[int],
-                 **kwargs):
-        super().__init__(in_channels=in_channels,
-                         out_channels=out_channels,
-                         cond_dim=sum(cond_dims),
-                         **kwargs)
-
-    def forward(self, *inputs: torch.Tensor, cond: tuple[torch.Tensor, ...]) -> torch.Tensor:
-        """
-        Args:
-            *inputs: Variable number of input tensors concatenated along the last dim.
-            cond: Tuple of conditioning tensors, will beconcatenated along the last dim.
-        """
-        return super().forward(*inputs, cond=torch.cat(cond, dim=-1))

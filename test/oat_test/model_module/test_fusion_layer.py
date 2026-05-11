@@ -1,4 +1,4 @@
-from oat.model_module import GatedLinearUnitFusionLayer, MultiCondGLUFusionLayer
+from oat.model_module import GatedLinearUnitFusionLayer
 
 import torch
 import pytest
@@ -64,18 +64,17 @@ def test_glu_fusion_layer_variable_num_inputs_and_conds(num_channels: list[int],
                                               norm_first: bool,
                                               cond_dims: list[int]) -> None:
     
-    fusion_layer = MultiCondGLUFusionLayer(
+    fusion_layer = GatedLinearUnitFusionLayer(
         in_channels=num_channels,
         n_blocks=num_blocks,
         out_channels=16,
-        cond_dims=cond_dims,
+        cond_dim=cond_dims,
         norm_layer=layer_norm,
         residual_learning=residual_learning,
         norm_first=norm_first)
-    
-    
+
     inputs = [torch.randn(32, 12, c) for c in num_channels]
-    cond = [torch.randn(32, 12, d) for d in cond_dims]
+    cond = tuple(torch.randn(32, 12, d) for d in cond_dims)
     out = fusion_layer(*inputs, cond=cond)
 
     assert out.shape[-1] == 16
