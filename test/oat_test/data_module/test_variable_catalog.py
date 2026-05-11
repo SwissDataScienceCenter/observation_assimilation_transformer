@@ -121,7 +121,7 @@ variables:
 # COSMO-PeakWeather catalog coverage
 # ──────────────────────────────────────────────
 
-CATALOG_PATH = Path(__file__).parents[3] / "configs" / "variables" / "cosmo_peakweather" / "cosmo_peakweather.yaml"
+CATALOG_PATH = Path(__file__).parents[3] / "configs" / "variables" / "cosmo_peakweather.yaml"
 
 
 @pytest.mark.skipif(not CATALOG_PATH.exists(), reason="catalog file not found")

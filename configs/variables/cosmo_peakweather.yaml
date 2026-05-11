@@ -27,14 +27,14 @@ variables:
   wind_speed:
     description: "10m horizontal wind speed magnitude"
     unit: "m/s"
-    support: "positive"
-    default_distribution: "lognormal"
+    support: "nonnegative"
+    default_distribution: "zero_inflated_lognormal"
 
   wind_gust:
     description: "Maximum 10m wind gust speed"
     unit: "m/s"
-    support: "positive"
-    default_distribution: "lognormal"
+    support: "nonnegative"
+    default_distribution: "zero_inflated_lognormal"
 
   precipitation:
     description: "Hourly precipitation accumulation"
