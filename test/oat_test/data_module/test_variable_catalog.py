@@ -324,3 +324,115 @@ def test_get_transform_use_log_requires_catalog_entry(two_var_catalog):
     )
     with pytest.raises(ValueError, match="not found"):
         ds.get_transform(num_data_points=2)
+
+
+# ──────────────────────────────────────────────
+# TrainDataset.get_transform() catalog integration
+# ──────────────────────────────────────────────
+
+import numpy as np
+from oat.data_module.data_split import TrainDataset
+
+
+def _make_train_dataset(obs_vars, var_settings=None, catalog_path=None, obs_variable_to_distribution=None):
+    """Build a minimal mock TrainDataset that exercises get_transform() without real data."""
+    n_stations = 5
+    n_obs_vars = len(obs_vars)
+    n_topo_vars = 2
+    n_geo_vars = 3
+    n_nwp_vars = 3
+
+    obs_tensor = torch.ones(n_stations, n_obs_vars)
+    topo_tensor = torch.zeros(n_stations, n_topo_vars, 4, 4)
+    geo_tensor = torch.zeros(n_stations, n_geo_vars)
+    nwp_field = torch.zeros(n_nwp_vars + n_topo_vars, 8, 8)
+
+    # Sample returned by the underlying dataset (all stations, no obs/query split)
+    fake_sample = {
+        "global_data": {"global_field": nwp_field},
+        "observation_data": {
+            "obs": obs_tensor,
+            "topo": topo_tensor,
+            "geo": geo_tensor,
+        },
+    }
+
+    inner_ds = MagicMock()
+    inner_ds.stations = np.array([f"s{i}" for i in range(n_stations)])
+    inner_ds.__len__ = MagicMock(return_value=10)
+    inner_ds.__getitem__ = MagicMock(return_value=fake_sample)
+
+    cfg = MagicMock()
+    cfg.obs_vars = obs_vars
+    cfg.nwp_vars = ["T_2M", "T_G", "DEM"]
+    cfg.topo_vars = ["DEM", "TPI_500M"]
+    cfg.geo_vars = ["easting", "northing", "dem"]
+    cfg.var_settings = var_settings or {}
+    cfg.variable_catalog_path = catalog_path
+    cfg.obs_variable_to_distribution = obs_variable_to_distribution or {v: "normal" for v in obs_vars}
+    inner_ds.config = cfg
+
+    train_indices = np.array([0, 1, 2])
+    return TrainDataset(inner_ds, train_indices, split_fraction=1.0)
+
+
+def test_train_dataset_get_transform_no_catalog_no_error():
+    td = _make_train_dataset(obs_vars=["temperature"], catalog_path=None)
+    post_transform, output_transform = td.get_transform(num_data_points=2)
+    assert post_transform is not None
+    assert output_transform is not None
+
+
+def test_train_dataset_get_transform_no_log_by_default(two_var_catalog):
+    from oat.data_module.transform import LogTransform, StandardNormalizeTransform
+    td = _make_train_dataset(
+        obs_vars=["real_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "normal"},
+    )
+    _post, output_transform = td.get_transform(num_data_points=2)
+    assert isinstance(output_transform, StandardNormalizeTransform)
+
+
+def test_train_dataset_get_transform_use_log_positive_var_ok(two_var_catalog):
+    from oat.data_module.transform import ComposedTransform, LogTransform
+    td = _make_train_dataset(
+        obs_vars=["positive_var"],
+        var_settings={"positive_var": {"use_log": True}},
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"positive_var": "normal"},
+    )
+    _post, output_transform = td.get_transform(num_data_points=2)
+    assert isinstance(output_transform, ComposedTransform)
+    assert any(isinstance(t, LogTransform) for t in output_transform.transforms)
+
+
+def test_train_dataset_get_transform_use_log_requires_positive_support(two_var_catalog):
+    td = _make_train_dataset(
+        obs_vars=["real_var"],
+        var_settings={"real_var": {"use_log": True}},
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "normal"},
+    )
+    with pytest.raises(ValueError, match="use_log"):
+        td.get_transform(num_data_points=2)
+
+
+def test_train_dataset_get_transform_incompatible_dist_raises(two_var_catalog):
+    td = _make_train_dataset(
+        obs_vars=["real_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"real_var": "exponential"},
+    )
+    with pytest.raises(ValueError, match="cannot represent all values"):
+        td.get_transform(num_data_points=2)
+
+
+def test_train_dataset_get_transform_wider_dist_warns(two_var_catalog):
+    td = _make_train_dataset(
+        obs_vars=["nonneg_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"nonneg_var": "normal"},
+    )
+    with pytest.warns(UserWarning, match="broader support"):
+        td.get_transform(num_data_points=2)

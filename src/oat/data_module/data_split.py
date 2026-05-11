@@ -194,29 +194,71 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         return split_data
     
     def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None) -> tuple[transform.NestedTransform, transform.Transform]:
-        """
-        Compute data-driven transforms (log, standardization) from random samples.
-            num_data_points: Number of random data points to sample for statistics
-        Returns: NestedTransform to apply to batches, and output_transform for obs-only.
-        """
-        apply_log = ['wind_gust', 'wind_speed']
-        log_indices = [i for i, var in enumerate(self.dataset.config.obs_vars) if var in apply_log]
+        """Compute data-driven transforms from random samples.
 
-        # Create pre-transform with log
-        log_transform = transform.LogTransform(apply_to=log_indices, 
-                                               feature_dim=-1, 
-                                               offset=1)
-        pre_transform = transform.NestedTransform({
-            'observation_data': {
-                'obs': log_transform
-            }
-        })
-        
+        Uses the variable catalog (if configured) to determine log pre-transforms
+        and validate distribution–support compatibility.
+        """
+        from oat.data_module.variable_catalog import VariableDef, load_catalog, check_distribution_compatibility
+        from oat.model_module.output_head import OutputHead
+
+        obs_vars = list(self.dataset.config.obs_vars)
+        var_settings: dict[str, Any] = dict(self.dataset.config.var_settings) if self.dataset.config.var_settings else {}
+        var_to_dist: dict[str, str] = dict(self.dataset.config.obs_variable_to_distribution)
+
+        catalog: dict[str, VariableDef] = {}
+        if self.dataset.config.variable_catalog_path is not None:
+            catalog = load_catalog(self.dataset.config.variable_catalog_path)
+
+        # Determine which obs_vars get a log pre-transform
+        log_var_indices: list[int] = []
+        for i, var in enumerate(obs_vars):
+            use_log = var_settings.get(var, {}).get("use_log", False)
+            if not use_log:
+                continue
+            if var not in catalog:
+                raise ValueError(
+                    f"var_settings['{var}'].use_log=True requires the variable to be in the "
+                    f"variable catalog, but '{var}' was not found. Add it to the catalog "
+                    f"at variable_catalog_path."
+                )
+            if catalog[var].support != "positive":
+                raise ValueError(
+                    f"var_settings['{var}'].use_log=True requires 'positive' support in the "
+                    f"variable catalog, but '{var}' has support '{catalog[var].support}'. "
+                    f"Only strictly positive variables can be modelled in log space."
+                )
+            log_var_indices.append(i)
+
+        if log_var_indices:
+            log_transform: transform.Transform | None = transform.LogTransform(
+                apply_to=log_var_indices, feature_dim=-1, offset=0.0
+            )
+            pre_transform: transform.NestedTransform | None = transform.NestedTransform(
+                {"observation_data": {"obs": log_transform}}
+            )
+        else:
+            log_transform = None
+            pre_transform = None
+
+        # Validate distribution–support compatibility for every obs var
+        name_to_dist_cls = OutputHead.name_to_dist_cls()
+        log_var_names = {obs_vars[i] for i in log_var_indices}
+        for var in obs_vars:
+            if var not in var_to_dist or var not in catalog:
+                continue
+            dist_name = var_to_dist[var]
+            dist_cls = name_to_dist_cls.get(dist_name)
+            if dist_cls is None:
+                continue
+            effective_support = "real" if var in log_var_names else catalog[var].support
+            check_distribution_compatibility(var, effective_support, dist_name, dist_cls)
+
         # Initialize statistics gatherers
-        stats_dict = {
+        stats_dict: dict[str, Any] = {
             'observation_data': {
                 'obs': statistics.RunningFeatureStats(
-                    num_features=len(self.dataset.config.obs_vars),
+                    num_features=len(obs_vars),
                     feature_dim=-1,
                 ),
                 'topo': statistics.RunningFeatureStats(
@@ -233,41 +275,46 @@ class TrainDataset(Dataset[Dict[str, Any]]):
                     num_features=len(self.dataset.config.nwp_vars) + len(self.dataset.config.topo_vars),
                     feature_dim=-3,
                 )
-            
             }
         }
-        # Gather statistics
+
         def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
             if isinstance(stats_gatherer, statistics.RunningFeatureStats):
                 stats_gatherer.update(sample)
             elif isinstance(stats_gatherer, dict):
                 for key, stat in stats_gatherer.items():
                     gather_stats(sample[key], stat)
-                    
+
         if dataloader is not None:
             bs = dataloader.batch_size
             for i, batch in tqdm(enumerate(dataloader), total=num_data_points // bs, desc="Gathering dataset statistics"):
                 if i * bs >= num_data_points:
                     break
-                pre_transformed_batch = pre_transform(batch)
+                pre_transformed_batch = pre_transform(batch) if pre_transform is not None else batch
                 gather_stats(pre_transformed_batch, stats_dict)
         else:
             rand_indices = torch.randperm(len(self))[:num_data_points]
             for idx in tqdm(rand_indices, desc="Gathering dataset statistics"):
                 sample = self[int(idx)]
-                pre_transformed_sample = pre_transform(sample)
-                gather_stats(pre_transformed_sample, stats_dict)
-        
-        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
-            
+                if pre_transform is not None:
+                    sample = pre_transform(sample)
+                gather_stats(sample, stats_dict)
+
+        obs_normalization = stats_dict['observation_data']['obs'].get_standard_transform()
+
+        if log_transform is not None:
+            output_transform: transform.Transform = transform.ComposedTransform([log_transform, obs_normalization])
+        else:
+            output_transform = obs_normalization
+
         transform_dict = {
             'observation_data': {
-                'obs':output_transform,
+                'obs': output_transform,
                 'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
                 'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
             },
             'query_data': {
-                'obs':output_transform,
+                'obs': output_transform,
                 'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
                 'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
             },
