@@ -6,7 +6,8 @@ import pickle
 from oat.model_module.model import (
     GlobalEncoderConfig,
     TopographicEncoderConfig,
-    FusionLayerConfig,
+    NwpTopoFusionConfig,
+    InnovationFusionConfig,
     MaskingConfig,
     TransformerConfig,
     OutputHeadConfig,
@@ -40,7 +41,9 @@ def model_cfg_fixture(batch_fixture):
         out_channels=4
     )
     
-    fusion_layer_cfg = FusionLayerConfig(out_channels=4, hidden_channels=4)
+    n_obs_vars = batch_fixture['observation_data']['obs'].shape[-1]
+    nwp_topo_fusion_cfg = NwpTopoFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
+    innovation_fusion_cfg = InnovationFusionConfig(cond_dim=[4, n_obs_vars], out_channels=4, hidden_channels=4)
     masking_cfg = MaskingConfig()
     transformer_cfg = TransformerConfig(
         d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1],
@@ -50,16 +53,17 @@ def model_cfg_fixture(batch_fixture):
     )
     output_head_cfg = OutputHeadConfig(
         in_features=4,
-        variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
+        variable_to_distribution={f"var_{i}": "normal" for i in range(n_obs_vars)},
         loss_scaling=None,
         crps_mc_samples=50,
         observation_assimilation_as="innovation"
     )
-    
+
     oat_cfg = OATConfig(
         global_encoder=global_enc_cfg,
         topographic_encoder=topography_enc_cfg,
-        fusion_layer=fusion_layer_cfg,
+        nwp_topo_fusion=nwp_topo_fusion_cfg,
+        innovation_fusion=innovation_fusion_cfg,
         transformer=transformer_cfg,
         masking=masking_cfg,
         output_head=output_head_cfg,
@@ -83,7 +87,7 @@ def uninformed_model_cfg_fixture(batch_fixture):
         out_channels=4
     )
     
-    fusion_layer_cfg = FusionLayerConfig(out_channels=4, hidden_channels=4)
+    nwp_topo_fusion_cfg = NwpTopoFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
 
     output_head_cfg = OutputHeadConfig(
         in_features=4,
@@ -92,11 +96,11 @@ def uninformed_model_cfg_fixture(batch_fixture):
         crps_mc_samples=50,
         observation_assimilation_as="innovation"
     )
-    
+
     uninformed_oat_cfg = UninformedOATConfig(
         global_encoder=global_enc_cfg,
         topographic_encoder=topography_enc_cfg,
-        fusion_layer=fusion_layer_cfg,
+        nwp_topo_fusion=nwp_topo_fusion_cfg,
         output_head=output_head_cfg,
         num_samples=10
     )

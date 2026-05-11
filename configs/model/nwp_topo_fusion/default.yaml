@@ -1,0 +1,5 @@
+hidden_channels: 32
+# cond_dim: set at runtime from dataset (time embedding size)
+# out_channels: set at runtime from model d_model
+dropout_p: 0.1
+norm_layer: AdaLN

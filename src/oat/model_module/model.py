@@ -53,11 +53,25 @@ class TopographicEncoderConfig:
 
 
 @dataclass
-class FusionLayerConfig:
-    """Configuration for fusion layers (Eq. 6-7, 16)."""
+class NwpTopoFusionConfig:
+    """Configuration for the NWP+topo fusion layer (Eq. 6-7), used by both UninformedOAT and OAT."""
+    cond_dim: int  # time embedding dimension — data-dependent, must be set explicitly
     out_channels: int = 64
     hidden_channels: int = 128
-    cond_dim: int = 4
+    dropout_p: float = 0.1
+    norm_layer: str = "AdaLN"
+
+
+@dataclass
+class InnovationFusionConfig:
+    """Configuration for the innovation fusion layer (Eq. 16), used only by OAT.
+
+    cond_dim should be [time_dim, mask_dim] to condition on both time and the
+    observation mask. Both are data-dependent and must be set explicitly.
+    """
+    cond_dim: int | list[int]  # data-dependent, must be set explicitly
+    out_channels: int = 64
+    hidden_channels: int = 128
     dropout_p: float = 0.1
     norm_layer: str = "AdaLN"
 
@@ -103,21 +117,25 @@ class OATConfig:
     """Complete OAT model configuration."""
     global_encoder: GlobalEncoderConfig
     topographic_encoder: TopographicEncoderConfig
-    fusion_layer: FusionLayerConfig
+    nwp_topo_fusion: NwpTopoFusionConfig
+    innovation_fusion: InnovationFusionConfig
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
-    
+
     @classmethod
     def default(cls) -> 'OATConfig':
         """Create default configuration."""
         d_model = 64
+        time_dim = 4
+        n_vars = 1
         return cls(
             global_encoder=GlobalEncoderConfig(out_channels=32),
             topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            fusion_layer=FusionLayerConfig(out_channels=d_model),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=time_dim, out_channels=d_model),
+            innovation_fusion=InnovationFusionConfig(cond_dim=[time_dim, n_vars], out_channels=d_model),
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
             output_head=OutputHeadConfig(in_features=d_model),
@@ -128,10 +146,10 @@ class OATConfig:
 class UninformedOATConfig:
     global_encoder: GlobalEncoderConfig
     topographic_encoder: TopographicEncoderConfig
-    fusion_layer: FusionLayerConfig
+    nwp_topo_fusion: NwpTopoFusionConfig
     output_head: OutputHeadConfig
     num_samples: int = 100
-    
+
     @classmethod
     def default(cls) -> 'UninformedOATConfig':
         """Create default configuration."""
@@ -139,7 +157,7 @@ class UninformedOATConfig:
         return cls(
             global_encoder=GlobalEncoderConfig(out_channels=32),
             topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            fusion_layer=FusionLayerConfig(out_channels=d_model),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=4, out_channels=d_model),
             output_head=OutputHeadConfig(in_features=d_model),
             num_samples=100
         )
@@ -177,11 +195,11 @@ class UninformedOAT(nn.Module):
         )
         self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
             in_channels=[d_global, d_topo],
-            out_channels=config.fusion_layer.out_channels,
-            hidden_channels=config.fusion_layer.hidden_channels,
-            cond_dim=config.fusion_layer.cond_dim,
-            dropout_p=config.fusion_layer.dropout_p,
-            norm_layer=config.fusion_layer.norm_layer,
+            out_channels=config.nwp_topo_fusion.out_channels,
+            hidden_channels=config.nwp_topo_fusion.hidden_channels,
+            cond_dim=config.nwp_topo_fusion.cond_dim,
+            dropout_p=config.nwp_topo_fusion.dropout_p,
+            norm_layer=config.nwp_topo_fusion.norm_layer,
         )
         self.output_head = self._init_output_head(config=config)
         
@@ -418,7 +436,7 @@ class OAT(UninformedOAT):
         
         super().__init__(config=UninformedOATConfig(global_encoder=config.global_encoder,
                                                     topographic_encoder=config.topographic_encoder,
-                                                    fusion_layer=config.fusion_layer,
+                                                    nwp_topo_fusion=config.nwp_topo_fusion,
                                                     output_head=config.output_head,
                                                     num_samples=config.num_samples))
         
@@ -434,11 +452,11 @@ class OAT(UninformedOAT):
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
         self.fusion_layer2 = fusion_layer.GatedLinearUnitFusionLayer(
             in_channels=[d_model, self.output_head.target_features],
-            out_channels=config.fusion_layer.out_channels,
-            hidden_channels=config.fusion_layer.hidden_channels,
-            cond_dim=config.fusion_layer.cond_dim,
-            dropout_p=config.fusion_layer.dropout_p,
-            norm_layer=config.fusion_layer.norm_layer,
+            out_channels=config.innovation_fusion.out_channels,
+            hidden_channels=config.innovation_fusion.hidden_channels,
+            cond_dim=config.innovation_fusion.cond_dim,
+            dropout_p=config.innovation_fusion.dropout_p,
+            norm_layer=config.innovation_fusion.norm_layer,
         )
         
         # Spatial neighborhood search (Eq. 14)
@@ -619,13 +637,13 @@ class OAT(UninformedOAT):
         # Note: Full station encoding happens in transformer encoder via self-attention
         batch_size = uninformed_kv_token.shape[0]
         n_kv = uninformed_kv_token.shape[1]
-        cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
-        
-        # TODO should we use the mask when fusing, as the mask is used for computing the innovation?
+        time_cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
+        mask_cond = observation_data['mask_obs']
+
         station_token = self.fusion_layer2(
             uninformed_kv_token,
             innovation,
-            cond=cond
+            cond=(time_cond, mask_cond)
         )
         
         # Step 4: Create uninformed query tokens (Eq. 1-7)

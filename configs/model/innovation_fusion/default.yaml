@@ -1,0 +1,5 @@
+hidden_channels: 32
+# cond_dim: set at runtime as [time_cond_dim, n_obs_vars]
+# out_channels: set at runtime from model d_model
+dropout_p: 0.1
+norm_layer: AdaLN
