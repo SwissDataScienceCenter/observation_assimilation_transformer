@@ -1,4 +1,4 @@
-from typing import Type, Optional, List
+from typing import Type, Optional, List, Tuple
 import logging
 
 import pytorch_lightning as pl
@@ -221,7 +221,7 @@ class OATPredictor(pl.LightningModule):
         if self.model.requires_observation:
             # these are arguments for the informed models only
             model_fwd_kwargs["observation_data"] = batch['observation_data']
-            model_fwd_kwargs["return_pre_oat_output"] =True
+            model_fwd_kwargs["return_pre_oat_output"] = True
 
         if not return_loss_and_targets:
             out = self.model.forward(**model_fwd_kwargs)
@@ -322,12 +322,15 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_pre_oat: bool=False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         batch = self._normalize_batch(batch)
-
         y_hat = self(batch, return_loss_and_targets=False)
-
-        return self.output_transform.inverse(y_hat['samples'])
+        y_hat_samples = self.output_transform.inverse(y_hat['samples'])
+        if return_pre_oat:
+            y_hat_pre_out_samples = self.output_transform.inverse(y_hat['pre_oat_output']['samples'])
+            return y_hat_samples, y_hat_pre_out_samples
+        else:    
+            return y_hat_samples
     
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 

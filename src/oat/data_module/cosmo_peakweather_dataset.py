@@ -16,7 +16,7 @@ import xarray as xr
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from oat.data_module import transform, statistics
 import logging as _logging
 
@@ -71,6 +71,7 @@ class CosmoPeakWeatherConfig:
     # Data type
     dtype: str = "float32"
 
+    obs_variable_to_distribution: dict[str, str] = field(default_factory=dict)
     variable_catalog_path: Optional[str] = None
     var_settings: dict[str, Any] = field(default_factory=dict)
 
@@ -560,7 +561,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         ], dtype=dtype_map[self.config.dtype])
         
     def get_transform(
-        self, num_data_points: int, dataloader=None
+        self, num_data_points: int, dataloader: "DataLoader | None" = None
     ) -> tuple[transform.NestedTransform, transform.Transform]:
         """Compute data-driven transforms from random samples.
 
@@ -568,6 +569,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         and validate distribution–support compatibility.
         """
         from oat.data_module.variable_catalog import (
+            VariableDef,
             load_catalog,
             check_distribution_compatibility,
         )
@@ -577,7 +579,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         var_to_dist: dict[str, str] = dict(self.config.obs_variable_to_distribution)
         var_settings: dict[str, Any] = dict(self.config.var_settings) if self.config.var_settings else {}
 
-        catalog: dict = {}
+        catalog: dict[str, VariableDef] = {}
         if self.config.variable_catalog_path is not None:
             catalog = load_catalog(self.config.variable_catalog_path)
 
@@ -587,10 +589,16 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             use_log = var_settings.get(var, {}).get("use_log", False)
             if not use_log:
                 continue
-            if var in catalog and catalog[var].support != "positive":
+            if var not in catalog:
                 raise ValueError(
-                    f"use_log requires 'positive' support in the variable catalog, but "
-                    f"'{var}' has support '{catalog[var].support}'. "
+                    f"var_settings['{var}'].use_log=True requires the variable to be in the "
+                    f"variable catalog, but '{var}' was not found. Add it to the catalog "
+                    f"at variable_catalog_path."
+                )
+            if catalog[var].support != "positive":
+                raise ValueError(
+                    f"var_settings['{var}'].use_log=True requires 'positive' support in the "
+                    f"variable catalog, but '{var}' has support '{catalog[var].support}'. "
                     f"Only strictly positive variables can be modelled in log space."
                 )
             log_var_indices.append(i)
@@ -667,7 +675,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         else:
             output_transform = obs_normalization
 
-        transform_dict = {
+        transform_dict: dict[str, transform.Transform | dict] = {
             "observation_data": {
                 "obs": output_transform,
                 "topo": stats_dict["observation_data"]["topo"].get_standard_transform(),

@@ -243,7 +243,7 @@ def test_get_transform_use_log_requires_positive_support(two_var_catalog):
         catalog_path=two_var_catalog,
         obs_variable_to_distribution={"real_var": "normal"},
     )
-    with pytest.raises(ValueError, match="use_log requires"):
+    with pytest.raises(ValueError, match="use_log"):
         ds.get_transform(num_data_points=2)
 
 
@@ -313,3 +313,14 @@ def test_get_transform_returns_correct_types(two_var_catalog):
     post_transform, output_transform = ds.get_transform(num_data_points=2)
     assert isinstance(post_transform, NestedTransform)
     assert isinstance(output_transform, Transform)
+
+
+def test_get_transform_use_log_requires_catalog_entry(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["unknown_var"],
+        var_settings={"unknown_var": {"use_log": True}},
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"unknown_var": "normal"},
+    )
+    with pytest.raises(ValueError, match="not found"):
+        ds.get_transform(num_data_points=2)
