@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import warnings
 import torch
-import yaml
+from torch.distributions import Distribution
+import yaml  # type: ignore[import-untyped]
 
 SUPPORT_RANK: dict[str, int] = {
     "positive": 0,
@@ -29,10 +30,7 @@ class VariableDef:
 
 
 def load_catalog(path: str | Path) -> dict[str, VariableDef]:
-    """Load variable catalog from a YAML file.
-    Top-level key 'variables' maps variable names to dicts with keys:
-    description, unit, support, and optionally default_distribution.
-    """
+    """Load variable catalog from a YAML file with a top-level 'variables' key."""
     with open(path) as f:
         raw = yaml.safe_load(f)
     catalog: dict[str, VariableDef] = {}
@@ -47,25 +45,18 @@ def load_catalog(path: str | Path) -> dict[str, VariableDef]:
     return catalog
 
 
-def constraint_to_support_str(constraint) -> str | None:
-    """Classify a torch.distributions constraint to 'real', 'nonnegative', 'positive', or None.
-
-    Probes the constraint with test tensor values (robust, no internal type names):
-    - If -1.0 is valid → "real"
-    - If -1.0 invalid but 0.0 valid → "nonnegative"
-    - If both invalid but 1.0 valid → "positive"
-    - Otherwise → None (unknown constraint, e.g. unit_interval, simplex)
-    """
+def constraint_to_support_str(constraint: torch.distributions.constraints.Constraint) -> str | None:
+    """Classify a torch.distributions constraint to 'real', 'nonnegative', 'positive', or None."""
     try:
         neg = torch.tensor(-1.0)
         zero = torch.tensor(0.0)
         pos = torch.tensor(1.0)
         large = torch.tensor(2.0)
-        if bool(constraint.check(neg)):
+        if bool(constraint.check(neg)):  # type: ignore[no-untyped-call]
             return "real"
-        if bool(constraint.check(zero)) and bool(constraint.check(large)):
+        if bool(constraint.check(zero)) and bool(constraint.check(large)):  # type: ignore[no-untyped-call]
             return "nonnegative"
-        if bool(constraint.check(pos)) and bool(constraint.check(large)):
+        if bool(constraint.check(pos)) and bool(constraint.check(large)):  # type: ignore[no-untyped-call]
             return "positive"
         return None
     except Exception:
@@ -76,23 +67,14 @@ def check_distribution_compatibility(
     var_name: str,
     effective_support: str,
     dist_name: str,
-    dist_cls: type,
+    dist_cls: type[Distribution],
 ) -> None:
-    """Validate that dist_cls support is compatible with the variable's effective_support.
-
-    After applying use_log=True to a positive variable, pass effective_support="real".
-
-    Raises ValueError if variable support ⊄ distribution support
-    (distribution cannot represent all values the variable can take).
-
-    Issues UserWarning if distribution support ⊃ variable support
-    (distribution can predict values the variable can never take).
-    """
+    """Raise ValueError or UserWarning based on support containment between var and distribution."""
     var_rank = SUPPORT_RANK.get(effective_support)
     if var_rank is None:
         return
 
-    dist_support_str = constraint_to_support_str(dist_cls.support)
+    dist_support_str = constraint_to_support_str(dist_cls.support)  # type: ignore[arg-type]
     if dist_support_str is None:
         return
 

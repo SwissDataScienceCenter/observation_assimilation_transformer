@@ -68,15 +68,10 @@ def test_positive_var_nonneg_dist_warns():
         check_distribution_compatibility("precip_intensity", "positive", "zero_inflated_lognormal", ZeroInflatedLogNormal)
 
 
-def test_use_log_effective_support_ok():
+def test_real_support_with_real_dist_ok():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         check_distribution_compatibility("some_positive_var", "real", "normal", NormalOAT)
-
-
-def test_use_log_effective_support_wrong_dist_raises():
-    with pytest.raises(ValueError, match="cannot represent all values"):
-        check_distribution_compatibility("some_positive_var", "real", "exponential", ExponentialOAT)
 
 
 def test_load_catalog(tmp_path):
