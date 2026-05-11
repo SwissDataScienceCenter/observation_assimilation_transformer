@@ -12,7 +12,7 @@ kernel_hidden_dims: [32]
 kernel_embed_dim: 4
 mean_groups: [nwp, time_emb, topo]
 stationary_cov_groups: [geo, ]
-non_stationary_cov_groups: [nwp, geo, time_emb]
+non_stationary_cov_groups: [geo, time_emb]
 
 noise_variance: 1.0
 eps: 0.001
