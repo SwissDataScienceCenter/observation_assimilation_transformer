@@ -666,7 +666,22 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 sample = pre_transform(sample)
             gather_stats(sample, stats_dict)
 
-        obs_normalization = stats_dict["observation_data"]["obs"].get_standard_transform()
+        obs_stats = stats_dict["observation_data"]["obs"]
+        translate = torch.zeros(len(obs_vars))
+        scale = torch.ones(len(obs_vars))
+        for i, var in enumerate(obs_vars):
+            if (
+                var in catalog
+                and var not in log_var_names
+                and catalog[var].support in ("nonnegative", "positive")
+            ):
+                scale[i] = 1.0 / obs_stats.max[i]
+            else:
+                translate[i] = -obs_stats.mean[i]
+                scale[i] = 1.0 / obs_stats.std[i]
+        obs_normalization = transform.TranslateScaleTransform(
+            translate=translate, scale=scale, channel_dim=-1
+        )
 
         if log_transform is not None:
             output_transform: transform.Transform = transform.ComposedTransform(

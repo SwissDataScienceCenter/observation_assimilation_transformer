@@ -267,8 +267,9 @@ def test_get_transform_no_log_by_default(two_var_catalog):
         obs_variable_to_distribution={"real_var": "normal"},
     )
     post_transform, output_transform = ds.get_transform(num_data_points=2)
-    from oat.data_module.transform import LogTransform, StandardNormalizeTransform
-    assert isinstance(output_transform, StandardNormalizeTransform)
+    from oat.data_module.transform import LogTransform, TranslateScaleTransform
+    assert isinstance(output_transform, TranslateScaleTransform)
+    assert not isinstance(output_transform, LogTransform)
 
 
 def test_get_transform_incompatible_dist_raises(two_var_catalog):
@@ -384,14 +385,15 @@ def test_train_dataset_get_transform_no_catalog_no_error():
 
 
 def test_train_dataset_get_transform_no_log_by_default(two_var_catalog):
-    from oat.data_module.transform import LogTransform, StandardNormalizeTransform
+    from oat.data_module.transform import LogTransform, TranslateScaleTransform
     td = _make_train_dataset(
         obs_vars=["real_var"],
         catalog_path=two_var_catalog,
         obs_variable_to_distribution={"real_var": "normal"},
     )
     _post, output_transform = td.get_transform(num_data_points=2)
-    assert isinstance(output_transform, StandardNormalizeTransform)
+    assert isinstance(output_transform, TranslateScaleTransform)
+    assert not isinstance(output_transform, LogTransform)
 
 
 def test_train_dataset_get_transform_use_log_positive_var_ok(two_var_catalog):
