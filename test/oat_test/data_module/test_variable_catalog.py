@@ -7,71 +7,81 @@ from pathlib import Path
 from oat.data_module.variable_catalog import (
     VariableDef,
     load_catalog,
-    constraint_to_support_str,
     check_distribution_compatibility,
-    SUPPORT_RANK,
+    check_support_overlap,
 )
-from oat.model_module.distributions import NormalOAT, ExponentialOAT, ZeroInflatedLogNormal, LogNormalOAT
+from oat.model_module.distributions import NormalOAT, ExponentialOAT, ZeroInflatedLogNormal
 
 
-def test_variable_def_valid_support():
-    for s in ("real", "nonnegative", "positive"):
-        vd = VariableDef(name="x", description="test", unit="units", support=s)
-        assert vd.support == s
+def test_variable_def_accepts_constraint_instances():
+    vd = VariableDef(
+        name="x",
+        description="test",
+        unit="units",
+        support=constraints.nonnegative,
+    )
+    assert bool(vd.support.check(torch.tensor(0.0)))
+    assert not bool(vd.support.check(torch.tensor(-1.0)))
 
 
-def test_variable_def_invalid_support():
-    with pytest.raises(ValueError, match="Unknown support"):
-        VariableDef(name="x", description="test", unit="units", support="complex")
+def test_variable_def_rejects_string_support():
+    with pytest.raises(TypeError, match="Constraint"):
+        VariableDef(
+            name="x",
+            description="test",
+            unit="units",
+            support="nonnegative",  # type: ignore[arg-type]
+        )
 
 
-def test_constraint_real():
-    assert constraint_to_support_str(constraints.real) == "real"
+def test_support_overlap_full_when_subset():
+    assert check_support_overlap(constraints.nonnegative, constraints.real) == "full"
 
 
-def test_constraint_nonnegative():
-    assert constraint_to_support_str(constraints.nonnegative) == "nonnegative"
+def test_support_overlap_partial_when_intersecting_not_subset():
+    assert check_support_overlap(constraints.real, constraints.nonnegative) == "partial"
 
 
-def test_constraint_positive():
-    assert constraint_to_support_str(constraints.positive) == "positive"
+def test_support_overlap_none_when_disjoint():
+    assert check_support_overlap(constraints.less_than(0.0), constraints.greater_than(0.0)) == "none"
 
 
-def test_constraint_unknown_returns_none():
-    assert constraint_to_support_str(constraints.unit_interval) is None
-
-
-def test_exact_match_ok():
+def test_compatibility_full_overlap_ok():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        check_distribution_compatibility("temperature", "real", "normal", NormalOAT)
+        check_distribution_compatibility(
+            "wind_speed",
+            constraints.nonnegative,
+            "zero_inflated_lognormal",
+            ZeroInflatedLogNormal,
+        )
+        check_distribution_compatibility("temperature", constraints.real, "normal", NormalOAT)
 
 
-def test_dist_too_narrow_raises():
-    with pytest.raises(ValueError, match="cannot represent all values"):
-        check_distribution_compatibility("temperature", "real", "exponential", ExponentialOAT)
+def test_compatibility_none_overlap_raises():
+    with pytest.raises(ValueError, match="not fully supported"):
+        check_distribution_compatibility(
+            "signed_var",
+            constraints.less_than(0.0),
+            "exponential",
+            ExponentialOAT,
+        )
 
 
-def test_dist_wider_than_var_warns():
-    with pytest.warns(UserWarning, match="broader support"):
-        check_distribution_compatibility("wind_speed", "nonnegative", "normal", NormalOAT)
+def test_compatibility_partial_overlap_warns():
+    with pytest.warns(UserWarning, match="partially overlaps"):
+        check_distribution_compatibility(
+            "temperature",
+            constraints.real,
+            "exponential",
+            ExponentialOAT,
+        )
 
 
-def test_nonneg_var_nonneg_dist_ok():
+def test_use_log_effective_support_full_overlap_ok():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        check_distribution_compatibility("wind_speed", "nonnegative", "zero_inflated_lognormal", ZeroInflatedLogNormal)
-
-
-def test_positive_var_nonneg_dist_warns():
-    with pytest.warns(UserWarning, match="broader support"):
-        check_distribution_compatibility("precip_intensity", "positive", "zero_inflated_lognormal", ZeroInflatedLogNormal)
-
-
-def test_real_support_with_real_dist_ok():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        check_distribution_compatibility("some_positive_var", "real", "normal", NormalOAT)
+        check_distribution_compatibility("some_positive_var", constraints.real, "normal", NormalOAT)
 
 
 def test_load_catalog(tmp_path):
@@ -96,9 +106,10 @@ variables:
     catalog_file.write_text(yaml_content)
     catalog = load_catalog(catalog_file)
     assert "temperature" in catalog
-    assert catalog["temperature"].support == "real"
+    assert bool(catalog["temperature"].support.check(torch.tensor(-1.0)))
     assert catalog["temperature"].default_distribution == "normal"
-    assert catalog["wind_speed"].support == "nonnegative"
+    assert bool(catalog["wind_speed"].support.check(torch.tensor(0.0)))
+    assert not bool(catalog["wind_speed"].support.check(torch.tensor(-1.0)))
     assert catalog["T_2M"].default_distribution is None
 
 
@@ -114,6 +125,42 @@ variables:
     catalog_file.write_text(yaml_content)
     with pytest.raises(ValueError, match="Unknown support"):
         load_catalog(catalog_file)
+
+
+def test_load_catalog_parses_named_support(tmp_path):
+    yaml_content = """
+variables:
+  wind_speed:
+    description: "10m wind speed"
+    unit: "m/s"
+    support: "nonnegative"
+"""
+    catalog_file = tmp_path / "catalog_named_support.yaml"
+    catalog_file.write_text(yaml_content)
+
+    catalog = load_catalog(catalog_file)
+    assert bool(catalog["wind_speed"].support.check(torch.tensor(0.0)))
+    assert not bool(catalog["wind_speed"].support.check(torch.tensor(-1.0)))
+
+
+def test_load_catalog_parses_parameterized_support(tmp_path):
+    yaml_content = """
+variables:
+  humidity:
+    description: "relative humidity"
+    unit: "fraction"
+    support:
+      name: "interval"
+      lower_bound: 0.0
+      upper_bound: 1.0
+"""
+    catalog_file = tmp_path / "catalog_interval_support.yaml"
+    catalog_file.write_text(yaml_content)
+
+    catalog = load_catalog(catalog_file)
+    support = catalog["humidity"].support
+    assert bool(support.check(torch.tensor(0.2)))
+    assert not bool(support.check(torch.tensor(1.2)))
 
 
 # ──────────────────────────────────────────────
@@ -167,8 +214,7 @@ def test_cosmo_peak_weather_config_accepts_new_fields():
 # get_transform() integration tests (no real data)
 # ──────────────────────────────────────────────
 
-from unittest.mock import MagicMock, patch
-import tempfile
+from unittest.mock import MagicMock
 
 
 def _make_mock_dataset(obs_vars, var_settings=None, catalog_path=None, obs_variable_to_distribution=None):
@@ -231,6 +277,14 @@ variables:
     unit: "units"
     support: "nonnegative"
     default_distribution: "zero_inflated_lognormal"
+    negative_var:
+        description: "a strictly negative variable"
+        unit: "units"
+        support:
+            name: "interval"
+            lower_bound: -2.0
+            upper_bound: -1.0
+        default_distribution: "normal"
 """
     p = tmp_path / "catalog.yaml"
     p.write_text(yaml_content)
@@ -272,23 +326,24 @@ def test_get_transform_no_log_by_default(two_var_catalog):
     assert isinstance(output_transform, TranslateScaleTransform)
 
 
-def test_get_transform_incompatible_dist_raises(two_var_catalog):
+def test_get_transform_unregistered_dist_name_skips_validation(two_var_catalog):
+    ds = _make_mock_dataset(
+        obs_vars=["negative_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"negative_var": "unsupported_dist"},
+    )
+    post_transform, output_transform = ds.get_transform(num_data_points=2)
+    assert post_transform is not None
+    assert output_transform is not None
+
+
+def test_get_transform_wider_dist_warns(two_var_catalog):
     ds = _make_mock_dataset(
         obs_vars=["real_var"],
         catalog_path=two_var_catalog,
         obs_variable_to_distribution={"real_var": "exponential"},
     )
-    with pytest.raises(ValueError, match="cannot represent all values"):
-        ds.get_transform(num_data_points=2)
-
-
-def test_get_transform_wider_dist_warns(two_var_catalog):
-    ds = _make_mock_dataset(
-        obs_vars=["nonneg_var"],
-        catalog_path=two_var_catalog,
-        obs_variable_to_distribution={"nonneg_var": "normal"},
-    )
-    with pytest.warns(UserWarning, match="broader support"):
+    with pytest.warns(UserWarning, match="partially overlaps"):
         ds.get_transform(num_data_points=2)
 
 
@@ -420,23 +475,24 @@ def test_train_dataset_get_transform_use_log_requires_positive_support(two_var_c
         td.get_transform(num_data_points=2)
 
 
-def test_train_dataset_get_transform_incompatible_dist_raises(two_var_catalog):
+def test_train_dataset_get_transform_unregistered_dist_name_skips_validation(two_var_catalog):
+    td = _make_train_dataset(
+        obs_vars=["negative_var"],
+        catalog_path=two_var_catalog,
+        obs_variable_to_distribution={"negative_var": "unsupported_dist"},
+    )
+    post_transform, output_transform = td.get_transform(num_data_points=2)
+    assert post_transform is not None
+    assert output_transform is not None
+
+
+def test_train_dataset_get_transform_wider_dist_warns(two_var_catalog):
     td = _make_train_dataset(
         obs_vars=["real_var"],
         catalog_path=two_var_catalog,
         obs_variable_to_distribution={"real_var": "exponential"},
     )
-    with pytest.raises(ValueError, match="cannot represent all values"):
-        td.get_transform(num_data_points=2)
-
-
-def test_train_dataset_get_transform_wider_dist_warns(two_var_catalog):
-    td = _make_train_dataset(
-        obs_vars=["nonneg_var"],
-        catalog_path=two_var_catalog,
-        obs_variable_to_distribution={"nonneg_var": "normal"},
-    )
-    with pytest.warns(UserWarning, match="broader support"):
+    with pytest.warns(UserWarning, match="partially overlaps"):
         td.get_transform(num_data_points=2)
 
 

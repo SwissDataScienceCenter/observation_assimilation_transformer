@@ -572,8 +572,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             VariableDef,
             load_catalog,
             check_distribution_compatibility,
+            check_support_overlap,
         )
         from oat.model_module.output_head import OutputHead
+        from torch.distributions import constraints
 
         obs_vars = list(self.config.obs_vars)
         var_to_dist: dict[str, str] = dict(self.config.obs_variable_to_distribution)
@@ -595,10 +597,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     f"variable catalog, but '{var}' was not found. Add it to the catalog "
                     f"at variable_catalog_path."
                 )
-            if catalog[var].support != "positive":
+            if check_support_overlap(catalog[var].support, constraints.positive) != "full":
                 raise ValueError(
-                    f"var_settings['{var}'].use_log=True requires 'positive' support in the "
-                    f"variable catalog, but '{var}' has support '{catalog[var].support}'. "
+                    f"var_settings['{var}'].use_log=True requires support fully contained in "
+                    f"positive reals, but '{var}' has incompatible support. "
                     f"Only strictly positive variables can be modelled in log space."
                 )
             log_var_indices.append(i)
@@ -625,7 +627,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             dist_cls = name_to_dist_cls.get(dist_name)
             if dist_cls is None:
                 continue
-            effective_support = "real" if var in log_var_names else catalog[var].support
+            effective_support = constraints.real if var in log_var_names else catalog[var].support
             check_distribution_compatibility(var, effective_support, dist_name, dist_cls)
 
         # Collect statistics on pre-transformed data
@@ -673,7 +675,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             if (
                 var in catalog
                 and var not in log_var_names
-                and catalog[var].support in ("nonnegative", "positive")
+                and check_support_overlap(catalog[var].support, constraints.nonnegative) == "full"
             ):
                 scale[i] = 1.0 / obs_stats.max[i]
             else:
