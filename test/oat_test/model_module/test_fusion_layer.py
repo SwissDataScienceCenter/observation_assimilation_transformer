@@ -1,4 +1,5 @@
 from oat.model_module import GatedLinearUnitFusionLayer
+from oat.model_module.fusion_layer import LearnableGating
 
 import torch
 import pytest
@@ -78,3 +79,21 @@ def test_glu_fusion_layer_variable_num_inputs_and_conds(num_channels: list[int],
     out = fusion_layer(*inputs, cond=cond)
 
     assert out.shape[-1] == 16
+    
+    
+@pytest.mark.parametrize("n_layers", [1, 2, 5])
+@pytest.mark.parametrize("out_channels", [1, 2, 5])
+def test_learnable_gating(n_layers: int, out_channels: int) -> None:
+    
+    inpt = torch.randn(32, 12, 8)
+    
+    gate = LearnableGating(in_channels=8, out_channels=out_channels, n_layers=n_layers)
+    
+    
+    gate_out = gate(inpt)
+    
+    assert gate_out.shape == (32, 12, out_channels)
+    
+    assert len(gate.ffnn) == n_layers * 2 # consider activation layers
+    
+    assert gate_out.max().item() <= 1.0 and gate_out.min().item() >= 0.0, "Output of LearnableGating should be in the range [0, 1]"

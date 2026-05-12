@@ -288,3 +288,31 @@ class GatedLinearUnitFusionLayer(BaseFusionLayer):
         for block in self.blocks:
             x = block(x, cond)
         return self.readout(x)
+
+
+class LearnableGating(nn.Module):
+    
+    def __init__(self, in_channels: int, 
+                 out_channels: int, 
+                 hidden_channels: int = 32,
+                 n_layers: int = 2,
+                 activation: str = "ReLU"):
+        super().__init__()
+        
+        layers = []
+        in_size = in_channels
+        out_size = hidden_channels
+        
+        for i in range(n_layers - 1):
+            layers.append(nn.Linear(in_size, out_size))
+            layers.append(get_activation(activation))
+            in_size = out_size
+            
+        layers.append(nn.Linear(in_size, out_channels)) # TODO should this layer have a bias?
+        layers.append(nn.Sigmoid())
+        
+        self.ffnn = nn.Sequential(*layers)
+        
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.ffnn(x)
