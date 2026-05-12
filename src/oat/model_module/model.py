@@ -66,10 +66,13 @@ class NwpTopoFusionConfig:
 class InnovationFusionConfig:
     """Configuration for the innovation fusion layer (Eq. 16), used only by OAT.
 
-    cond_dim should be [time_dim, mask_dim] to condition on both time and the
-    observation mask. Both are data-dependent and must be set explicitly.
+    When condition_on_mask=True, cond_dim must be [time_dim, mask_dim] and the
+    observation mask is concatenated to the time embedding as a second conditioning
+    signal. When False, cond_dim is a plain int (time only).
+    Both are data-dependent and must be set explicitly in the training script.
     """
     cond_dim: int | list[int]  # data-dependent, must be set explicitly
+    condition_on_mask: bool = False
     out_channels: int = 64
     hidden_channels: int = 128
     dropout_p: float = 0.1
@@ -135,7 +138,7 @@ class OATConfig:
             global_encoder=GlobalEncoderConfig(out_channels=32),
             topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
             nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=time_dim, out_channels=d_model),
-            innovation_fusion=InnovationFusionConfig(cond_dim=[time_dim, n_vars], out_channels=d_model),
+            innovation_fusion=InnovationFusionConfig(cond_dim=time_dim, out_channels=d_model),
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
             output_head=OutputHeadConfig(in_features=d_model),
@@ -638,12 +641,15 @@ class OAT(UninformedOAT):
         batch_size = uninformed_kv_token.shape[0]
         n_kv = uninformed_kv_token.shape[1]
         time_cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
-        mask_cond = observation_data['mask_obs']
+        if self.config.innovation_fusion.condition_on_mask:
+            cond = (time_cond, observation_data['mask_obs'])
+        else:
+            cond = time_cond
 
         station_token = self.fusion_layer2(
             uninformed_kv_token,
             innovation,
-            cond=(time_cond, mask_cond)
+            cond=cond
         )
         
         # Step 4: Create uninformed query tokens (Eq. 1-7)

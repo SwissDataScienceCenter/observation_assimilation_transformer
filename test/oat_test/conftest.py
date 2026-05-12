@@ -43,7 +43,7 @@ def model_cfg_fixture(batch_fixture):
     
     n_obs_vars = batch_fixture['observation_data']['obs'].shape[-1]
     nwp_topo_fusion_cfg = NwpTopoFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
-    innovation_fusion_cfg = InnovationFusionConfig(cond_dim=[4, n_obs_vars], out_channels=4, hidden_channels=4)
+    innovation_fusion_cfg = InnovationFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
     masking_cfg = MaskingConfig()
     transformer_cfg = TransformerConfig(
         d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1],

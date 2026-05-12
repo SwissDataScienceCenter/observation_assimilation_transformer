@@ -88,9 +88,11 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         **model_cfg.transformer)
 
     n_obs_vars = len(data_cfg.obs_vars)
+    condition_on_mask = model_cfg.innovation_fusion.condition_on_mask
+    innovation_cond_dim = [time_cond_dim, n_obs_vars] if condition_on_mask else time_cond_dim
     innovation_fusion_cfg = model.InnovationFusionConfig(
         **model_cfg.innovation_fusion,
-        cond_dim=[time_cond_dim, n_obs_vars],
+        cond_dim=innovation_cond_dim,
         out_channels=model_cfg.d_model)
 
     oat_config = model.OATConfig(
