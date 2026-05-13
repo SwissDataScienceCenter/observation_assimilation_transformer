@@ -4,12 +4,9 @@ import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
 
 from oat.predictor_module import OATPredictor
-from oat.model_module import OAT
 import torch
-import os
 import pytest
 import logging
-from pytorch_lightning.loggers.logger import DummyLogger
 from scripts.train_model import setup_oat_cfg
 from oat.model_module.model import OATConfig
 
@@ -144,7 +141,7 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
         assert same_distribution(prediction['pre_oat_output'][var_name], prediction_reloaded['pre_oat_output'][var_name])
     # assert that the samples, given that we forced a seed, are the same before and after checkpointing
     assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
-    assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
+
     
     
 def test_default_hydra_config(transform_fixture):

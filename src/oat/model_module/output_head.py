@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Sequence, Tuple
 from oat.model_module.distributions import _ALL_DISTRIBUTIONS
 from oat.model_module.distributions import DistributionMap, OATDistribution
 import einops
@@ -27,7 +27,7 @@ class OutputHead(nn.Module):
     def __init__(self,
                  in_features: int,
                  variable_to_distribution: Dict[str, str],
-                 loss_scaling: torch.Tensor | None = None,
+                 loss_scaling: Sequence[float] | torch.Tensor | None = None,
                  crps_mc_samples: int = 50,
                  observation_assimilation_as: Literal["innovation", "target"] = "innovation"
                  ):
@@ -48,6 +48,9 @@ class OutputHead(nn.Module):
         
         if loss_scaling is None:
             loss_scaling = torch.ones(len(variable_to_distribution))
+        if isinstance(loss_scaling, Sequence) and not isinstance(loss_scaling, torch.Tensor):
+            loss_scaling = torch.tensor(loss_scaling, dtype=torch.float32)
+
         assert loss_scaling.shape == (len(variable_to_distribution),), "loss_scaling must have the same length as the number of variables"
         
         self.loss_scaling = loss_scaling
@@ -56,11 +59,11 @@ class OutputHead(nn.Module):
         self.observation_assimilation_as = observation_assimilation_as
 
     @classmethod
-    def supported_distributions(cls):
+    def supported_distributions(cls) -> List[str]:
         return list(cls.name_to_dist_cls().keys())
     
     @classmethod
-    def name_to_dist_cls(cls):
+    def name_to_dist_cls(cls) -> Dict[str, OATDistribution]:
         return {
             dist_cls.name: dist_cls
             for dist_cls in _ALL_DISTRIBUTIONS
@@ -88,7 +91,7 @@ class OutputHead(nn.Module):
         
         return einops.rearrange(samples, 'sample batch station -> batch station sample 1')
         
-    def sample(self, x: torch.Tensor, num_samples: int, differentiable: bool, pred_dist: Dict[str, OATDistribution] = None, as_dict: bool = False) -> Dict[str, torch.Tensor] | torch.Tensor:
+    def sample(self, x: torch.Tensor | None, num_samples: int, differentiable: bool, pred_dist: Dict[str, OATDistribution] | None = None, as_dict: bool = False) -> Dict[str, torch.Tensor] | torch.Tensor:
         '''
         Return samples from the predicted distribututions given input features x. 
         If as_dict is True, returns a dictionary mapping each variable to samples of shape [batch, station, num_samples, 1].
@@ -102,9 +105,10 @@ class OutputHead(nn.Module):
         # In the future, we might need a better approach.
         
         if pred_dist is None:
+            assert x is not None, "If pred_dist is not provided, x must be provided to compute the distributions."
             distributions = self.forward(x, as_dict=True)
         else:
-            assert x is None
+            assert x is None, "If pred_dist is provided, x should be None."
             distributions = pred_dist
         
         output = {} if as_dict else []
@@ -140,11 +144,12 @@ class OutputHead(nn.Module):
         norm_loss = torch.mean(loss_per_sample / normalization)  # [B]
         return norm_loss
     
-    def loss(self, x, target, mask):
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         '''
         Given an input of shape [batch, station, in_features], a target of shape [batch, station, num_vars] 
         and a mask of the same shape as the target, computes the scalar loss by summing the scalar losses of each variable
         which are individually scaled by self.loss_scaling.
+        It returns the predicted distributions as a dictionary and the overall loss as a scalar tensor.
         '''
         
         overall_loss = torch.tensor(0.0, device=x.device)
@@ -175,9 +180,7 @@ class OutputHead(nn.Module):
         return out, overall_loss
 
     
-    # TODO innovations
-    
-    def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
+    def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         
         if self.observation_assimilation_as == "innovation":
             predicted_distributions = self.forward(x, as_dict=True) # predict the distribution
@@ -193,6 +196,6 @@ class OutputHead(nn.Module):
             return torch.stack(innovations, dim=-1)
 
         # straight-through: return the raw observations and let the fusion layer learn how to use them
-        return target
+        return target # TODO should we mask away here too? should it depend on model.config.innovation_fusion.condition_on_mask used in the consequent fusion layer?
 
     

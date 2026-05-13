@@ -4,7 +4,7 @@ Observation Assimilation Transformer (OAT) for Neural Downscaling.
 Following architecture from Neural Downscaling with Station Observation.
 """
 
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, Sequence
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
@@ -110,7 +110,7 @@ class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
     in_features: int
     variable_to_distribution: Dict[str, str]
-    loss_scaling: torch.Tensor | None = None
+    loss_scaling: Sequence[float] | torch.Tensor | None = None
     crps_mc_samples: int = 50
     observation_assimilation_as: str = "innovation"
 

@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
@@ -58,6 +58,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
 
     if cfg.dataset.obs_variable_to_distribution != cfg.model.output_head.variable_to_distribution:
         raise ValueError("Mismatch between observations variable distributions and output head variable distributions")
+    if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
+        raise ValueError("Variables in output head distribution config do not match observation variables")
     if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
         raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
     logger.info(

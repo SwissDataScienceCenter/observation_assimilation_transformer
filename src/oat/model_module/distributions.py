@@ -6,7 +6,7 @@ from torch import distributions as dist
 from torch.distributions import transform_to, Distribution, constraints
 
 
-def check_if_valid_distribution(dist_class):
+def check_if_valid_distribution(dist_class: type[Distribution]):
     if not all([constraint.event_dim == 0 for constraint in dist_class.arg_constraints.values()]):
         raise ValueError(f"{dist_class} has multivariate parameters, which are not supported.")
     # OATDistribution subclasses that override crps() analytically don't need rsample().
