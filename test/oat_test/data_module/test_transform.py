@@ -496,3 +496,49 @@ class TestLogTransformSupport:
         assert torch.allclose(transformed.upper_bounds[1], torch.log(torch.tensor(10.0)))
         assert transformed.lower_open[1] == support.lower_open[1]
         assert transformed.upper_open[1] == support.upper_open[1]
+
+
+class TestComposedTransformSupport:
+    def test_chained_translate_then_log(self) -> None:
+        transform = ComposedTransform(
+            [
+                TranslateScaleTransform(
+                    translate=torch.tensor([1.0]),
+                    scale=torch.tensor([2.0]),
+                ),
+                LogTransform(offset=0.0),
+            ]
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([0.0]),
+            upper_bounds=torch.tensor([3.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+
+        transformed = transform.transform_support(support)
+
+        assert torch.allclose(transformed.lower_bounds, torch.log(torch.tensor([2.0])))
+        assert torch.allclose(transformed.upper_bounds, torch.log(torch.tensor([8.0])))
+        assert torch.equal(transformed.lower_open, support.lower_open)
+        assert torch.equal(transformed.upper_open, support.upper_open)
+
+    def test_domain_violation_in_second_transform_raises(self) -> None:
+        transform = ComposedTransform(
+            [
+                TranslateScaleTransform(
+                    translate=torch.tensor([-1.0]),
+                    scale=torch.tensor([1.0]),
+                ),
+                LogTransform(offset=0.0),
+            ]
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([0.0]),
+            upper_bounds=torch.tensor([2.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+
+        with pytest.raises(ValueError, match="input support"):
+            transform.transform_support(support)

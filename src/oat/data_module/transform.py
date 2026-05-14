@@ -403,6 +403,11 @@ class ComposedTransform(Transform):
         for transform in reversed(self.transforms):
             sample = transform.inverse(sample)
         return sample
+
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+        for transform in self.transforms:
+            support = transform.transform_support(support)
+        return support
     
     def to_dict(self) -> dict[str, Any]:
         return {
