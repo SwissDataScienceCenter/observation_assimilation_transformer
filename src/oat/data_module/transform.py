@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import yaml
-from typing import Any
+from typing import Any, cast
 
 from oat.data_module.support import VariableSupport
 
@@ -475,6 +475,24 @@ class NestedTransform(Transform):
                 out[k] = self.transform_dict[k].inverse(v)
             else:
                 out[k] = v
+        return out
+
+    def transform_support(
+        self,
+        support_dict: dict[str, VariableSupport | dict | None],
+    ) -> dict[str, VariableSupport | dict | None]:
+        out: dict[str, VariableSupport | dict | None] = {}
+        for key, value in support_dict.items():
+            if value is None:
+                out[key] = None
+            elif key not in self.transform_dict:
+                out[key] = value
+            else:
+                transform = self.transform_dict[key]
+                if isinstance(transform, NestedTransform) and isinstance(value, dict):
+                    out[key] = transform.transform_support(value)
+                else:
+                    out[key] = transform.transform_support(cast(VariableSupport, value))
         return out
 
     def _dict_to_serializable(self, d: dict) -> dict:

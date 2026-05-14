@@ -542,3 +542,116 @@ class TestComposedTransformSupport:
 
         with pytest.raises(ValueError, match="input support"):
             transform.transform_support(support)
+
+
+class TestNestedTransformSupport:
+    def test_full_dict(self) -> None:
+        transform = NestedTransform(
+            {
+                "obs": LogTransform(offset=1.0),
+                "query": LogTransform(offset=1.0),
+            }
+        )
+        support_dict = {
+            "obs": VariableSupport(
+                lower_bounds=torch.tensor([0.0]),
+                upper_bounds=torch.tensor([9.0]),
+                lower_open=torch.tensor([False]),
+                upper_open=torch.tensor([True]),
+            ),
+            "query": VariableSupport(
+                lower_bounds=torch.tensor([2.0]),
+                upper_bounds=torch.tensor([99.0]),
+                lower_open=torch.tensor([True]),
+                upper_open=torch.tensor([False]),
+            ),
+        }
+
+        transformed = transform.transform_support(support_dict)
+
+        assert torch.allclose(transformed["obs"].lower_bounds, torch.log(torch.tensor([1.0])))
+        assert torch.allclose(transformed["obs"].upper_bounds, torch.log(torch.tensor([10.0])))
+        assert torch.allclose(transformed["query"].lower_bounds, torch.log(torch.tensor([3.0])))
+        assert torch.allclose(transformed["query"].upper_bounds, torch.log(torch.tensor([100.0])))
+
+    def test_substructure_only_obs(self) -> None:
+        transform = NestedTransform(
+            {
+                "obs": LogTransform(offset=1.0),
+                "query": LogTransform(offset=1.0),
+            }
+        )
+        support_dict = {
+            "obs": VariableSupport(
+                lower_bounds=torch.tensor([0.0]),
+                upper_bounds=torch.tensor([9.0]),
+                lower_open=torch.tensor([False]),
+                upper_open=torch.tensor([False]),
+            )
+        }
+
+        transformed = transform.transform_support(support_dict)
+
+        assert set(transformed.keys()) == {"obs"}
+        assert torch.allclose(transformed["obs"].lower_bounds, torch.log(torch.tensor([1.0])))
+        assert torch.allclose(transformed["obs"].upper_bounds, torch.log(torch.tensor([10.0])))
+
+    def test_none_leaf_passes_through_none(self) -> None:
+        transform = NestedTransform({"obs": LogTransform(offset=1.0)})
+        support_dict = {"obs": None}
+
+        transformed = transform.transform_support(support_dict)
+
+        assert transformed["obs"] is None
+
+    def test_key_not_in_transform_dict_passes_through_unchanged_object(self) -> None:
+        transform = NestedTransform({"obs": LogTransform(offset=1.0)})
+        untouched = VariableSupport(
+            lower_bounds=torch.tensor([-5.0]),
+            upper_bounds=torch.tensor([5.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+        support_dict = {"extra": untouched}
+
+        transformed = transform.transform_support(support_dict)
+
+        assert transformed["extra"] is untouched
+
+    def test_nested_structure_recursion_works(self) -> None:
+        transform = NestedTransform(
+            {
+                "obs": {
+                    "station": LogTransform(offset=1.0),
+                }
+            }
+        )
+        untouched = VariableSupport(
+            lower_bounds=torch.tensor([-3.0]),
+            upper_bounds=torch.tensor([3.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+        support_dict = {
+            "obs": {
+                "station": VariableSupport(
+                    lower_bounds=torch.tensor([0.0]),
+                    upper_bounds=torch.tensor([9.0]),
+                    lower_open=torch.tensor([False]),
+                    upper_open=torch.tensor([False]),
+                ),
+                "other": untouched,
+            }
+        }
+
+        transformed = transform.transform_support(support_dict)
+
+        assert torch.allclose(
+            transformed["obs"]["station"].lower_bounds,
+            torch.log(torch.tensor([1.0])),
+        )
+        assert torch.allclose(
+            transformed["obs"]["station"].upper_bounds,
+            torch.log(torch.tensor([10.0])),
+        )
+        assert transformed["obs"]["other"] is untouched
