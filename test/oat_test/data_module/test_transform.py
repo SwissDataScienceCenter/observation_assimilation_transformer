@@ -470,3 +470,29 @@ class TestLogTransformSupport:
         transformed = transform.transform_support(support)
         assert transformed.lower_bounds[0] == float("-inf")
         assert transformed.lower_open[0] == True
+
+    def test_partial_apply_to_non_selected_invalid_passes_through_unchanged(self) -> None:
+        """Test that non-selected variables bypass validation and pass through unchanged."""
+        transform = LogTransform(offset=1.0, apply_to=[1])
+        # Variable 0 is invalid for log transform (below -offset), but not selected
+        # Variable 1 is valid and selected for transformation
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-2.0, 0.0]),  # -2.0 is invalid for log, but not selected
+            upper_bounds=torch.tensor([5.0, 9.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, True]),
+        )
+        # Should NOT raise because only variable 1 is validated
+        transformed = transform.transform_support(support)
+        
+        # Variable 0 should pass through unchanged
+        assert torch.allclose(transformed.lower_bounds[0], torch.tensor(-2.0))
+        assert torch.allclose(transformed.upper_bounds[0], torch.tensor(5.0))
+        assert transformed.lower_open[0] == support.lower_open[0]
+        assert transformed.upper_open[0] == support.upper_open[0]
+        
+        # Variable 1 should be transformed
+        assert torch.allclose(transformed.lower_bounds[1], torch.log(torch.tensor(1.0)))
+        assert torch.allclose(transformed.upper_bounds[1], torch.log(torch.tensor(10.0)))
+        assert transformed.lower_open[1] == support.lower_open[1]
+        assert transformed.upper_open[1] == support.upper_open[1]

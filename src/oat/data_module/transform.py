@@ -345,8 +345,8 @@ class LogTransform(Transform):
             return VariableSupport(
                 lower_bounds=torch.log(support.lower_bounds + self.offset),
                 upper_bounds=torch.log(support.upper_bounds + self.offset),
-                lower_open=support.lower_open,
-                upper_open=support.upper_open,
+                lower_open=support.lower_open.clone(),
+                upper_open=support.upper_open.clone(),
             )
         else:
             indices = self.apply_to
