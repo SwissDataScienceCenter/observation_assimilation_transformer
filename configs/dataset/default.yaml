@@ -1,3 +1,4 @@
 defaults:
+  - _self_
   - cosmo_peakweather/settings@_here_
-  - cosmo_peakweather/catalog@_here_.catalog
+  - cosmo_peakweather/catalog@catalog
