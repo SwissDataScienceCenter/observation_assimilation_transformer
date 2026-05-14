@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import inf
+from typing import Any
 
 import torch
 from torch.distributions import constraints
@@ -49,13 +50,14 @@ class IntervalSupport(constraints.Constraint):
 
 CONSTRAINT_REGISTRY: dict[str, type[IntervalSupport]] = {
     "interval": IntervalSupport,
-    "intervalsupport": IntervalSupport,  # alias accepted when full class name is passed as string
+    # alias accepted when full class name is passed as string
+    "intervalsupport": IntervalSupport,
 }
 
 
 def create_variable_support(
     spec: str | constraints.Constraint,
-    **kwargs,
+    **kwargs: Any,
 ) -> IntervalSupport:
     if isinstance(spec, str):
         key = spec.strip().lower()

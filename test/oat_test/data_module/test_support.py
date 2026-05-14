@@ -40,7 +40,9 @@ def test_open_closed_bound_checks() -> None:
         (IntervalSupport(lower_bound=0.0), IntervalSupport(lower_bound=-1.0), True),
     ],
 )
-def test_is_subset_rules(a: IntervalSupport, b: IntervalSupport, expected: bool) -> None:
+def test_is_subset_rules(
+    a: IntervalSupport, b: IntervalSupport, expected: bool
+) -> None:
     assert a.is_subset(b) is expected
 
 
