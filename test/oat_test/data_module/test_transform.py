@@ -256,6 +256,26 @@ class TestRegistry:
         assert "ComposedTransform" in TRANSFORM_REGISTRY
 
 
+class TestTransformBaseContract:
+    def test_base_input_support_raises_not_implemented(self) -> None:
+        transform = Transform()
+
+        with pytest.raises(NotImplementedError, match="input_support"):
+            _ = transform.input_support
+
+    def test_base_transform_support_raises_not_implemented(self) -> None:
+        transform = Transform()
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0]),
+            upper_bounds=torch.tensor([1.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+
+        with pytest.raises(NotImplementedError, match="transform_support"):
+            transform.transform_support(support)
+
+
 class TestIdentityTransformSupport:
     def test_identity_transform_support_preserves_input_support(self) -> None:
         transform = IdentityTransform()
@@ -268,6 +288,7 @@ class TestIdentityTransformSupport:
 
         transformed = transform.transform_support(support)
 
+        assert transformed is support
         assert torch.equal(transformed.lower_bounds, support.lower_bounds)
         assert torch.equal(transformed.upper_bounds, support.upper_bounds)
         assert torch.equal(transformed.lower_open, support.lower_open)
