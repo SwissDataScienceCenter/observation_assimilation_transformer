@@ -158,3 +158,49 @@ def test_multivariate_is_subset_discrete_raises() -> None:
     s = VariableSupport(lo, hi)
     with pytest.raises(ValueError, match="continuous constraints"):
         s.is_subset(constraints.boolean, idx=0)
+
+
+def test_multivariate_is_subset_no_idx_scalar_constraint_checks_all_dimensions() -> None:
+    lo = torch.tensor([0.0, 0.2])
+    hi = torch.tensor([1.0, 0.8])
+    s = VariableSupport(lo, hi)
+
+    assert s.is_subset(constraints.interval(0.0, 1.0)) is True
+    assert s.is_subset(constraints.half_open_interval(0.0, 1.0)) is False
+
+
+def test_multivariate_is_subset_no_idx_variable_support_single_dimension_checks_all(
+) -> None:
+    base = VariableSupport(torch.tensor([0.0, 0.2]), torch.tensor([1.0, 0.8]))
+    one_dim = VariableSupport(torch.tensor([0.0]), torch.tensor([1.0]))
+
+    assert base.is_subset(one_dim) is True
+
+
+def test_multivariate_is_subset_no_idx_variable_support_equal_dimension_componentwise(
+) -> None:
+    base = VariableSupport(torch.tensor([0.0, 0.2]), torch.tensor([1.0, 0.8]))
+    wider = VariableSupport(torch.tensor([0.0, 0.0]), torch.tensor([1.0, 1.0]))
+    tighter = VariableSupport(torch.tensor([0.0, 0.3]), torch.tensor([1.0, 0.7]))
+
+    assert base.is_subset(wider) is True
+    assert base.is_subset(tighter) is False
+
+
+def test_multivariate_is_subset_no_idx_variable_support_dimension_mismatch_raises(
+) -> None:
+    base = VariableSupport(torch.tensor([0.0, 0.2]), torch.tensor([1.0, 0.8]))
+    mismatch = VariableSupport(
+        torch.tensor([0.0, 0.1, 0.2]),
+        torch.tensor([1.0, 0.9, 0.8]),
+    )
+
+    with pytest.raises(ValueError, match="equal dimension"):
+        base.is_subset(mismatch)
+
+
+def test_multivariate_is_subset_no_idx_discrete_constraint_raises() -> None:
+    s = VariableSupport(torch.tensor([0.0, 0.2]), torch.tensor([1.0, 0.8]))
+
+    with pytest.raises(ValueError, match="continuous constraints"):
+        s.is_subset(constraints.boolean)

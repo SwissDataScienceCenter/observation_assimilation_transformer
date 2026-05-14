@@ -127,8 +127,8 @@ class VariableSupport(constraints.Constraint):
         hi_ok = torch.where(hi_open, value < hi, value <= hi)
         return lo_ok & hi_ok
 
-    def is_subset(self, other: constraints.Constraint, idx: int) -> bool:
-        """Return True if variable *idx*'s interval is a subset of *other*.
+    def is_subset(self, other: constraints.Constraint, idx: int | None = None) -> bool:
+        """Return True if this support is a subset of *other*.
 
         Converts *other* to a ``_Bounds`` via ``_to_bounds`` and compares
         bounds and openness flags numerically.  ``other.check()`` is never
@@ -141,23 +141,71 @@ class VariableSupport(constraints.Constraint):
             against.
         idx:
             Index into the variable axis selecting which variable to test.
+            If omitted (``None``):
+            - for scalar constraints, check all variables against that
+              single constraint,
+            - for ``VariableSupport`` with one dimension, check all variables
+              against that single interval,
+            - for ``VariableSupport`` with equal dimension, compare
+              componentwise,
+            - otherwise raise ``ValueError``.
         """
+
+        def _subset_one(var_idx: int, target: _Bounds) -> bool:
+            lo = float(self.lower_bounds[var_idx].item())
+            hi = float(self.upper_bounds[var_idx].item())
+            lo_open = bool(self.lower_open[var_idx].item())
+            hi_open = bool(self.upper_open[var_idx].item())
+
+            # Lower bound: equality is fine when self excludes the point (open)
+            # or target includes it (closed). Otherwise must be strictly inside.
+            if lo_open or not target.lower_open:
+                lower_ok = lo >= target.lower_bound
+            else:
+                lower_ok = lo > target.lower_bound
+
+            if hi_open or not target.upper_open:
+                upper_ok = hi <= target.upper_bound
+            else:
+                upper_ok = hi < target.upper_bound
+
+            return lower_ok and upper_ok
+
+        if idx is not None:
+            return _subset_one(idx, _to_bounds(other))
+
+        n_self = int(self.lower_bounds.shape[0])
+
+        if isinstance(other, VariableSupport):
+            n_other = int(other.lower_bounds.shape[0])
+
+            if n_other == 1:
+                target = _Bounds(
+                    lower_bound=float(other.lower_bounds[0].item()),
+                    upper_bound=float(other.upper_bounds[0].item()),
+                    lower_open=bool(other.lower_open[0].item()),
+                    upper_open=bool(other.upper_open[0].item()),
+                )
+                return all(_subset_one(i, target) for i in range(n_self))
+
+            if n_other == n_self:
+                return all(
+                    _subset_one(
+                        i,
+                        _Bounds(
+                            lower_bound=float(other.lower_bounds[i].item()),
+                            upper_bound=float(other.upper_bounds[i].item()),
+                            lower_open=bool(other.lower_open[i].item()),
+                            upper_open=bool(other.upper_open[i].item()),
+                        ),
+                    )
+                    for i in range(n_self)
+                )
+
+            raise ValueError(
+                "If idx is None and other is VariableSupport, other must have "
+                "one or equal dimension."
+            )
+
         target = _to_bounds(other)
-        lo = float(self.lower_bounds[idx].item())
-        hi = float(self.upper_bounds[idx].item())
-        lo_open = bool(self.lower_open[idx].item())
-        hi_open = bool(self.upper_open[idx].item())
-
-        # Lower bound: equality is fine when self excludes the point (open)
-        # or target includes it (closed). Otherwise must be strictly inside.
-        if lo_open or not target.lower_open:
-            lower_ok = lo >= target.lower_bound
-        else:
-            lower_ok = lo > target.lower_bound
-
-        if hi_open or not target.upper_open:
-            upper_ok = hi <= target.upper_bound
-        else:
-            upper_ok = hi < target.upper_bound
-
-        return lower_ok and upper_ok
+        return all(_subset_one(i, target) for i in range(n_self))
