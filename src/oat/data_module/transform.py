@@ -477,10 +477,8 @@ class NestedTransform(Transform):
                 out[k] = v
         return out
 
-    def transform_support(
-        self,
-        support_dict: dict[str, VariableSupport | dict | None],
-    ) -> dict[str, VariableSupport | dict | None]:
+    def transform_support(self, support_dict: Any) -> Any:
+        support_dict = cast(dict[str, VariableSupport | dict | None], support_dict)
         out: dict[str, VariableSupport | dict | None] = {}
         for key, value in support_dict.items():
             if value is None:
