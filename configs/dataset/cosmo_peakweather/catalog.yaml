@@ -1,7 +1,7 @@
 # Variable catalog for the COSMO-PeakWeather dataset.
-# Each variable has: description, unit, support, and (for obs_vars) default_distribution.
-# Supported support values: "real", "nonnegative", "positive"
-# Supported distributions: see src/oat/model_module/distributions.py (OATDistribution.name)
+# Each variable has: description and unit.
+# Variables may optionally define bounds via lower_bound/upper_bound and
+# lower_open/upper_open to describe open or closed intervals.
 obs_vars:
   temperature:
     description: "2m air temperature"
