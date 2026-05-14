@@ -3,6 +3,8 @@ import torch.nn as nn
 import yaml
 from typing import Any
 
+from oat.data_module.support import VariableSupport
+
 TRANSFORM_REGISTRY: dict[str, type['Transform']] = {}
 
 def register_transform(cls: type['Transform']) -> type['Transform']:
@@ -17,6 +19,13 @@ class Transform(nn.Module):
 
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("Transform inverse method not implemented.")
+
+    @property
+    def input_support(self) -> "VariableSupport":
+        raise NotImplementedError("Transform input_support property not implemented.")
+
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+        raise NotImplementedError("Transform transform_support method not implemented.")
     
     # -------- YAML serialization --------
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +64,9 @@ class IdentityTransform(Transform):
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         """Return the sample unchanged."""
         return sample
+
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+        return support
     
     # -------- YAML serialization --------
     def to_dict(self) -> dict[str, Any]:

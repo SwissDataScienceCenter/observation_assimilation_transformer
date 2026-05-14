@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from oat.data_module.support import VariableSupport
 from oat.data_module.transform import (
     Transform,
     IdentityTransform,
@@ -253,3 +254,21 @@ class TestRegistry:
         assert "MinMaxTransform" in TRANSFORM_REGISTRY
         assert "LogTransform" in TRANSFORM_REGISTRY
         assert "ComposedTransform" in TRANSFORM_REGISTRY
+
+
+class TestIdentityTransformSupport:
+    def test_identity_transform_support_preserves_input_support(self) -> None:
+        transform = IdentityTransform()
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0, 0.0]),
+            upper_bounds=torch.tensor([1.0, 10.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, False]),
+        )
+
+        transformed = transform.transform_support(support)
+
+        assert torch.equal(transformed.lower_bounds, support.lower_bounds)
+        assert torch.equal(transformed.upper_bounds, support.upper_bounds)
+        assert torch.equal(transformed.lower_open, support.lower_open)
+        assert torch.equal(transformed.upper_open, support.upper_open)
