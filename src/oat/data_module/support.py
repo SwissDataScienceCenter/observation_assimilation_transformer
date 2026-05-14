@@ -88,8 +88,10 @@ class VariableSupport(constraints.Constraint):
 
         def _to_bool_tensor(flag: torch.Tensor | bool) -> torch.Tensor:
             if isinstance(flag, bool):
-                return torch.full((n,), flag, dtype=torch.bool)
-            t = flag.bool()
+                return torch.full(
+                    (n,), flag, dtype=torch.bool, device=lower_bounds.device
+                )
+            t = flag.to(device=lower_bounds.device, dtype=torch.bool)
             if t.shape != (n,):
                 raise ValueError(
                     f"open flags must have shape ({n},), got {tuple(t.shape)}"
