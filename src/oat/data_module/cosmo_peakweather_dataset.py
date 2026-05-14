@@ -8,6 +8,7 @@ Matches architecture from Neural_Downscaling_with_Station_Observation.pdf
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Optional, Any
+from deprecated import deprecated
 
 import numpy as np
 import pandas as pd
@@ -560,6 +561,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.cos(year_angle)
         ], dtype=dtype_map[self.config.dtype])
         
+    @deprecated(reason="get_transform is now a method of the TrainDataset, not a standalone function. Call TrainDataset.get_transform() instead.")
     def get_transform(
         self, num_data_points: int, dataloader: "DataLoader | None" = None
     ) -> tuple[transform.NestedTransform, transform.Transform]:
