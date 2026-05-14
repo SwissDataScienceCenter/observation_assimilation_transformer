@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
@@ -50,12 +50,16 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         in_channels=len(data_cfg.topo_vars)
         )
 
-    fusion_layer_cfg = model.FusionLayerConfig(
-        **model_cfg.fusion_layer,
+    time_cond_dim = 4 if data_cfg.use_time_embedding else 0
+    nwp_topo_fusion_cfg = model.NwpTopoFusionConfig(
+        **model_cfg.nwp_topo_fusion,
+        cond_dim=time_cond_dim,
         out_channels=model_cfg.d_model)
 
     if cfg.dataset.obs_variable_to_distribution != cfg.model.output_head.variable_to_distribution:
         raise ValueError("Mismatch between observations variable distributions and output head variable distributions")
+    if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
+        raise ValueError("Variables in output head distribution config do not match observation variables")
     if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
         raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
     logger.info(
@@ -67,13 +71,13 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     output_head_cfg = model.OutputHeadConfig(
         in_features=model_cfg.d_model,
         **model_cfg.output_head)
-    
+
     if get_model_cls(cfg) == model.UninformedOAT:
         logger.info("Initialized uninformed model cfg...")
         return model.UninformedOATConfig(
             global_encoder=global_encoder_cfg,
             topographic_encoder=topography_encoder_cfg,
-            fusion_layer=fusion_layer_cfg,
+            nwp_topo_fusion=nwp_topo_fusion_cfg,
             output_head=output_head_cfg,
             num_samples=model_cfg.num_samples
         )
@@ -85,11 +89,19 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         d_model=model_cfg.d_model,
         **model_cfg.transformer)
 
+    n_obs_vars = len(data_cfg.obs_vars)
+    condition_on_mask = model_cfg.innovation_fusion.condition_on_mask
+    innovation_cond_dim = [time_cond_dim, n_obs_vars] if condition_on_mask else time_cond_dim
+    innovation_fusion_cfg = model.InnovationFusionConfig(
+        **model_cfg.innovation_fusion,
+        cond_dim=innovation_cond_dim,
+        out_channels=model_cfg.d_model)
 
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
-        fusion_layer=fusion_layer_cfg,
+        nwp_topo_fusion=nwp_topo_fusion_cfg,
+        innovation_fusion=innovation_fusion_cfg,
         masking=masking_cfg,
         transformer=transformer_cfg,
         output_head=output_head_cfg,

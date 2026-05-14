@@ -1,7 +1,8 @@
 defaults:
   - global_encoder: mlp
   - topographic_encoder: default
-  - fusion_layer: default
+  - nwp_topo_fusion: default
+  - innovation_fusion: default
   - masking: knn
   - transformer: oat_block
   - output_head: default

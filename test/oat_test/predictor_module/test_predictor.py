@@ -4,12 +4,9 @@ import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
 
 from oat.predictor_module import OATPredictor
-from oat.model_module import OAT
 import torch
-import os
 import pytest
 import logging
-from pytorch_lightning.loggers.logger import DummyLogger
 from scripts.train_model import setup_oat_cfg
 from oat.model_module.model import OATConfig
 
@@ -33,13 +30,13 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
 
 
 @pytest.mark.parametrize("compile", [True, False], ids=["compile", "no_compile"])
-@pytest.mark.parametrize("innovation_type", ['explicit', 'implicit'], ids=["explicit_innovation", "implicit_innovation"])
-def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile, innovation_type):
+@pytest.mark.parametrize("observation_assimilation_as", ['innovation', 'target'], ids=["innovation", "target"])
+def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile, observation_assimilation_as):
     
-    if innovation_type == 'explicit':
-        model_cfg_fixture.output_head.use_explicit_innovation = True
+    if observation_assimilation_as == 'innovation':
+        model_cfg_fixture.output_head.observation_assimilation_as = 'innovation'
     else:
-        model_cfg_fixture.output_head.use_explicit_innovation = False
+        model_cfg_fixture.output_head.observation_assimilation_as = 'target'
 
     output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
@@ -144,7 +141,7 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
         assert same_distribution(prediction['pre_oat_output'][var_name], prediction_reloaded['pre_oat_output'][var_name])
     # assert that the samples, given that we forced a seed, are the same before and after checkpointing
     assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
-    assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
+
     
     
 def test_default_hydra_config(transform_fixture):

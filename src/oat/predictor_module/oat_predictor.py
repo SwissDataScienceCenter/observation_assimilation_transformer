@@ -135,6 +135,8 @@ class OATPredictor(pl.LightningModule):
             logger.info(f"No OAT loss scheduler configured. Skipping initialization.")
             self.oat_loss_weight_scheduler = None
 
+        assert list(self.model.output_head.variable_to_distribution.keys()) == self.output_var_names
+
     def on_fit_start(self):
         
         # If there is a OAT loss scheduler, 
