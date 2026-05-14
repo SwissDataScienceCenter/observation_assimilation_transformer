@@ -186,7 +186,10 @@ def test_build_obs_variable_support_raises_for_missing_variable() -> None:
             ["temperature", "not_a_real_obs_var"],
         )
 
-
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
 def test_cosmo_peakweather_dataset_exposes_obs_var_support() -> None:
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
