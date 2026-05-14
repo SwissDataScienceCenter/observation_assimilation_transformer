@@ -402,3 +402,71 @@ class TestTranslateScaleTransformSupport:
                 translate=torch.tensor([1.0]),
                 scale=torch.tensor([1.0, 2.0]),
             )
+
+
+class TestLogTransformSupport:
+    def test_full_transform_maps_bounds_and_preserves_open_flags(self) -> None:
+        transform = LogTransform(offset=1.0)
+        support = VariableSupport(
+            lower_bounds=torch.tensor([0.0, 2.0]),
+            upper_bounds=torch.tensor([9.0, 99.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([True, False]),
+        )
+        transformed = transform.transform_support(support)
+        assert torch.allclose(transformed.lower_bounds, torch.log(torch.tensor([1.0, 3.0])))
+        assert torch.allclose(transformed.upper_bounds, torch.log(torch.tensor([10.0, 100.0])))
+        assert torch.equal(transformed.lower_open, support.lower_open)
+        assert torch.equal(transformed.upper_open, support.upper_open)
+
+    def test_partial_apply_to_transforms_only_selected_variable(self) -> None:
+        transform = LogTransform(offset=1.0, apply_to=[1])
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-5.0, 0.0]),
+            upper_bounds=torch.tensor([5.0, 9.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, True]),
+        )
+        transformed = transform.transform_support(support)
+        assert torch.allclose(transformed.lower_bounds[0], torch.tensor(-5.0))
+        assert torch.allclose(transformed.upper_bounds[0], torch.tensor(5.0))
+        assert transformed.lower_open[0] == support.lower_open[0]
+        assert transformed.upper_open[0] == support.upper_open[0]
+        assert torch.allclose(transformed.lower_bounds[1], torch.log(torch.tensor(1.0)))
+        assert torch.allclose(transformed.upper_bounds[1], torch.log(torch.tensor(10.0)))
+        assert transformed.lower_open[1] == support.lower_open[1]
+        assert transformed.upper_open[1] == support.upper_open[1]
+
+    def test_invalid_input_all_raises_value_error(self) -> None:
+        transform = LogTransform(offset=1.0)
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-2.0, 0.0]),
+            upper_bounds=torch.tensor([5.0, 10.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, False]),
+        )
+        with pytest.raises(ValueError, match="input support"):
+            transform.transform_support(support)
+
+    def test_invalid_input_partial_raises_value_error(self) -> None:
+        transform = LogTransform(offset=1.0, apply_to=[0])
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-2.0, 0.0]),
+            upper_bounds=torch.tensor([5.0, 10.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, False]),
+        )
+        with pytest.raises(ValueError, match="input support"):
+            transform.transform_support(support)
+
+    def test_lower_bound_at_singularity_open_gives_neg_inf(self) -> None:
+        transform = LogTransform(offset=1.0)
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0]),
+            upper_bounds=torch.tensor([9.0]),
+            lower_open=torch.tensor([True]),
+            upper_open=torch.tensor([False]),
+        )
+        transformed = transform.transform_support(support)
+        assert transformed.lower_bounds[0] == float("-inf")
+        assert transformed.lower_open[0] == True

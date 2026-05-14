@@ -326,6 +326,52 @@ class LogTransform(Transform):
             "apply_to": apply_to_list
         }
 
+    @property
+    def input_support(self) -> "VariableSupport":
+        return VariableSupport(
+            lower_bounds=torch.tensor([-self.offset]),
+            upper_bounds=torch.tensor([float("inf")]),
+            lower_open=torch.tensor([True]),
+            upper_open=torch.tensor([True]),
+        )
+
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+        if self.apply_to is None:
+            if not support.is_subset(self.input_support):
+                raise ValueError(
+                    f"Support is not a subset of the input support (x > {-self.offset}). "
+                    "All variables must lie strictly above the negative offset."
+                )
+            return VariableSupport(
+                lower_bounds=torch.log(support.lower_bounds + self.offset),
+                upper_bounds=torch.log(support.upper_bounds + self.offset),
+                lower_open=support.lower_open,
+                upper_open=support.upper_open,
+            )
+        else:
+            indices = self.apply_to
+            sub_support = VariableSupport(
+                lower_bounds=support.lower_bounds[indices],
+                upper_bounds=support.upper_bounds[indices],
+                lower_open=support.lower_open[indices],
+                upper_open=support.upper_open[indices],
+            )
+            if not sub_support.is_subset(self.input_support):
+                raise ValueError(
+                    f"Support at selected indices is not a subset of the input support (x > {-self.offset}). "
+                    "Selected variables must lie strictly above the negative offset."
+                )
+            new_lb = support.lower_bounds.clone()
+            new_ub = support.upper_bounds.clone()
+            new_lb[indices] = torch.log(support.lower_bounds[indices] + self.offset)
+            new_ub[indices] = torch.log(support.upper_bounds[indices] + self.offset)
+            return VariableSupport(
+                lower_bounds=new_lb,
+                upper_bounds=new_ub,
+                lower_open=support.lower_open.clone(),
+                upper_open=support.upper_open.clone(),
+            )
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> 'LogTransform':
         return cls(
