@@ -49,7 +49,7 @@ class IntervalSupport(constraints.Constraint):
 
 CONSTRAINT_REGISTRY: dict[str, type[IntervalSupport]] = {
     "interval": IntervalSupport,
-    "intervalsupport": IntervalSupport,
+    "intervalsupport": IntervalSupport,  # alias accepted when full class name is passed as string
 }
 
 
@@ -98,8 +98,6 @@ def _to_interval_support(c: constraints.Constraint) -> IntervalSupport:
         return IntervalSupport(lower_bound=float(c.lower_bound))
     if isinstance(c, constraints._GreaterThan):
         return IntervalSupport(lower_bound=float(c.lower_bound), left_open=True)
-    if isinstance(c, constraints._LessThanEq):
-        return IntervalSupport(upper_bound=float(c.upper_bound))
     if isinstance(c, constraints._LessThan):
         return IntervalSupport(upper_bound=float(c.upper_bound), right_open=True)
 

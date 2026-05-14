@@ -1,3 +1,5 @@
+from math import inf
+
 import pytest
 import torch
 from torch.distributions import constraints
@@ -60,3 +62,17 @@ def test_discrete_constraints_raise_in_factory_and_subset() -> None:
 
     with pytest.raises(ValueError, match="continuous constraints"):
         IntervalSupport().is_subset(constraints.boolean)
+
+
+def test_factory_from_torch_constraint_variants() -> None:
+    c = create_variable_support(constraints.real)
+    assert c.lower_bound == -inf and c.upper_bound == inf
+
+    c = create_variable_support(constraints.nonnegative)
+    assert c.lower_bound == 0.0 and c.left_open is False
+
+    c = create_variable_support(constraints.positive)
+    assert c.lower_bound == 0.0 and c.left_open is True
+
+    c = create_variable_support(constraints.less_than(1.0))
+    assert c.upper_bound == 1.0 and c.right_open is True
