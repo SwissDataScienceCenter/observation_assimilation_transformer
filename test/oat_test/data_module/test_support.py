@@ -38,11 +38,11 @@ def test_multivariate_check_explicit_dim() -> None:
     """Variable dimension can be set to something other than -1."""
     lo = torch.tensor([0.0, 0.0])
     hi = torch.tensor([1.0, 1.0])
-    s = VariableSupport(lo, hi, dim=0)
+    s = VariableSupport(lo, hi)
 
     # shape [V, B] = [2, 3]
     x = torch.tensor([[0.5, 0.5, 1.5], [0.5, 0.5, 0.5]])
-    result = s.check(x)
+    result = s.check(x, dim=0)
     expected = torch.tensor([[True, True, False], [True, True, True]])
     assert torch.equal(result, expected)
 

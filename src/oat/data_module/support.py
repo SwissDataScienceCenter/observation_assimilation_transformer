@@ -66,14 +66,12 @@ class VariableSupport(constraints.Constraint):
     upper_bounds: torch.Tensor
     lower_open: torch.Tensor
     upper_open: torch.Tensor
-    dim: int
 
     def __init__(
         self,
         lower_bounds: torch.Tensor,
         upper_bounds: torch.Tensor,
         *,
-        dim: int = -1,
         lower_open: torch.Tensor | bool = False,
         upper_open: torch.Tensor | bool = False,
     ) -> None:
@@ -100,19 +98,18 @@ class VariableSupport(constraints.Constraint):
 
         self.lower_bounds = lower_bounds
         self.upper_bounds = upper_bounds
-        self.dim = dim
         # Infinite bounds are semantically open: force the flag regardless of input.
         self.lower_open = _to_bool_tensor(lower_open) | torch.isneginf(lower_bounds)
         self.upper_open = _to_bool_tensor(upper_open) | torch.isposinf(upper_bounds)
 
-    def check(self, value: torch.Tensor) -> torch.Tensor:
+    def check(self, value: torch.Tensor, dim: int=-1) -> torch.Tensor:
         """Return a bool tensor of the same shape as *value*.
 
-        Each slice along ``self.dim`` is checked against the corresponding
+        Each slice along ``dim`` is checked against the corresponding
         variable's bounds.
         """
         ndim = value.ndim
-        d = self.dim % ndim  # normalise to positive index
+        d = dim % ndim  # normalise to positive index
 
         # Reshape 1-D bound/flag tensors to broadcast over all other dims.
         shape = [1] * ndim
