@@ -108,3 +108,53 @@ def test_multivariate_infinite_bounds_are_open() -> None:
     assert s.is_subset(constraints.real, idx=0) is True
     # is_subset: [0, +inf) ⊆ R≥0 → True
     assert s.is_subset(constraints.nonnegative, idx=1) is True
+
+
+def test_multivariate_is_subset_closed_bounds() -> None:
+    """Closed bounds: endpoint must satisfy target's bound+openness."""
+    lo = torch.tensor([0.0, 0.2])
+    hi = torch.tensor([1.0, 0.8])
+    s = VariableSupport(lo, hi)  # both closed
+
+    # [0, 1] ⊆ [0, 1]  → True  (lo == target.lo, closed both sides)
+    assert s.is_subset(constraints.interval(0.0, 1.0), idx=0) is True
+    # [0.2, 0.8] ⊆ [0, 1]  → True
+    assert s.is_subset(constraints.interval(0.0, 1.0), idx=1) is True
+    # [0, 1] ⊆ [0, 1)  → False  (hi == target.hi but self is closed, target is open)
+    assert s.is_subset(constraints.half_open_interval(0.0, 1.0), idx=0) is False
+    # [0, 1] ⊆ (0, +∞)  → False  (lo == target.lo=0 but self is closed, target is open)
+    assert s.is_subset(constraints.positive, idx=0) is False
+    # [0, 1] ⊆ [0, +∞)  → True
+    assert s.is_subset(constraints.nonnegative, idx=0) is True
+
+
+def test_multivariate_is_subset_open_bounds() -> None:
+    """Open bounds: openness of self relaxes the equality condition."""
+    lo = torch.tensor([0.0])
+    hi = torch.tensor([1.0])
+    s_lo_open = VariableSupport(lo, hi, left_open=True)
+    s_hi_open = VariableSupport(lo, hi, right_open=True)
+    s_both_open = VariableSupport(lo, hi, left_open=True, right_open=True)
+
+    # (0, 1] ⊆ (0, +∞)  → True  (lo == target.lo=0, self open satisfies condition)
+    assert s_lo_open.is_subset(constraints.positive, idx=0) is True
+    # (0, 1] ⊆ [0.5, +∞)  → False  (lo=0 < target.lo=0.5)
+    assert s_lo_open.is_subset(constraints.greater_than_eq(0.5), idx=0) is False
+
+    # [0, 1) ⊆ [0, 1]  → True  (hi == target.hi=1, self open satisfies condition)
+    assert s_hi_open.is_subset(constraints.interval(0.0, 1.0), idx=0) is True
+    # [0, 1) ⊆ [0, 0.5]  → False  (hi=1 > target.hi=0.5)
+    assert s_hi_open.is_subset(constraints.interval(0.0, 0.5), idx=0) is False
+
+    # (0, 1) ⊆ (0, +∞)  → True
+    assert s_both_open.is_subset(constraints.positive, idx=0) is True
+    # (0, 1) ⊆ R  → True
+    assert s_both_open.is_subset(constraints.real, idx=0) is True
+
+
+def test_multivariate_is_subset_discrete_raises() -> None:
+    lo = torch.tensor([0.0])
+    hi = torch.tensor([1.0])
+    s = VariableSupport(lo, hi)
+    with pytest.raises(ValueError, match="continuous constraints"):
+        s.is_subset(constraints.boolean, idx=0)
