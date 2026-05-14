@@ -363,3 +363,35 @@ class TestTranslateScaleTransformSupport:
 
         with pytest.raises(ValueError, match="variables"):
             transform.transform_support(support)
+
+    def test_input_support_shape(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([1.0, 2.0, 3.0]),
+            scale=torch.tensor([0.5, 1.0, 2.0]),
+        )
+        support = transform.input_support
+        assert support.lower_bounds.shape == (3,)
+        assert support.upper_bounds.shape == (3,)
+        assert support.lower_open.shape == (3,)
+        assert support.upper_open.shape == (3,)
+
+    def test_input_support_inf_bounds_and_open_flags(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([0.0, 0.0]),
+            scale=torch.tensor([1.0, -1.0]),
+        )
+        support = transform.input_support
+        assert torch.all(support.lower_bounds == float("-inf"))
+        assert torch.all(support.upper_bounds == float("inf"))
+        assert torch.all(support.lower_open)
+        assert torch.all(support.upper_open)
+
+    def test_input_support_dtype_and_device_match_scale(self) -> None:
+        translate = torch.tensor([1.0, 2.0], dtype=torch.float64)
+        scale = torch.tensor([3.0, 4.0], dtype=torch.float64)
+        transform = TranslateScaleTransform(translate=translate, scale=scale)
+        support = transform.input_support
+        assert support.lower_bounds.dtype == torch.float64
+        assert support.upper_bounds.dtype == torch.float64
+        assert support.lower_bounds.device == scale.device
+        assert support.upper_bounds.device == scale.device

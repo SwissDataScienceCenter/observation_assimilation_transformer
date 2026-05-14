@@ -88,6 +88,11 @@ class TranslateScaleTransform(Transform):
             scale (tuple): Scaling factors for each dimension.
         """
         super().__init__()
+        if translate.numel() != scale.numel():
+            raise ValueError(
+                f"translate and scale must have the same number of elements, "
+                f"got {translate.numel()} and {scale.numel()}."
+            )
         self.register_buffer("translate", translate)
         self.register_buffer("scale", scale)
         self.channel_dim = channel_dim
@@ -115,7 +120,7 @@ class TranslateScaleTransform(Transform):
 
     @property
     def input_support(self) -> "VariableSupport":
-        n_variables = int(self.scale.numel())
+        n_variables = int(self.translate.numel())
         return VariableSupport(
             lower_bounds=torch.full(
                 (n_variables,),
@@ -134,7 +139,7 @@ class TranslateScaleTransform(Transform):
         )
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
-        n_variables = int(self.scale.numel())
+        n_variables = int(self.translate.numel())
         n_support_variables = int(support.lower_bounds.numel())
         if n_support_variables != n_variables:
             raise ValueError(
@@ -145,22 +150,13 @@ class TranslateScaleTransform(Transform):
         if torch.any(self.scale == 0):
             raise ValueError("scale must be nonzero for support transformation.")
 
-        lower_bounds = (support.lower_bounds + self.translate) * self.scale
-        upper_bounds = (support.upper_bounds + self.translate) * self.scale
-        lower_open = support.lower_open.clone()
-        upper_open = support.upper_open.clone()
-
-        negative_scale = self.scale < 0
-        if negative_scale.any():
-            lower_swapped = lower_bounds[negative_scale].clone()
-            upper_swapped = upper_bounds[negative_scale].clone()
-            lower_bounds[negative_scale] = upper_swapped
-            upper_bounds[negative_scale] = lower_swapped
-
-            lower_open_swapped = lower_open[negative_scale].clone()
-            upper_open_swapped = upper_open[negative_scale].clone()
-            lower_open[negative_scale] = upper_open_swapped
-            upper_open[negative_scale] = lower_open_swapped
+        neg = self.scale < 0
+        lb_raw = (support.lower_bounds + self.translate) * self.scale
+        ub_raw = (support.upper_bounds + self.translate) * self.scale
+        lower_bounds = torch.where(neg, ub_raw, lb_raw)
+        upper_bounds = torch.where(neg, lb_raw, ub_raw)
+        lower_open = torch.where(neg, support.upper_open, support.lower_open)
+        upper_open = torch.where(neg, support.lower_open, support.upper_open)
 
         return VariableSupport(
             lower_bounds=lower_bounds,
