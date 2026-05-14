@@ -53,7 +53,7 @@ def test_multivariate_check_per_variable_open_flags() -> None:
     hi = torch.tensor([1.0, 1.0])
     left_open = torch.tensor([True, False])
     right_open = torch.tensor([False, True])
-    s = VariableSupport(lo, hi, left_open=left_open, right_open=right_open)
+    s = VariableSupport(lo, hi, lower_open=left_open, upper_open=right_open)
 
     # var 0: (0, 1]  →  0.0 is excluded
     # var 1: [0, 1)  →  1.0 is excluded
@@ -68,7 +68,7 @@ def test_multivariate_check_scalar_open_flags() -> None:
     """Scalar bool open flags apply to all variables."""
     lo = torch.tensor([0.0, 0.0])
     hi = torch.tensor([1.0, 1.0])
-    s = VariableSupport(lo, hi, left_open=True, right_open=True)
+    s = VariableSupport(lo, hi, lower_open=True, upper_open=True)
 
     x_boundary = torch.tensor([0.0, 1.0])
     assert not s.check(x_boundary).any()
@@ -86,7 +86,7 @@ def test_multivariate_constructor_validates_shapes() -> None:
         VariableSupport(
             torch.zeros(2),
             torch.ones(2),
-            left_open=torch.tensor([True, False, True]),
+            lower_open=torch.tensor([True, False, True]),
         )
     with pytest.raises(ValueError, match="strictly less than"):
         VariableSupport(torch.tensor([1.0, 0.0]), torch.tensor([0.0, 1.0]))
@@ -101,8 +101,8 @@ def test_multivariate_infinite_bounds_are_open() -> None:
     s = VariableSupport(lo, hi)
 
     # open flags must be forced on for the infinite sides
-    assert s.left_open[0].item() is True
-    assert s.right_open[1].item() is True
+    assert s.lower_open[0].item() is True
+    assert s.upper_open[1].item() is True
 
     # is_subset: (-inf, 0] ⊆ R (real = (-inf, +inf) open) → True
     assert s.is_subset(constraints.real, idx=0) is True
@@ -132,9 +132,9 @@ def test_multivariate_is_subset_open_bounds() -> None:
     """Open bounds: openness of self relaxes the equality condition."""
     lo = torch.tensor([0.0])
     hi = torch.tensor([1.0])
-    s_lo_open = VariableSupport(lo, hi, left_open=True)
-    s_hi_open = VariableSupport(lo, hi, right_open=True)
-    s_both_open = VariableSupport(lo, hi, left_open=True, right_open=True)
+    s_lo_open = VariableSupport(lo, hi, lower_open=True)
+    s_hi_open = VariableSupport(lo, hi, upper_open=True)
+    s_both_open = VariableSupport(lo, hi, lower_open=True, upper_open=True)
 
     # (0, 1] ⊆ (0, +∞)  → True  (lo == target.lo=0, self open satisfies condition)
     assert s_lo_open.is_subset(constraints.positive, idx=0) is True

@@ -10,8 +10,8 @@ from torch.distributions import constraints
 class _Bounds(NamedTuple):
     lower_bound: float = -inf
     upper_bound: float = inf
-    left_open: bool = False
-    right_open: bool = False
+    lower_open: bool = False
+    upper_open: bool = False
 
 
 def _to_bounds(c: constraints.Constraint) -> _Bounds:
@@ -53,19 +53,19 @@ class VariableSupport(constraints.Constraint):
     dim:
         Dimension of the *variable* axis in tensors passed to ``check``.
         Default ``-1`` (last dimension).
-    left_open:
+    lower_open:
         Per-variable flag for strict lower bound (``value > lower_bound``).
         Pass a bool tensor of shape ``(V,)`` or a single ``bool`` applied to
         all variables.  Default ``False`` (closed lower bound).
-    right_open:
+    upper_open:
         Per-variable flag for strict upper bound (``value < upper_bound``).
-        Same broadcast rules as ``left_open``.  Default ``False``.
+        Same broadcast rules as ``lower_open``.  Default ``False``.
     """
 
     lower_bounds: torch.Tensor
     upper_bounds: torch.Tensor
-    left_open: torch.Tensor
-    right_open: torch.Tensor
+    lower_open: torch.Tensor
+    upper_open: torch.Tensor
     dim: int
 
     def __init__(
@@ -74,8 +74,8 @@ class VariableSupport(constraints.Constraint):
         upper_bounds: torch.Tensor,
         *,
         dim: int = -1,
-        left_open: torch.Tensor | bool = False,
-        right_open: torch.Tensor | bool = False,
+        lower_open: torch.Tensor | bool = False,
+        upper_open: torch.Tensor | bool = False,
     ) -> None:
         if lower_bounds.ndim != 1 or upper_bounds.ndim != 1:
             raise ValueError("lower_bounds and upper_bounds must be 1-D tensors.")
@@ -102,8 +102,8 @@ class VariableSupport(constraints.Constraint):
         self.upper_bounds = upper_bounds
         self.dim = dim
         # Infinite bounds are semantically open: force the flag regardless of input.
-        self.left_open = _to_bool_tensor(left_open) | torch.isneginf(lower_bounds)
-        self.right_open = _to_bool_tensor(right_open) | torch.isposinf(upper_bounds)
+        self.lower_open = _to_bool_tensor(lower_open) | torch.isneginf(lower_bounds)
+        self.upper_open = _to_bool_tensor(upper_open) | torch.isposinf(upper_bounds)
 
     def check(self, value: torch.Tensor) -> torch.Tensor:
         """Return a bool tensor of the same shape as *value*.
@@ -120,12 +120,12 @@ class VariableSupport(constraints.Constraint):
 
         lo = self.lower_bounds.reshape(shape)
         hi = self.upper_bounds.reshape(shape)
-        lo_open = self.left_open.reshape(shape)
-        hi_open = self.right_open.reshape(shape)
+        lo_open = self.lower_open.reshape(shape)
+        hi_open = self.upper_open.reshape(shape)
 
-        left_ok = torch.where(lo_open, value > lo, value >= lo)
-        right_ok = torch.where(hi_open, value < hi, value <= hi)
-        return left_ok & right_ok
+        lo_ok = torch.where(lo_open, value > lo, value >= lo)
+        hi_ok = torch.where(hi_open, value < hi, value <= hi)
+        return lo_ok & hi_ok
 
     def is_subset(self, other: constraints.Constraint, idx: int) -> bool:
         """Return True if variable *idx*'s interval is a subset of *other*.
@@ -145,17 +145,17 @@ class VariableSupport(constraints.Constraint):
         target = _to_bounds(other)
         lo = float(self.lower_bounds[idx].item())
         hi = float(self.upper_bounds[idx].item())
-        lo_open = bool(self.left_open[idx].item())
-        hi_open = bool(self.right_open[idx].item())
+        lo_open = bool(self.lower_open[idx].item())
+        hi_open = bool(self.upper_open[idx].item())
 
         # Lower bound: equality is fine when self excludes the point (open)
         # or target includes it (closed). Otherwise must be strictly inside.
-        if lo_open or not target.left_open:
+        if lo_open or not target.lower_open:
             lower_ok = lo >= target.lower_bound
         else:
             lower_ok = lo > target.lower_bound
 
-        if hi_open or not target.right_open:
+        if hi_open or not target.upper_open:
             upper_ok = hi <= target.upper_bound
         else:
             upper_ok = hi < target.upper_bound
