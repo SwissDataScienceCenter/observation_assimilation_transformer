@@ -4,7 +4,6 @@ from torch.distributions import constraints
 
 from oat.data_module.support import VariableSupport
 
-
 # --- VariableSupport ---
 
 
@@ -94,7 +93,7 @@ def test_multivariate_constructor_validates_shapes() -> None:
 
 
 def test_multivariate_infinite_bounds_are_open() -> None:
-    """−inf lower bound and +inf upper bound are always treated as open."""
+    """-inf lower bound and +inf upper bound are always treated as open."""
     from math import inf
 
     lo = torch.tensor([-inf, 0.0])
@@ -105,7 +104,7 @@ def test_multivariate_infinite_bounds_are_open() -> None:
     assert s.left_open[0].item() is True
     assert s.right_open[1].item() is True
 
-    # is_subset: (-inf, 0] ⊆ ℝ (real = (-inf, +inf) open) → True
+    # is_subset: (-inf, 0] ⊆ R (real = (-inf, +inf) open) → True
     assert s.is_subset(constraints.real, idx=0) is True
-    # is_subset: [0, +inf) ⊆ ℝ≥0 → True
+    # is_subset: [0, +inf) ⊆ R≥0 → True
     assert s.is_subset(constraints.nonnegative, idx=1) is True
