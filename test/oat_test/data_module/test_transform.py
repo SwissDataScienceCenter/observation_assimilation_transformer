@@ -395,3 +395,10 @@ class TestTranslateScaleTransformSupport:
         assert support.upper_bounds.dtype == torch.float64
         assert support.lower_bounds.device == scale.device
         assert support.upper_bounds.device == scale.device
+
+    def test_constructor_raises_on_translate_scale_length_mismatch(self) -> None:
+        with pytest.raises(ValueError, match="translate"):
+            TranslateScaleTransform(
+                translate=torch.tensor([1.0]),
+                scale=torch.tensor([1.0, 2.0]),
+            )
