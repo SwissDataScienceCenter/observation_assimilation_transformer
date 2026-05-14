@@ -14,6 +14,7 @@ from oat.model_module.model import (
     UninformedOAT
 )
 from oat.data_module.transform import Transform
+from oat.data_module.support import VariableSupport
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
     point_mae,
@@ -137,7 +138,7 @@ class OATPredictor(pl.LightningModule):
 
         assert list(self.model.output_head.variable_to_distribution.keys()) == self.output_var_names
 
-    def _format_support_interval(self, support, idx: int) -> str:
+    def _format_support_interval(self, support: VariableSupport, idx: int) -> str:
         lo = float(support.lower_bounds[idx].item())
         hi = float(support.upper_bounds[idx].item())
         lo_bracket = "(" if bool(support.lower_open[idx].item()) else "["
@@ -183,7 +184,7 @@ class OATPredictor(pl.LightningModule):
                     "obs_variable_to_distribution are compatible."
                 )
 
-    def on_fit_start(self):
+    def on_fit_start(self) -> None:
         train_loader = self.trainer.train_dataloader
         train_dataset = train_loader.dataset if hasattr(train_loader, "dataset") else None
 
