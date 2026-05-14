@@ -113,6 +113,62 @@ class TranslateScaleTransform(Transform):
         scale = self.scale.view(shape)
         return sample / scale - translate
 
+    @property
+    def input_support(self) -> "VariableSupport":
+        n_variables = int(self.scale.numel())
+        return VariableSupport(
+            lower_bounds=torch.full(
+                (n_variables,),
+                float("-inf"),
+                dtype=self.scale.dtype,
+                device=self.scale.device,
+            ),
+            upper_bounds=torch.full(
+                (n_variables,),
+                float("inf"),
+                dtype=self.scale.dtype,
+                device=self.scale.device,
+            ),
+            lower_open=torch.ones(n_variables, dtype=torch.bool, device=self.scale.device),
+            upper_open=torch.ones(n_variables, dtype=torch.bool, device=self.scale.device),
+        )
+
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+        n_variables = int(self.scale.numel())
+        n_support_variables = int(support.lower_bounds.numel())
+        if n_support_variables != n_variables:
+            raise ValueError(
+                "Mismatch in variables between support and transform: "
+                f"support has {n_support_variables} variables but transform has {n_variables} variables."
+            )
+
+        if torch.any(self.scale == 0):
+            raise ValueError("scale must be nonzero for support transformation.")
+
+        lower_bounds = (support.lower_bounds + self.translate) * self.scale
+        upper_bounds = (support.upper_bounds + self.translate) * self.scale
+        lower_open = support.lower_open.clone()
+        upper_open = support.upper_open.clone()
+
+        negative_scale = self.scale < 0
+        if negative_scale.any():
+            lower_swapped = lower_bounds[negative_scale].clone()
+            upper_swapped = upper_bounds[negative_scale].clone()
+            lower_bounds[negative_scale] = upper_swapped
+            upper_bounds[negative_scale] = lower_swapped
+
+            lower_open_swapped = lower_open[negative_scale].clone()
+            upper_open_swapped = upper_open[negative_scale].clone()
+            lower_open[negative_scale] = upper_open_swapped
+            upper_open[negative_scale] = lower_open_swapped
+
+        return VariableSupport(
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            lower_open=lower_open,
+            upper_open=upper_open,
+        )
+
     # -------- YAML serialization --------
     def to_dict(self) -> dict[str, Any]:
         return {

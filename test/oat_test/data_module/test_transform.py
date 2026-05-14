@@ -293,3 +293,73 @@ class TestIdentityTransformSupport:
         assert torch.equal(transformed.upper_bounds, support.upper_bounds)
         assert torch.equal(transformed.lower_open, support.lower_open)
         assert torch.equal(transformed.upper_open, support.upper_open)
+
+
+class TestTranslateScaleTransformSupport:
+    def test_positive_scale_maps_bounds_and_preserves_open_flags(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([1.0, -2.0]),
+            scale=torch.tensor([2.0, 0.5]),
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([0.0, -4.0]),
+            upper_bounds=torch.tensor([2.0, 0.0]),
+            lower_open=torch.tensor([False, True]),
+            upper_open=torch.tensor([True, False]),
+        )
+
+        transformed = transform.transform_support(support)
+
+        assert torch.allclose(transformed.lower_bounds, torch.tensor([2.0, -3.0]))
+        assert torch.allclose(transformed.upper_bounds, torch.tensor([6.0, -1.0]))
+        assert torch.equal(transformed.lower_open, support.lower_open)
+        assert torch.equal(transformed.upper_open, support.upper_open)
+
+    def test_negative_scale_flips_bounds_and_swaps_open_flags(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([0.0, 1.0]),
+            scale=torch.tensor([-2.0, 3.0]),
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0, 0.0]),
+            upper_bounds=torch.tensor([4.0, 2.0]),
+            lower_open=torch.tensor([False, True]),
+            upper_open=torch.tensor([True, False]),
+        )
+
+        transformed = transform.transform_support(support)
+
+        assert torch.allclose(transformed.lower_bounds, torch.tensor([-8.0, 3.0]))
+        assert torch.allclose(transformed.upper_bounds, torch.tensor([2.0, 9.0]))
+        assert torch.equal(transformed.lower_open, torch.tensor([True, True]))
+        assert torch.equal(transformed.upper_open, torch.tensor([False, False]))
+
+    def test_zero_scale_raises_value_error(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([0.0, 1.0]),
+            scale=torch.tensor([1.0, 0.0]),
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0, 0.0]),
+            upper_bounds=torch.tensor([1.0, 2.0]),
+            lower_open=torch.tensor([False, False]),
+            upper_open=torch.tensor([False, False]),
+        )
+
+        with pytest.raises(ValueError, match="scale"):
+            transform.transform_support(support)
+
+    def test_support_variable_shape_mismatch_raises_value_error(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([0.0, 1.0]),
+            scale=torch.tensor([1.0, 2.0]),
+        )
+        support = VariableSupport(
+            lower_bounds=torch.tensor([-1.0]),
+            upper_bounds=torch.tensor([1.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([False]),
+        )
+
+        with pytest.raises(ValueError, match="variables"):
+            transform.transform_support(support)
