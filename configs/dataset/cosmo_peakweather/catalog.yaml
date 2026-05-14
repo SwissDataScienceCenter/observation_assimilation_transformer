@@ -54,9 +54,14 @@ nwp_vars:
     description: "10m maximum wind gust from COSMO NWP model"
     unit: "m/s"
 
+  TOT_PREC_1H:
+    description: "Total precipitation in 1 hour"
+    unit: "mm/h"
+
   wind_direction:
     description: "10m wind direction derived from U_10M and V_10M"
     unit: "degrees [0, 360)"
+
 topo_vars:
   DEM:
     description: "Digital elevation model height"
