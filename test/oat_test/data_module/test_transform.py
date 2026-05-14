@@ -655,3 +655,43 @@ class TestNestedTransformSupport:
             torch.log(torch.tensor([10.0])),
         )
         assert transformed["obs"]["other"] is untouched
+
+    def test_nested_transform_key_with_non_dict_value_raises_type_error(self) -> None:
+        transform = NestedTransform(
+            {
+                "obs": {
+                    "station": LogTransform(offset=1.0),
+                }
+            }
+        )
+        support_dict = {
+            "obs": VariableSupport(
+                lower_bounds=torch.tensor([0.0]),
+                upper_bounds=torch.tensor([9.0]),
+                lower_open=torch.tensor([False]),
+                upper_open=torch.tensor([False]),
+            )
+        }
+
+        with pytest.raises(TypeError, match="obs.*dict"):
+            transform.transform_support(support_dict)
+
+    def test_leaf_transform_key_with_dict_value_raises_type_error(self) -> None:
+        transform = NestedTransform(
+            {
+                "obs": LogTransform(offset=1.0),
+            }
+        )
+        support_dict = {
+            "obs": {
+                "station": VariableSupport(
+                    lower_bounds=torch.tensor([0.0]),
+                    upper_bounds=torch.tensor([9.0]),
+                    lower_open=torch.tensor([False]),
+                    upper_open=torch.tensor([False]),
+                )
+            }
+        }
+
+        with pytest.raises(TypeError, match="obs.*VariableSupport"):
+            transform.transform_support(support_dict)

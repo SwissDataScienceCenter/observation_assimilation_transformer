@@ -489,9 +489,19 @@ class NestedTransform(Transform):
                 out[key] = value
             else:
                 transform = self.transform_dict[key]
-                if isinstance(transform, NestedTransform) and isinstance(value, dict):
+                if isinstance(transform, NestedTransform):
+                    if not isinstance(value, dict):
+                        raise TypeError(
+                            f"Support for key '{key}' must be a dict because the "
+                            "transform is nested."
+                        )
                     out[key] = transform.transform_support(value)
                 else:
+                    if isinstance(value, dict):
+                        raise TypeError(
+                            f"Support for key '{key}' must be a VariableSupport "
+                            "because the transform is a leaf transform."
+                        )
                     out[key] = transform.transform_support(cast(VariableSupport, value))
         return out
 
