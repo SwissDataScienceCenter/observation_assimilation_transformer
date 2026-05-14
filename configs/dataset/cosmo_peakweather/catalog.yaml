@@ -19,13 +19,13 @@ obs_vars:
     description: "10m horizontal wind speed magnitude"
     unit: "m/s"
     lower_bound: 0
-    lower_open: True # Here I am not sure. If it's closed, log-normal in theory not possible
+    lower_open: True # Intentionally open to keep support strictly positive for downstream positive-support transforms/distributions.
 
   wind_gust:
     description: "Maximum 10m wind gust speed"
     unit: "m/s"
     lower_bound: 0
-    lower_open: True # Also here.
+    lower_open: True # Intentionally open to match the strictly positive support expected by downstream positive-support transforms/distributions.
 
   precipitation:
     description: "Hourly precipitation accumulation"
