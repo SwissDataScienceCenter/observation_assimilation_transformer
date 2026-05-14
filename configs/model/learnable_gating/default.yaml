@@ -1,0 +1,5 @@
+hidden_channels: 32
+# in_channels: set at runtime (number of obs variables)
+# out_channels: set at runtime from model d_model
+n_layers: 2
+activation: ReLU

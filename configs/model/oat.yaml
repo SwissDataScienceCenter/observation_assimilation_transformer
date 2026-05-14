@@ -6,6 +6,7 @@ defaults:
   - masking: knn
   - transformer: oat_block
   - output_head: default
+  - learnable_gating: default
 
 model_cls: oat.model_module.model.OAT
 d_model: 16

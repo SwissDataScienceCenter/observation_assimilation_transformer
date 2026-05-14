@@ -60,6 +60,9 @@ class NwpTopoFusionConfig:
     hidden_channels: int = 128
     dropout_p: float = 0.1
     norm_layer: str = "AdaLN"
+    norm_first: bool = True
+    n_blocks: int = 1
+    residual_learning: bool = True
 
 
 @dataclass
@@ -77,6 +80,19 @@ class InnovationFusionConfig:
     hidden_channels: int = 128
     dropout_p: float = 0.1
     norm_layer: str = "AdaLN"
+    norm_first: bool = True
+    n_blocks: int = 1
+    residual_learning: bool = True
+
+
+@dataclass
+class LearnableGatingConfig:
+    """Configuration for the learnable gating layer."""
+    in_channels: int  # data-dependent, must be set explicitly
+    out_channels: int  # data-dependent, must be set explicitly
+    hidden_channels: int = 32
+    n_layers: int = 2
+    activation: str = "ReLU"
 
 
 @dataclass
@@ -125,6 +141,7 @@ class OATConfig:
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
+    learnable_gating: LearnableGatingConfig
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
 
@@ -142,6 +159,7 @@ class OATConfig:
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
             output_head=OutputHeadConfig(in_features=d_model),
+            learnable_gating=LearnableGatingConfig(in_channels=n_vars, out_channels=d_model),
             num_samples=100
         )
 
@@ -203,6 +221,9 @@ class UninformedOAT(nn.Module):
             cond_dim=config.nwp_topo_fusion.cond_dim,
             dropout_p=config.nwp_topo_fusion.dropout_p,
             norm_layer=config.nwp_topo_fusion.norm_layer,
+            norm_first=config.nwp_topo_fusion.norm_first,
+            n_blocks=config.nwp_topo_fusion.n_blocks,
+            residual_learning=config.nwp_topo_fusion.residual_learning,
         )
         self.output_head = self._init_output_head(config=config)
         
@@ -460,6 +481,9 @@ class OAT(UninformedOAT):
             cond_dim=config.innovation_fusion.cond_dim,
             dropout_p=config.innovation_fusion.dropout_p,
             norm_layer=config.innovation_fusion.norm_layer,
+            norm_first=config.innovation_fusion.norm_first,
+            n_blocks=config.innovation_fusion.n_blocks,
+            residual_learning=config.innovation_fusion.residual_learning,
         )
         
         # Spatial neighborhood search (Eq. 14)
@@ -485,6 +509,12 @@ class OAT(UninformedOAT):
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
             activation_geo_bias=config.transformer.activation_geo_bias
         )
+        
+        self.mask_gating = fusion_layer.LearnableGating(in_channels=self.output_head.target_features,
+                                                        out_channels=d_model,
+                                                        hidden_channels=config.learnable_gating.hidden_channels,
+                                                        n_layers=config.learnable_gating.n_layers,
+                                                        activation=config.learnable_gating.activation)
 
     @property
     def pre_oat_loss_weight(self) -> float:
@@ -651,6 +681,11 @@ class OAT(UninformedOAT):
             innovation,
             cond=cond
         )
+        
+        # Apply learnable gating to station tokens based on observation mask 
+        # to allow the model to learn how much to trust the innovation signal at each station.
+        mask_sigma = self.mask_gating(observation_data['mask_obs'])
+        station_token = (1.0 - mask_sigma) * uninformed_kv_token + mask_sigma * station_token
         
         # Step 4: Create uninformed query tokens (Eq. 1-7)
         query_token = self._create_uninformed_tokens(

@@ -97,6 +97,11 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         cond_dim=innovation_cond_dim,
         out_channels=model_cfg.d_model)
 
+    learnable_gating_cfg = model.LearnableGatingConfig(
+        **model_cfg.learnable_gating,
+        in_channels=n_obs_vars,
+        out_channels=model_cfg.d_model)
+
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
@@ -105,6 +110,7 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         masking=masking_cfg,
         transformer=transformer_cfg,
         output_head=output_head_cfg,
+        learnable_gating=learnable_gating_cfg,
         num_samples=model_cfg.num_samples,
         pre_oat_loss_weight=model_cfg.pre_oat_loss_weight
     )

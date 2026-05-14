@@ -12,7 +12,8 @@ from oat.model_module.model import (
     TransformerConfig,
     OutputHeadConfig,
     OATConfig,
-    UninformedOATConfig
+    UninformedOATConfig,
+    LearnableGatingConfig
 )
 from oat.data_module.transform import Transform
 
@@ -58,6 +59,8 @@ def model_cfg_fixture(batch_fixture):
         crps_mc_samples=50,
         observation_assimilation_as="innovation"
     )
+    
+    gating_config = LearnableGatingConfig(in_channels=n_obs_vars, out_channels=4, hidden_channels=4)
 
     oat_cfg = OATConfig(
         global_encoder=global_enc_cfg,
@@ -67,6 +70,7 @@ def model_cfg_fixture(batch_fixture):
         transformer=transformer_cfg,
         masking=masking_cfg,
         output_head=output_head_cfg,
+        learnable_gating=gating_config,
         num_samples=10
     )
     
