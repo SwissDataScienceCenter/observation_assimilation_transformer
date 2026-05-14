@@ -1,0 +1,101 @@
+# Variable catalog for the COSMO-PeakWeather dataset.
+# Each variable has: description, unit, support, and (for obs_vars) default_distribution.
+# Supported support values: "real", "nonnegative", "positive"
+# Supported distributions: see src/oat/model_module/distributions.py (OATDistribution.name)
+obs_vars:
+  temperature:
+    description: "2m air temperature"
+    unit: "°C"
+
+  wind_u:
+    description: "10m zonal wind component (u)"
+    unit: "m/s"
+
+  wind_v:
+    description: "10m meridional wind component (v)"
+    unit: "m/s"
+
+  wind_speed:
+    description: "10m horizontal wind speed magnitude"
+    unit: "m/s"
+    lower_bound: 0
+    lower_open: True # Here I am not sure. If it's closed, log-normal in theory not possible
+
+  wind_gust:
+    description: "Maximum 10m wind gust speed"
+    unit: "m/s"
+    lower_bound: 0
+    lower_open: True # Also here.
+
+  precipitation:
+    description: "Hourly precipitation accumulation"
+    unit: "mm/h"
+    lower_bound: 0
+    lower_open: False
+
+nwp_vars:
+  T_2M:
+    description: "2m temperature from COSMO NWP model"
+    unit: "K"
+
+  T_G:
+    description: "Ground/soil temperature from COSMO NWP model"
+    unit: "K"
+
+  U_10M:
+    description: "10m zonal wind component from COSMO NWP model"
+    unit: "m/s"
+
+  V_10M:
+    description: "10m meridional wind component from COSMO NWP model"
+    unit: "m/s"
+
+  VMAX_10M:
+    description: "10m maximum wind gust from COSMO NWP model"
+    unit: "m/s"
+
+  wind_direction:
+    description: "10m wind direction derived from U_10M and V_10M"
+    unit: "degrees [0, 360)"
+topo_vars:
+  DEM:
+    description: "Digital elevation model height"
+    unit: "m"
+
+  TPI_500M:
+    description: "Topographic position index at 500 m scale"
+    unit: "m"
+
+  TPI_2000M:
+    description: "Topographic position index at 2000 m scale"
+    unit: "m"
+
+  WE_DERIVATIVE_2000M_SIGRATIO1:
+    description: "West-east terrain derivative at 2000 m scale (significance ratio)"
+    unit: "dimensionless"
+
+  SN_DERIVATIVE_2000M_SIGRATIO1:
+    description: "South-north terrain derivative at 2000 m scale (significance ratio)"
+    unit: "dimensionless"
+
+coord_vars:
+  swiss_easting:
+    description: "Swiss coordinate easting (CH1903+/LV95)"
+    unit: "m"
+
+  swiss_northing:
+    description: "Swiss coordinate northing (CH1903+/LV95)"
+    unit: "m"
+
+geo_vars:
+  swiss_easting:
+    description: "Swiss coordinate easting (CH1903+/LV95)"
+    unit: "m"
+
+  swiss_northing:
+    description: "Swiss coordinate northing (CH1903+/LV95)"
+    unit: "m"
+
+  dem:
+    description: "Station elevation interpolated from DEM"
+    unit: "m"

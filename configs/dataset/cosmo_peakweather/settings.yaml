@@ -1,6 +1,5 @@
 # CosmoPeakWeather Dataset Configuration
 # Default settings for neural weather downscaling
-
 # Data paths
 nwp_path: "/scratch/mch/fzanetta/data/anemoi/datasets/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
 topo_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
