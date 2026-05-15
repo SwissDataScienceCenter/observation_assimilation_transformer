@@ -1,7 +1,9 @@
+from abc import abstractmethod
+
 import torch
 import torch.nn as nn
 import yaml
-from typing import Any, cast
+from typing import Any, Dict, cast
 
 from oat.data_module.support import VariableSupport
 
@@ -21,10 +23,16 @@ class Transform(nn.Module):
         raise NotImplementedError("Transform inverse method not implemented.")
 
     @property
+    @abstractmethod
     def input_support(self) -> "VariableSupport":
         raise NotImplementedError("Transform input_support property not implemented.")
+    
+    @abstractmethod
+    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport | Dict[str, Any]":
+        raise NotImplementedError("Transform transform_inverse_support method not implemented.")
 
-    def transform_support(self, support: "VariableSupport") -> "VariableSupport":
+    @abstractmethod
+    def transform_support(self, support: "VariableSupport") -> "VariableSupport | Dict[str, Any]":
         raise NotImplementedError("Transform transform_support method not implemented.")
     
     # -------- YAML serialization --------
@@ -64,6 +72,17 @@ class IdentityTransform(Transform):
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         """Return the sample unchanged."""
         return sample
+    
+    def input_support(self) -> "VariableSupport":
+        return VariableSupport(
+            lower_bounds=torch.full((1,), float("-inf")),
+            upper_bounds=torch.full((1,), float("inf")),
+            lower_open=torch.tensor([True]),
+            upper_open=torch.tensor([True]),
+        )
+        
+    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+        return support
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
         return support
@@ -138,6 +157,31 @@ class TranslateScaleTransform(Transform):
             upper_open=torch.ones(n_variables, dtype=torch.bool, device=self.scale.device),
         )
 
+    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+        """Apply the inverse transform to the support."""
+        n_variables = int(self.translate.numel())
+        if support.lower_bounds.shape[0] != n_variables:
+            raise ValueError(
+                f"Support has {support.lower_bounds.shape[0]} variables but transform has {n_variables} variables."
+            )
+        if torch.any(self.scale == 0):
+            raise ValueError("scale must be nonzero for support transformation.")
+
+        neg = self.scale < 0
+        lb_raw = support.lower_bounds / self.scale - self.translate
+        ub_raw = support.upper_bounds / self.scale - self.translate
+        lower_bounds = torch.where(neg, ub_raw, lb_raw)
+        upper_bounds = torch.where(neg, lb_raw, ub_raw)
+        lower_open = torch.where(neg, support.upper_open, support.lower_open)
+        upper_open = torch.where(neg, support.lower_open, support.upper_open)
+
+        return VariableSupport(
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            lower_open=lower_open,
+            upper_open=upper_open,
+        )
+        
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
         n_variables = int(self.translate.numel())
         n_support_variables = int(support.lower_bounds.numel())
@@ -334,6 +378,29 @@ class LogTransform(Transform):
             lower_open=torch.tensor([True]),
             upper_open=torch.tensor([True]),
         )
+        
+    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+        """Apply the inverse transform to the support."""
+        if self.apply_to is None:
+            return VariableSupport(
+                lower_bounds=torch.exp(support.lower_bounds) - self.offset,
+                upper_bounds=torch.exp(support.upper_bounds) - self.offset,
+                lower_open=support.lower_open.clone(),
+                upper_open=support.upper_open.clone(),
+            )
+        else:
+            indices = self.apply_to
+            new_lb = support.lower_bounds.clone()
+            new_ub = support.upper_bounds.clone()
+            new_lb[indices] = torch.exp(support.lower_bounds[indices]) - self.offset
+            new_ub[indices] = torch.exp(support.upper_bounds[indices]) - self.offset
+            return VariableSupport(
+                lower_bounds=new_lb,
+                upper_bounds=new_ub,
+                lower_open=support.lower_open.clone(),
+                upper_open=support.upper_open.clone(),
+            )
+        
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
         if self.apply_to is None:
@@ -390,6 +457,7 @@ class ComposedTransform(Transform):
             transforms (list): List of Transform instances to concatenate.
         """
         super().__init__()
+        assert len(transforms) > 0, "At least one transform must be provided."
         self.transforms = nn.ModuleList(transforms)
 
     def forward(self, sample: torch.Tensor) -> torch.Tensor:
@@ -403,11 +471,27 @@ class ComposedTransform(Transform):
         for transform in reversed(self.transforms):
             sample = transform.inverse(sample)
         return sample
+    
+    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+        for transform in reversed(self.transforms):
+            support = transform.transform_inverse_support(support)
+        return support
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
         for transform in self.transforms:
             support = transform.transform_support(support)
         return support
+    
+    @property
+    def input_support(self) -> "VariableSupport":
+        last_transform: Transform = self.transforms[-1]
+        if len(self.transforms) == 1:
+            return last_transform.input_support
+        
+        input_support = last_transform.input_support
+        for transform in reversed(self.transforms[:-1]):
+            input_support = transform.transform_inverse_support(input_support)
+        return input_support
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -424,7 +508,7 @@ class ComposedTransform(Transform):
         chain = " -> ".join(t.__class__.__name__ for t in self.transforms)
         return f"{self.__class__.__name__}({chain})"
     
-class NestedTransform(Transform):
+class NestedTransform(nn.Module):
     """Applies transforms to a nested dictionary of tensors.
     
     The transform_dict should mirror the structure of the data dictionary.
@@ -432,7 +516,7 @@ class NestedTransform(Transform):
     If a key is missing in transform_dict, no transform is applied to that data key.
     """
 
-    def __init__(self, transform_dict: dict[str, Transform | dict]) -> None:
+    def __init__(self, transform_dict: Dict[str, "NestedTransform | Transform | Dict"]) -> None:
         """
         Args:
             transform_dict: Dictionary with the same structure as the data.
@@ -441,7 +525,7 @@ class NestedTransform(Transform):
         super().__init__()
         self.transform_dict = nn.ModuleDict(self._build(transform_dict))
         
-    def _build(self, d: dict[str, Transform | dict]) -> dict[str, Transform]:
+    def _build(self, d: Dict[str, "NestedTransform | Transform | Dict"]) -> Dict[str, "NestedTransform | Transform"]:
         built = {}
         
         for k,v in d.items():
@@ -453,7 +537,7 @@ class NestedTransform(Transform):
                 raise TypeError()
         return built
 
-    def forward(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
+    def forward(self, sample: dict[str, torch.Tensor | Dict]) -> dict[str, torch.Tensor | Dict]:
         """Apply transforms to the nested dictionary."""
         # return self._apply_recursive(sample, self.transform_dict)
         
@@ -465,7 +549,7 @@ class NestedTransform(Transform):
                 out[k] = v
         return out
 
-    def inverse(self, sample: dict[str, torch.Tensor | dict]) -> dict[str, torch.Tensor | dict]:
+    def inverse(self, sample: dict[str, torch.Tensor | Dict]) -> dict[str, torch.Tensor | Dict]:
         """Apply inverse transforms to the nested dictionary."""
         # return self._apply_inverse_recursive(sample, self.transform_dict)
         
@@ -476,10 +560,46 @@ class NestedTransform(Transform):
             else:
                 out[k] = v
         return out
+    
+    @property
+    def input_support(self) -> dict[str, VariableSupport | Dict | None]:
+        out: dict[str, VariableSupport | Dict | None] = {}
+        for key, transform in self.transform_dict.items():
+            if isinstance(transform, NestedTransform):
+                out[key] = transform.input_support
+            else:
+                out[key] = transform.input_support
+        return out
+    
+    def transform_inverse_support(self, support_dict: Any) -> Any:
+        support_dict = cast(dict[str, VariableSupport | Dict | None], support_dict)
+        out: dict[str, VariableSupport | Dict | None] = {}
+        for key, value in support_dict.items():
+            if value is None:
+                out[key] = None
+            elif key not in self.transform_dict:
+                out[key] = value
+            else:
+                transform = self.transform_dict[key]
+                if isinstance(transform, NestedTransform):
+                    if not isinstance(value, dict):
+                        raise TypeError(
+                            f"Support for key '{key}' must be a dict because the "
+                            "transform is nested."
+                        )
+                    out[key] = transform.transform_inverse_support(value)
+                else:
+                    if isinstance(value, dict):
+                        raise TypeError(
+                            f"Support for key '{key}' must be a VariableSupport "
+                            "because the transform is a leaf transform."
+                        )
+                    out[key] = transform.transform_inverse_support(cast(VariableSupport, value))
+        return out
 
     def transform_support(self, support_dict: Any) -> Any:
-        support_dict = cast(dict[str, VariableSupport | dict | None], support_dict)
-        out: dict[str, VariableSupport | dict | None] = {}
+        support_dict = cast(dict[str, VariableSupport | Dict | None], support_dict)
+        out: dict[str, VariableSupport | Dict | None] = {}
         for key, value in support_dict.items():
             if value is None:
                 out[key] = None
@@ -503,7 +623,7 @@ class NestedTransform(Transform):
                     out[key] = transform.transform_support(cast(VariableSupport, value))
         return out
 
-    def _dict_to_serializable(self, d: dict) -> dict:
+    def _dict_to_serializable(self, d: Dict) -> Dict:
         """Convert nested dict of transforms to serializable format."""
         #TODO check
         result = {}
