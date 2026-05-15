@@ -695,3 +695,96 @@ class TestNestedTransformSupport:
 
         with pytest.raises(TypeError, match="obs.*VariableSupport"):
             transform.transform_support(support_dict)
+
+
+class TestComposedTransformInputSupport:
+    def test_tst_then_log_positive_scale(self) -> None:
+        # translate=2, scale=3, offset=1
+        # LogTransform requires y > -1, so (x+2)*3 > -1 => x > -1/3 - 2
+        composed = ComposedTransform([
+            TranslateScaleTransform(torch.tensor([2.0]), torch.tensor([3.0])),
+            LogTransform(offset=1.0),
+        ])
+        support = composed.input_support
+        expected_lower = torch.tensor([-1.0 / 3.0 - 2.0])
+        assert torch.allclose(support.lower_bounds, expected_lower)
+        assert support.upper_bounds[0] == float("inf")
+        assert support.lower_open[0].item() is True
+        assert support.upper_open[0].item() is True
+
+    def test_single_transform_composed_matches_leaf_input_support(self) -> None:
+        t = TranslateScaleTransform(torch.tensor([1.0]), torch.tensor([2.0]))
+        single = ComposedTransform([t])
+        assert torch.allclose(single.input_support.lower_bounds, t.input_support.lower_bounds)
+        assert torch.allclose(single.input_support.upper_bounds, t.input_support.upper_bounds)
+        assert torch.equal(single.input_support.lower_open, t.input_support.lower_open)
+        assert torch.equal(single.input_support.upper_open, t.input_support.upper_open)
+
+
+class TestRoundTripSupport:
+    def test_tst_positive_scale_roundtrip(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([1.0, -2.0]),
+            scale=torch.tensor([2.0, 0.5]),
+        )
+        original = VariableSupport(
+            lower_bounds=torch.tensor([0.0, -4.0]),
+            upper_bounds=torch.tensor([2.0, 0.0]),
+            lower_open=torch.tensor([False, True]),
+            upper_open=torch.tensor([True, False]),
+        )
+        roundtripped = transform.inverse_transform_support(transform.transform_support(original))
+        assert torch.allclose(roundtripped.lower_bounds, original.lower_bounds)
+        assert torch.allclose(roundtripped.upper_bounds, original.upper_bounds)
+        assert torch.equal(roundtripped.lower_open, original.lower_open)
+        assert torch.equal(roundtripped.upper_open, original.upper_open)
+
+    def test_tst_negative_scale_roundtrip(self) -> None:
+        transform = TranslateScaleTransform(
+            translate=torch.tensor([0.0, 1.0]),
+            scale=torch.tensor([-2.0, 3.0]),
+        )
+        original = VariableSupport(
+            lower_bounds=torch.tensor([-1.0, 0.0]),
+            upper_bounds=torch.tensor([4.0, 2.0]),
+            lower_open=torch.tensor([False, True]),
+            upper_open=torch.tensor([True, False]),
+        )
+        roundtripped = transform.inverse_transform_support(transform.transform_support(original))
+        assert torch.allclose(roundtripped.lower_bounds, original.lower_bounds)
+        assert torch.allclose(roundtripped.upper_bounds, original.upper_bounds)
+        assert torch.equal(roundtripped.lower_open, original.lower_open)
+        assert torch.equal(roundtripped.upper_open, original.upper_open)
+
+    def test_log_transform_roundtrip(self) -> None:
+        transform = LogTransform(offset=1.0)
+        original = VariableSupport(
+            lower_bounds=torch.tensor([0.0, 2.0]),
+            upper_bounds=torch.tensor([9.0, 99.0]),
+            lower_open=torch.tensor([False, True]),
+            upper_open=torch.tensor([True, False]),
+        )
+        roundtripped = transform.inverse_transform_support(transform.transform_support(original))
+        assert torch.allclose(roundtripped.lower_bounds, original.lower_bounds, atol=1e-6)
+        assert torch.allclose(roundtripped.upper_bounds, original.upper_bounds, atol=1e-6)
+        assert torch.equal(roundtripped.lower_open, original.lower_open)
+        assert torch.equal(roundtripped.upper_open, original.upper_open)
+
+    def test_composed_tst_then_log_roundtrip(self) -> None:
+        # translate=2, scale=3, offset=1 => input_support lower bound = -1/3 - 2
+        # Use a support strictly inside input_support: lower > -7/3
+        composed = ComposedTransform([
+            TranslateScaleTransform(torch.tensor([2.0]), torch.tensor([3.0])),
+            LogTransform(offset=1.0),
+        ])
+        original = VariableSupport(
+            lower_bounds=torch.tensor([0.0]),
+            upper_bounds=torch.tensor([5.0]),
+            lower_open=torch.tensor([False]),
+            upper_open=torch.tensor([True]),
+        )
+        roundtripped = composed.inverse_transform_support(composed.transform_support(original))
+        assert torch.allclose(roundtripped.lower_bounds, original.lower_bounds, atol=1e-6)
+        assert torch.allclose(roundtripped.upper_bounds, original.upper_bounds, atol=1e-6)
+        assert torch.equal(roundtripped.lower_open, original.lower_open)
+        assert torch.equal(roundtripped.upper_open, original.upper_open)

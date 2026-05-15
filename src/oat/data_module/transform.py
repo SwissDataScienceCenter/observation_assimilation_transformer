@@ -28,8 +28,8 @@ class Transform(nn.Module):
         raise NotImplementedError("Transform input_support property not implemented.")
     
     @abstractmethod
-    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport | Dict[str, Any]":
-        raise NotImplementedError("Transform transform_inverse_support method not implemented.")
+    def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport | Dict[str, Any]":
+        raise NotImplementedError("Transform inverse_transform_support method not implemented.")
 
     @abstractmethod
     def transform_support(self, support: "VariableSupport") -> "VariableSupport | Dict[str, Any]":
@@ -73,6 +73,7 @@ class IdentityTransform(Transform):
         """Return the sample unchanged."""
         return sample
     
+    @property
     def input_support(self) -> "VariableSupport":
         return VariableSupport(
             lower_bounds=torch.full((1,), float("-inf")),
@@ -81,7 +82,7 @@ class IdentityTransform(Transform):
             upper_open=torch.tensor([True]),
         )
         
-    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+    def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport":
         return support
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
@@ -157,7 +158,7 @@ class TranslateScaleTransform(Transform):
             upper_open=torch.ones(n_variables, dtype=torch.bool, device=self.scale.device),
         )
 
-    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+    def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport":
         """Apply the inverse transform to the support."""
         n_variables = int(self.translate.numel())
         if support.lower_bounds.shape[0] != n_variables:
@@ -379,7 +380,7 @@ class LogTransform(Transform):
             upper_open=torch.tensor([True]),
         )
         
-    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+    def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport":
         """Apply the inverse transform to the support."""
         if self.apply_to is None:
             return VariableSupport(
@@ -472,9 +473,9 @@ class ComposedTransform(Transform):
             sample = transform.inverse(sample)
         return sample
     
-    def transform_inverse_support(self, support: "VariableSupport") -> "VariableSupport":
+    def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport":
         for transform in reversed(self.transforms):
-            support = transform.transform_inverse_support(support)
+            support = transform.inverse_transform_support(support)
         return support
 
     def transform_support(self, support: "VariableSupport") -> "VariableSupport":
@@ -490,7 +491,7 @@ class ComposedTransform(Transform):
         
         input_support = last_transform.input_support
         for transform in reversed(self.transforms[:-1]):
-            input_support = transform.transform_inverse_support(input_support)
+            input_support = transform.inverse_transform_support(input_support)
         return input_support
     
     def to_dict(self) -> dict[str, Any]:
@@ -571,7 +572,7 @@ class NestedTransform(nn.Module):
                 out[key] = transform.input_support
         return out
     
-    def transform_inverse_support(self, support_dict: Any) -> Any:
+    def inverse_transform_support(self, support_dict: Any) -> Any:
         support_dict = cast(dict[str, VariableSupport | Dict | None], support_dict)
         out: dict[str, VariableSupport | Dict | None] = {}
         for key, value in support_dict.items():
@@ -587,7 +588,7 @@ class NestedTransform(nn.Module):
                             f"Support for key '{key}' must be a dict because the "
                             "transform is nested."
                         )
-                    out[key] = transform.transform_inverse_support(value)
+                    out[key] = transform.inverse_transform_support(value)
                 else:
                     if isinstance(value, dict):
                         raise TypeError(
