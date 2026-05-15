@@ -144,6 +144,7 @@ class OATConfig:
     learnable_gating: LearnableGatingConfig
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
+    mask_innovations: bool = True
 
     @classmethod
     def default(cls) -> 'OATConfig':
@@ -467,6 +468,7 @@ class OAT(UninformedOAT):
         if config is None:
             config = OATConfig.default()
         self.config = config
+        self.mask_innovations = config.mask_innovations
         self.register_buffer("_pre_oat_loss_weight", torch.tensor(self.config.pre_oat_loss_weight, dtype=torch.float32))
         
         # Extract dimensions
@@ -663,7 +665,7 @@ class OAT(UninformedOAT):
         innovation = self.output_head.compute_innovation(
             uninformed_kv_token,
             observation_data['obs'],
-            observation_data['mask_obs']
+            mask=observation_data['mask_obs'] if self.mask_innovations else None
         )
         
         # Step 3: Create initial station tokens with innovation (Eq. 16 - fusion)

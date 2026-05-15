@@ -112,7 +112,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         output_head=output_head_cfg,
         learnable_gating=learnable_gating_cfg,
         num_samples=model_cfg.num_samples,
-        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight
+        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
+        mask_innovations=model_cfg.mask_innovations
     )
     logger.info("Initialized model cfg...")
     return oat_config

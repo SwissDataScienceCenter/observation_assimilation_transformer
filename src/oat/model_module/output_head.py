@@ -180,22 +180,21 @@ class OutputHead(nn.Module):
         return out, overall_loss
 
     
-    def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        
+    def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+
         if self.observation_assimilation_as == "innovation":
-            predicted_distributions = self.forward(x, as_dict=True) # predict the distribution
+            predicted_distributions = self.forward(x, as_dict=True)
             innovations = []
-            for i, (var_name, dist) in enumerate(predicted_distributions.items()): # for each variable, compute the innovation according to the distribution-specific method
-                # extract the univariate target (assumes the order of the dictionary is the same as the order of the variables in the target tensor)
+            for i, (var_name, dist) in enumerate(predicted_distributions.items()):
                 target_i = target[..., i] if dist.event_shape == () else target[..., i:i+1]
-                mask_i = mask[..., i] if dist.event_shape == () else mask[..., i:i+1]
-                
                 innovation_i = dist.innovation(target=target_i)
-                innovations.append(innovation_i * mask_i)
-                
+                if mask is not None:
+                    mask_i = mask[..., i] if dist.event_shape == () else mask[..., i:i+1]
+                    innovation_i = innovation_i * mask_i
+                innovations.append(innovation_i)
             return torch.stack(innovations, dim=-1)
 
         # straight-through: return the raw observations and let the fusion layer learn how to use them
-        return target # TODO should we mask away here too? should it depend on model.config.innovation_fusion.condition_on_mask used in the consequent fusion layer?
+        return target * mask if mask is not None else target
 
     
