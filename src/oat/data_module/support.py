@@ -41,7 +41,7 @@ def _to_bounds(c: constraints.Constraint) -> _Bounds:
     raise ValueError(f"Unsupported continuous constraint type: {type(c).__name__}")
 
 
-class VariableSupport(constraints.Constraint):
+class VariableSupport:
     """Per-variable interval support for a multi-dimensional tensor.
 
     Parameters
@@ -126,7 +126,7 @@ class VariableSupport(constraints.Constraint):
         hi_ok = torch.where(hi_open, value < hi, value <= hi)
         return lo_ok & hi_ok
 
-    def is_subset(self, other: constraints.Constraint, idx: int | None = None) -> bool:
+    def is_subset(self, other: 'VariableSupport' | constraints.Constraint, idx: int | None = None) -> bool:
         """Return True if this support is a subset of *other*.
 
         Converts *other* to a ``_Bounds`` via ``_to_bounds`` and compares
@@ -136,7 +136,7 @@ class VariableSupport(constraints.Constraint):
         Parameters
         ----------
         other:
-            Any ``torch.distributions.constraints.Constraint`` to compare
+            VariableSupport or any ``torch.distributions.constraints.Constraint`` to compare
             against.
         idx:
             Index into the variable axis selecting which variable to test.
