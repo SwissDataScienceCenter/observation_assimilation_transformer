@@ -145,6 +145,58 @@ class TestLogTransform:
         assert restored.offset == 0.5
 
 
+class TestLogTransformVectorOffset:
+    def test_vector_offset_no_apply_to_forward(self) -> None:
+        """Case 2: per-feature offset broadcasts over feature (last) dimension."""
+        offset = torch.tensor([1.0, 2.0, 3.0])
+        transform = LogTransform(offset=offset)
+        sample = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # (2, 3)
+        result = transform(sample)
+        expected = torch.log(sample + offset)  # (2, 3) + (3,) -> (2, 3)
+        assert torch.allclose(result, expected)
+
+    def test_vector_offset_no_apply_to_inverse(self) -> None:
+        """Case 2: round-trip is identity."""
+        offset = torch.tensor([1.0, 2.0, 3.0])
+        transform = LogTransform(offset=offset)
+        sample = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_vector_offset_no_apply_to_feature_dim_mismatch_raises(self) -> None:
+        """Case 2: offset length != sample feature dim raises ValueError."""
+        offset = torch.tensor([1.0, 2.0, 3.0])  # 3 entries
+        transform = LogTransform(offset=offset)
+        sample = torch.tensor([[1.0, 2.0], [4.0, 5.0]])  # feature dim = 2
+        with pytest.raises(ValueError, match="offset"):
+            transform(sample)
+
+    def test_vector_offset_with_apply_to_forward(self) -> None:
+        """Case 3: offset[i] applied to apply_to[i], other features unchanged."""
+        offset = torch.tensor([0.5, 2.0])  # offset for features 0 and 2
+        transform = LogTransform(offset=offset, apply_to=[0, 2])
+        sample = torch.tensor([[1.0, 5.0, 3.0], [4.0, 10.0, 6.0]])  # (2, 3)
+        result = transform(sample)
+        expected = sample.clone()
+        expected[:, 0] = torch.log(sample[:, 0] + 0.5)
+        expected[:, 2] = torch.log(sample[:, 2] + 2.0)
+        assert torch.allclose(result, expected)
+
+    def test_vector_offset_with_apply_to_inverse(self) -> None:
+        """Case 3: round-trip is identity."""
+        offset = torch.tensor([0.5, 2.0])
+        transform = LogTransform(offset=offset, apply_to=[0, 2])
+        sample = torch.tensor([[1.0, 5.0, 3.0], [4.0, 10.0, 6.0]])
+        result = transform.inverse(transform(sample))
+        assert torch.allclose(result, sample, atol=1e-6)
+
+    def test_vector_offset_apply_to_length_mismatch_raises(self) -> None:
+        """Case 3: offset length != len(apply_to) raises ValueError at init."""
+        offset = torch.tensor([1.0, 2.0, 3.0])  # 3 entries
+        with pytest.raises(ValueError, match="offset"):
+            LogTransform(offset=offset, apply_to=[0, 2])  # 2 indices — mismatch
+
+
 class TestComposedTransform:
     def test_composed_forward(self) -> None:
         t1 = TranslateScaleTransform(torch.tensor([1.0]), torch.tensor([2.0]))

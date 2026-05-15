@@ -297,87 +297,123 @@ class MinMaxTransform(TranslateScaleTransform):
 class LogTransform(Transform):
     """Applies logarithmic transformation to the input data."""
 
-    def __init__(self, 
-                 offset: float = 1e-4, 
+    def __init__(self,
+                 offset: float | torch.Tensor = 1e-4,
                  feature_dim: int = -1,
                  apply_to: list[int] | None = None) -> None:
         """
         Args:
-            offset (float): Small constant to avoid log(0).
+            offset (float | torch.Tensor): Offset to avoid log(0). Can be:
+                - scalar (float or single-entry tensor): same offset for all features.
+                - 1-D tensor matching feature dim size (with apply_to=None): one offset per feature.
+                - 1-D tensor matching len(apply_to) (with apply_to list): one offset per selected feature.
             feature_dim (int): Dimension of features in the input tensor.
             apply_to (list[int] | None): Indices of features to apply the transform to. If None, applies to all features.
         """
         super().__init__()
-        
-        # TODO should we make EVERY attribute a buffer?
-        self.offset = offset
+
+        if isinstance(offset, torch.Tensor):
+            self.register_buffer("offset", offset.float())
+        else:
+            self.register_buffer("offset", torch.tensor(float(offset)))
+
         self.feature_dim = feature_dim
-        
-        # Convert to tensor once during initialization if provided
+
         if apply_to is not None:
             self.register_buffer("apply_to", torch.tensor(apply_to, dtype=torch.long))
-            # Precompute boolean mask for efficient indexing
             self._use_mask = True
+            if self.offset.numel() > 1 and self.offset.numel() != len(apply_to):
+                raise ValueError(
+                    f"offset tensor length ({self.offset.numel()}) must match "
+                    f"apply_to length ({len(apply_to)})."
+                )
         else:
             self.apply_to = None
             self._use_mask = False
             
+    def _broadcastable_offset(self, x: torch.Tensor) -> torch.Tensor:
+        """Reshape offset to broadcast along feature_dim of x (same pattern as TranslateScaleTransform)."""
+        if self.offset.numel() == 1:
+            return self.offset
+        shape = [1] * x.ndim
+        shape[self.feature_dim] = -1
+        return self.offset.view(shape)
+
     def _forward_transform(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.log(x + self.offset)
-    
+        return torch.log(x + self._broadcastable_offset(x))
+
     def _inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.exp(x) - self.offset
+        return torch.exp(x) - self._broadcastable_offset(x)
 
     def forward(self, sample: torch.Tensor) -> torch.Tensor:
         """Apply logarithmic transformation to the sample."""
         if not self._use_mask:
+            if self.offset.numel() > 1:
+                n_features = sample.shape[self.feature_dim]
+                if self.offset.numel() != n_features:
+                    raise ValueError(
+                        f"offset tensor length ({self.offset.numel()}) must match "
+                        f"feature dimension size ({n_features})."
+                    )
             return self._forward_transform(sample)
-        
+
         # Clone to avoid modifying input
         result = sample.clone()
-        
+
         # Use advanced indexing for efficient in-place update
         indices = self.apply_to
         transformed = result.index_select(self.feature_dim, indices).copy_(
             self._forward_transform(sample.index_select(self.feature_dim, indices))
         )
         result.index_copy_(self.feature_dim, indices, transformed)
-        
+
         return result
 
     def inverse(self, sample: torch.Tensor) -> torch.Tensor:
         """Revert the logarithmic transformation applied to the sample."""
         if not self._use_mask:
+            if self.offset.numel() > 1:
+                n_features = sample.shape[self.feature_dim]
+                if self.offset.numel() != n_features:
+                    raise ValueError(
+                        f"offset tensor length ({self.offset.numel()}) must match "
+                        f"feature dimension size ({n_features})."
+                    )
             return self._inverse_transform(sample)
-        
+
         # Clone to avoid modifying input
         result = sample.clone()
-        
+
         # Use advanced indexing for efficient in-place update
         indices = self.apply_to
         transformed = result.index_select(self.feature_dim, indices).copy_(
             self._inverse_transform(sample.index_select(self.feature_dim, indices))
         )
         result.index_copy_(self.feature_dim, indices, transformed)
-        
+
         return result
     
     def to_dict(self) -> dict[str, Any]:
         apply_to_list = self.apply_to.tolist() if self.apply_to is not None else None
+        offset_val: float | list[float] = (
+            self.offset.item() if self.offset.numel() == 1 else self.offset.tolist()
+        )
         return {
-            "type": "LogTransform", 
-            "offset": float(self.offset), 
-            "feature_dim": self.feature_dim, 
-            "apply_to": apply_to_list
+            "type": "LogTransform",
+            "offset": offset_val,
+            "feature_dim": self.feature_dim,
+            "apply_to": apply_to_list,
         }
 
     @property
     def input_support(self) -> "VariableSupport":
+        n = self.offset.numel()
+        lb = -self.offset.reshape(n)
         return VariableSupport(
-            lower_bounds=torch.tensor([-self.offset]),
-            upper_bounds=torch.tensor([float("inf")]),
-            lower_open=torch.tensor([True]),
-            upper_open=torch.tensor([True]),
+            lower_bounds=lb,
+            upper_bounds=torch.full((n,), float("inf")),
+            lower_open=torch.full((n,), True, dtype=torch.bool),
+            upper_open=torch.full((n,), True, dtype=torch.bool),
         )
         
     def inverse_transform_support(self, support: "VariableSupport") -> "VariableSupport":
@@ -442,10 +478,16 @@ class LogTransform(Transform):
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> 'LogTransform':
+        raw_offset = d["offset"]
+        offset: float | torch.Tensor = (
+            torch.tensor(raw_offset, dtype=torch.float32)
+            if isinstance(raw_offset, list)
+            else raw_offset
+        )
         return cls(
-            offset=d["offset"], 
-            feature_dim=d.get("feature_dim", -1), 
-            apply_to=d.get("apply_to", None)
+            offset=offset,
+            feature_dim=d.get("feature_dim", -1),
+            apply_to=d.get("apply_to", None),
         )
 
 @register_transform    
