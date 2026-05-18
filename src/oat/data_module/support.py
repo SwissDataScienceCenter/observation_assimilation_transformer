@@ -171,6 +171,27 @@ class VariableSupport:
             return lower_ok and upper_ok
 
         if idx is not None:
+            if isinstance(other, VariableSupport):
+                n_other = int(other.lower_bounds.shape[0])
+
+                if n_other == 1:
+                    target_idx = 0
+                elif idx < n_other:
+                    target_idx = idx
+                else:
+                    raise ValueError(
+                        "If idx is not None and other is VariableSupport, other must have "
+                        "one dimension or contain the requested index."
+                    )
+
+                target = _Bounds(
+                    lower_bound=float(other.lower_bounds[target_idx].item()),
+                    upper_bound=float(other.upper_bounds[target_idx].item()),
+                    lower_open=bool(other.lower_open[target_idx].item()),
+                    upper_open=bool(other.upper_open[target_idx].item()),
+                )
+                return _subset_one(idx, target)
+
             return _subset_one(idx, _to_bounds(other))
 
         n_self = int(self.lower_bounds.shape[0])
