@@ -104,7 +104,7 @@ class VariableSupport:
         self.lower_open = _to_bool_tensor(lower_open) | torch.isneginf(lower_bounds)
         self.upper_open = _to_bool_tensor(upper_open) | torch.isposinf(upper_bounds)
 
-    def check(self, value: torch.Tensor, dim: int=-1) -> torch.Tensor:
+    def check(self, value: torch.Tensor, dim: int = -1) -> torch.Tensor:
         """Return a bool tensor of the same shape as *value*.
 
         Each slice along ``dim`` is checked against the corresponding
