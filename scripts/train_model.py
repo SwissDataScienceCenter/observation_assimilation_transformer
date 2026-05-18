@@ -286,47 +286,22 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
 
     logger.info("Saving examples of transforms as fixtures ...")
     ROOT = Path(__file__).resolve().parents[1]
-    out_file = ROOT / "test" / "oat_test" / f"input_transform_fixture.pickle"
+
+    out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    
     with open(out_file, "wb") as f:
         pickle.dump(input_transform, f)
-        logger.info("Saving examples of transforms as fixtures ...")
-        ROOT = Path(__file__).resolve().parents[1]
-        out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(out_file, "wb") as f:
-            pickle.dump(input_transform, f)
-
-        logger.info(f"Saved input_transform object to {out_file}")
-
-        out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
-
-        with open(out_file, "wb") as f:
-            pickle.dump(output_transform, f)
-
-        logger.info(f"Saved output_transform object to {out_file}")
-        batch = next(iter(train_loader))
-        out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
-        with open(out_file, "wb") as f:
-                pickle.dump(batch, f)
-
-        logger.info(f"Saved batch fixture object to {out_file}")
     logger.info(f"Saved input_transform object to {out_file}")
-    
-    out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
-    
+
+    out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
     with open(out_file, "wb") as f:
         pickle.dump(output_transform, f)
-
-    
     logger.info(f"Saved output_transform object to {out_file}")
+
     batch = next(iter(train_loader))
-    out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
+    out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
     with open(out_file, "wb") as f:
-            pickle.dump(batch, f)
-            
+        pickle.dump(batch, f)
     logger.info(f"Saved batch fixture object to {out_file}")
 
 
@@ -451,5 +426,5 @@ if __name__ == "__main__":
     # Usage:
     # python -m scripts.train_model                              (OAT training)
     # python -m scripts.train_model model=baseline logging=baseline  (baseline evaluation)
-    # python -m scripts.train_model +save_transforms_fixtures=true ++dataloader.batch_size=1
+    # python -m scripts.train_model +saves_fixtures=true ++dataloader.batch_size=1
     main()
