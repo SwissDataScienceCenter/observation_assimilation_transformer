@@ -1,4 +1,4 @@
-from typing import Type, Optional, List
+from typing import Any, Type, Optional, List
 import logging
 
 import pytorch_lightning as pl
@@ -14,6 +14,7 @@ from oat.model_module.model import (
     UninformedOAT
 )
 from oat.data_module.transform import Transform
+from oat.data_module.support import VariableSupport
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
     point_mae,
@@ -137,7 +138,58 @@ class OATPredictor(pl.LightningModule):
 
         assert list(self.model.output_head.variable_to_distribution.keys()) == self.output_var_names
 
-    def on_fit_start(self):
+    def _format_support_interval(self, support: VariableSupport, idx: int) -> str:
+        lo = float(support.lower_bounds[idx].item())
+        hi = float(support.upper_bounds[idx].item())
+        lo_bracket = "(" if bool(support.lower_open[idx].item()) else "["
+        hi_bracket = ")" if bool(support.upper_open[idx].item()) else "]"
+        return f"{lo_bracket}{lo}, {hi}{hi_bracket}"
+
+    def _format_distribution_support(self, dist_support: Any) -> str:
+        if dist_support is torch.distributions.constraints.nonnegative:
+            return "nonnegative"
+        return str(dist_support)
+
+    def validate_output_head_supports(self, training_dataset: Any) -> None:
+        """Validate that each output distribution support covers transformed training support."""
+        if (
+            not hasattr(training_dataset, "dataset")
+            or not hasattr(training_dataset.dataset, "obs_var_support")
+            or not hasattr(training_dataset.dataset, "config")
+            or not hasattr(training_dataset.dataset.config, "obs_vars")
+        ):
+            raise TypeError(
+                "Expected a TrainDataset-like object with `.dataset.obs_var_support` "
+                "and `.dataset.config.obs_vars` "
+                "(from oat.data_module.data_split.TrainDataset)."
+            )
+
+        obs_vars = list(training_dataset.dataset.config.obs_vars)
+        transformed_support = self.output_transform.transform_support(
+            training_dataset.dataset.obs_var_support
+        )
+
+        for i, var_name in enumerate(obs_vars):
+            mapper = self.model.output_head.distribution_mappers[var_name]
+            dist_support = mapper.support
+            if not transformed_support.is_subset(dist_support, idx=i):
+                dist_name = self.model.output_head.variable_to_distribution[var_name]
+                interval = self._format_support_interval(transformed_support, idx=i)
+                support_name = self._format_distribution_support(dist_support)
+                raise ValueError(
+                    "Output support validation failed for variable "
+                    f"'{var_name}' (index={i}, distribution='{dist_name}'). "
+                    f"Distribution support is {support_name}, but transformed target "
+                    f"support is {interval}. Ensure output_transform and "
+                    "obs_variable_to_distribution are compatible."
+                )
+
+    def on_fit_start(self) -> None:
+        train_loader = self.trainer.train_dataloader
+        train_dataset = train_loader.dataset if hasattr(train_loader, "dataset") else None
+
+        if train_dataset is not None:
+            self.validate_output_head_supports(train_dataset)
         
         # If there is a OAT loss scheduler, 
         # check that the total steps given to the scheduler matches the trainer's estimated total steps. 
@@ -145,6 +197,13 @@ class OATPredictor(pl.LightningModule):
         if self.oat_loss_weight_scheduler is not None:
 
             total_steps = self.trainer.estimated_stepping_batches 
+            if total_steps is None:
+                if self.global_rank == 0:
+                    logger.warning(
+                        "WARNING: Could not infer trainer estimated stepping batches; "
+                        "skipping OAT scheduler total-step consistency check."
+                    )
+                return
         
             requested_total_step = self.oat_loss_weight_scheduler.total_steps
             

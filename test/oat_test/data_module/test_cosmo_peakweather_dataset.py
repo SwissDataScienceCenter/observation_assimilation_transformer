@@ -1,5 +1,10 @@
 from hydra import initialize, compose
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset, DERIVED_FEATURES
+from oat.data_module.cosmo_peakweather_dataset import (
+    CosmoPeakWeatherDataset,
+    DERIVED_FEATURES,
+    _build_obs_variable_support,
+)
+from oat.data_module.support import VariableSupport
 from oat.data_module.transform import NestedTransform, Transform
 from oat.data_module.data_split import create_splits
 import numpy as np
@@ -141,3 +146,68 @@ def test_derived_feature_output_order() -> None:
     assert result.shape[0] == 2
     torch.testing.assert_close(result[0], torch.full((2, 2), 5.0))   # wind_speed
     torch.testing.assert_close(result[1], torch.full((2, 2), 280.0)) # T_2M
+
+
+def test_build_obs_variable_support_reads_catalog_bounds() -> None:
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+
+    support = _build_obs_variable_support(
+        cfg.dataset.catalog,
+        ["temperature", "wind_gust", "precipitation"],
+    )
+
+    assert isinstance(support, VariableSupport)
+    torch.testing.assert_close(
+        support.lower_bounds,
+        torch.tensor([float("-inf"), 0.0, 0.0]),
+    )
+    torch.testing.assert_close(
+        support.upper_bounds,
+        torch.tensor([float("inf"), float("inf"), float("inf")]),
+    )
+    assert torch.equal(
+        support.lower_open,
+        torch.tensor([True, True, False]),
+    )
+    assert torch.equal(
+        support.upper_open,
+        torch.tensor([True, True, True]),
+    )
+
+
+def test_build_obs_variable_support_raises_for_missing_variable() -> None:
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+
+    with pytest.raises(KeyError, match="missing from catalog"):
+        _build_obs_variable_support(
+            cfg.dataset.catalog,
+            ["temperature", "not_a_real_obs_var"],
+        )
+
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="Skipped on CI (requires local datasets)"
+)
+def test_cosmo_peakweather_dataset_exposes_obs_var_support() -> None:
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+
+    expected_support = _build_obs_variable_support(
+        cfg.dataset.catalog,
+        list(dataset.config.obs_vars),
+    )
+
+    torch.testing.assert_close(
+        dataset.obs_var_support.lower_bounds,
+        expected_support.lower_bounds,
+    )
+    torch.testing.assert_close(
+        dataset.obs_var_support.upper_bounds,
+        expected_support.upper_bounds,
+    )
+    assert torch.equal(dataset.obs_var_support.lower_open, expected_support.lower_open)
+    assert torch.equal(dataset.obs_var_support.upper_open, expected_support.upper_open)
