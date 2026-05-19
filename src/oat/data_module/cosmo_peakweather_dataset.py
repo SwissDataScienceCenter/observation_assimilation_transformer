@@ -116,8 +116,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
     
     def __init__(self, config: Any):
         self.config = config
-        catalog = self.config.catalog
-        self.obs_var_support = _build_obs_variable_support(catalog, self.config.obs_vars)
+        self.catalog = self.config.catalog
+        self.obs_var_support = _build_obs_variable_support(self.catalog, self.config.obs_vars)
         
         # Load datasets
         self._load_datasets()
