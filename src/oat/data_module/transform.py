@@ -637,7 +637,7 @@ class NestedTransform(nn.Module):
                             f"Support for key '{key}' must be a VariableSupport "
                             "because the transform is a leaf transform."
                         )
-                    out[key] = transform.transform_inverse_support(cast(VariableSupport, value))
+                    out[key] = transform.inverse_transform_support(cast(VariableSupport, value))
         return out
 
     def transform_support(self, support_dict: Any) -> Any:
