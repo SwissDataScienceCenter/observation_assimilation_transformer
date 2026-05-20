@@ -393,6 +393,7 @@ def main(cfg: DictConfig) -> None:
             model=predictor,
             train_dataloaders=train_loader,
             val_dataloaders=val_loader,
+            ckpt_path=cfg.get("resume_from_checkpoint", None),
         )
 
         if profiler is not None and trainer.is_global_zero:
@@ -429,9 +430,12 @@ def main(cfg: DictConfig) -> None:
         profiler = setup_profiler(cfg=cfg)
 
         trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
-        trainer.fit(model=predictor,
-                    train_dataloaders=train_loader,
-                    val_dataloaders=val_loader)
+        trainer.fit(
+            model=predictor,
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=cfg.get("resume_from_checkpoint", None),
+        )
 
         if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
