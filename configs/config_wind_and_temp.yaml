@@ -29,6 +29,8 @@ dataset:
 
 seed: 42
 
+resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)
+
 hydra:
   run:
     dir: outputs/${hydra:runtime.choices.model}/${now:%Y-%m-%d}/${now:%H-%M-%S}

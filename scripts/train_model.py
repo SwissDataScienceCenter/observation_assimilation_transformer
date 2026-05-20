@@ -210,7 +210,8 @@ def setup_gp_predictor(
         kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),
         mean_groups=model_cfg.get("mean_groups"),
-        cov_groups=model_cfg.get("cov_groups"),
+        stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
+        non_stationary_cov_groups=model_cfg.get("non_stationary_cov_groups"),
         noise_variance=float(model_cfg.noise_variance),
         eps=float(model_cfg.get("eps", 1e-3)),
         loss_fn=str(model_cfg.loss_fn),
@@ -281,6 +282,15 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
         dirpath=checkpoint_dir,
         filename="best-model-{epoch:02d}-{val_loss:.4f}"
     )
+    last_checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        monitor=None,
+        save_top_k=0,
+        save_last=True,
+        every_n_epochs=1, # NOTE is epochs become long, consider saving every n_steps instead.
+        enable_version_counter=False,
+    )
+    
     # NOTE maybe use cfg for patience
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
@@ -290,7 +300,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
-    return wandb_logger, [checkpoint_callback, early_stop_callback, lr_monitor]
+    return wandb_logger, [checkpoint_callback, last_checkpoint_callback, early_stop_callback, lr_monitor]
 
 
 def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
@@ -391,6 +401,7 @@ def main(cfg: DictConfig) -> None:
             model=predictor,
             train_dataloaders=train_loader,
             val_dataloaders=val_loader,
+            ckpt_path=cfg.get("resume_from_checkpoint", None),
         )
 
         if profiler is not None and trainer.is_global_zero:
@@ -427,9 +438,12 @@ def main(cfg: DictConfig) -> None:
         profiler = setup_profiler(cfg=cfg)
 
         trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
-        trainer.fit(model=predictor,
-                    train_dataloaders=train_loader,
-                    val_dataloaders=val_loader)
+        trainer.fit(
+            model=predictor,
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=cfg.get("resume_from_checkpoint", None),
+        )
 
         if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
