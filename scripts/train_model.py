@@ -97,10 +97,15 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         cond_dim=innovation_cond_dim,
         out_channels=model_cfg.d_model)
 
-    learnable_gating_cfg = model.LearnableGatingConfig(
-        **model_cfg.learnable_gating,
-        in_channels=n_obs_vars,
-        out_channels=model_cfg.d_model)
+    if not model_cfg.get("learnable_gating", False):
+        logger.info("Learnable gating disabled.")
+        learnable_gating_cfg = None
+    else:
+        logger.info("Learnable gating enabled.")
+        learnable_gating_cfg = model.LearnableGatingConfig(
+            **model_cfg.learnable_gating,
+            in_channels=n_obs_vars,
+            out_channels=model_cfg.d_model)
 
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,

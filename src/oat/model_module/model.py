@@ -141,7 +141,7 @@ class OATConfig:
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
-    learnable_gating: LearnableGatingConfig
+    learnable_gating: LearnableGatingConfig | None = None
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
     mask_innovations: bool = True
@@ -512,11 +512,12 @@ class OAT(UninformedOAT):
             activation_geo_bias=config.transformer.activation_geo_bias
         )
         
-        self.mask_gating = fusion_layer.LearnableGating(in_channels=self.output_head.target_features,
-                                                        out_channels=d_model,
-                                                        hidden_channels=config.learnable_gating.hidden_channels,
-                                                        n_layers=config.learnable_gating.n_layers,
-                                                        activation=config.learnable_gating.activation)
+        if config.learnable_gating is not None:
+            self.mask_gating = fusion_layer.LearnableGating(in_channels=self.output_head.target_features,
+                                                            out_channels=d_model,
+                                                            hidden_channels=config.learnable_gating.hidden_channels,
+                                                            n_layers=config.learnable_gating.n_layers,
+                                                            activation=config.learnable_gating.activation)
 
     @property
     def pre_oat_loss_weight(self) -> float:
@@ -686,8 +687,9 @@ class OAT(UninformedOAT):
         
         # Apply learnable gating to station tokens based on observation mask 
         # to allow the model to learn how much to trust the innovation signal at each station.
-        mask_sigma = self.mask_gating(observation_data['mask_obs'])
-        station_token = (1.0 - mask_sigma) * uninformed_kv_token + mask_sigma * station_token
+        if hasattr(self, 'mask_gating'):
+            mask_sigma = self.mask_gating(observation_data['mask_obs'])
+            station_token = (1.0 - mask_sigma) * uninformed_kv_token + mask_sigma * station_token
         
         # Step 4: Create uninformed query tokens (Eq. 1-7)
         query_token = self._create_uninformed_tokens(
