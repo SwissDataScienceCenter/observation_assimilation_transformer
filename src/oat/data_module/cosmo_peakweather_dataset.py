@@ -600,7 +600,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
                     
         def _collect_stats(pre_transform: transform.NestedTransform, dataloader: DataLoader | None=None, num_data_points: int | None=None) -> dict[str, dict[str, statistics.RunningFeatureStats]]:
-                        
+            
+            if num_data_points is None:
+                num_data_points = len(self)
+                
             stats_dict = {
                 'observation_data': {
                     'obs': statistics.RunningFeatureStats(
