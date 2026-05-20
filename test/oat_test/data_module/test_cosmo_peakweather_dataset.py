@@ -77,7 +77,8 @@ def test_splits(observation_fraction: float):
                  'test_fraction': 0.2, 
                  'train_split_fraction': observation_fraction}
 
-    train_dataset, val_dataset, test_dataset = create_splits(dataset, **split_cfg)
+    split_dict = create_splits(dataset, **split_cfg)
+    train_dataset, val_dataset, test_dataset = split_dict['datasets']
     
     num_train_station = int(len(dataset.stations) * (1.0 - split_cfg['val_fraction'] - split_cfg['test_fraction']))
     num_train_and_val_station = int(len(dataset.stations) * (1.0 - split_cfg['test_fraction']))

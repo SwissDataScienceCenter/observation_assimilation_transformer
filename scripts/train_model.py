@@ -7,6 +7,7 @@ from oat.model_module import model
 from oat.data_module.setup import setup_data_and_transform
 from oat.data_module.transform import Transform
 from oat.predictor_module import OATPredictor
+from oat.predictor_module.schedulers import estimate_total_steps
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -23,7 +24,13 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.profilers import SimpleProfiler
+from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
@@ -83,7 +90,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     logger.info("Initialized model cfg...")
     return oat_config
 
-def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig, 
+def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
+                    estimated_total_step: int,
                     var_names: str,
                     transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
 
@@ -94,12 +102,32 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
     module = import_module(module_path)
     optim_cls = getattr(module, class_name)
 
-    # scheduler
-    module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+    # lr scheduler
+    module_path, class_name = cfg.predictor.kwargs.lr_scheduler_class.rsplit(".", 1)
     module = import_module(module_path)
     sched_cls = getattr(module, class_name)
 
-
+    # oat loss scheduler
+    oat_loss_scheduler_class = cfg.predictor.kwargs.get("oat_loss_scheduler_class", None)
+    if oat_loss_scheduler_class is not None:
+        module_path, class_name = cfg.predictor.kwargs.oat_loss_scheduler_class.rsplit(".", 1)
+        module = import_module(module_path)
+        oat_loss_sched_cls = getattr(module, class_name)
+        oat_loss_sched_params = cfg.predictor.kwargs.oat_loss_scheduler_params
+        if oat_loss_sched_params['total_steps'] is None:
+            oat_loss_sched_params['total_steps'] = estimated_total_step
+            
+            logger.info(f"Config did not specify total_steps for the OAT loss scheduler. It has been set to the (manual) estimated total training steps: {estimated_total_step}\
+                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
+        else:
+            logger.info(f"OAT loss scheduler total_steps from config: {oat_loss_sched_params['total_steps']} \
+                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
+            
+    else:
+        oat_loss_sched_cls = None
+        oat_loss_sched_params = None
+        
+    
     predictor = OATPredictor(
         oat_model_cfg=model_cfg,
         input_transform=transforms[0],
@@ -108,13 +136,95 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         lr=cfg.predictor.lr,
         optimizer_class=optim_cls,
         optimizer_params=cfg.predictor.kwargs.optimizer_params,
-        scheduler_class=sched_cls,
-        scheduler_params=cfg.predictor.kwargs.scheduler_params
+        lr_scheduler_class=sched_cls,
+        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
+        oat_loss_scheduler_class=oat_loss_sched_cls,
+        oat_loss_scheduler_params=oat_loss_sched_params
     )
 
     return predictor
 
 
+def setup_gp_predictor(
+    cfg: DictConfig,
+    field_extent: Dict,
+    obs_vars: List[str],
+    transforms: tuple[Transform, Transform],
+) -> "GPPredictor":
+    from importlib import import_module
+    from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
+    from oat.predictor_module.gp_predictor import GPPredictor
+
+    data_cfg = cfg.dataset
+    model_cfg = cfg.model
+
+    gp_topography_kwargs = None
+    if bool(model_cfg.get("use_topography", False)):
+        gp_topography_kwargs = {
+            **dict(model_cfg.topographic_encoder),
+            "in_channels": len(data_cfg.topo_vars),
+        }
+
+    gp_config = GPBaselineConfig(
+        obs_vars=obs_vars,
+        nwp_vars=list(data_cfg.nwp_vars),
+        field_extent=field_extent,
+        use_nwp=bool(model_cfg.use_nwp),
+        use_time_emb=bool(model_cfg.use_time_emb),
+        use_topography=bool(model_cfg.get("use_topography", False)),
+        topography_encoder_kwargs=gp_topography_kwargs,
+        mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
+        kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
+        kernel_embed_dim=int(model_cfg.kernel_embed_dim),
+        mean_groups=model_cfg.get("mean_groups"),
+        stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
+        non_stationary_cov_groups=model_cfg.get("non_stationary_cov_groups"),
+        noise_variance=float(model_cfg.noise_variance),
+        eps=float(model_cfg.get("eps", 1e-3)),
+        loss_fn=str(model_cfg.loss_fn),
+        num_samples=int(model_cfg.num_samples),
+    )
+    gp_model = GPBaseline(gp_config)
+
+    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
+    optim_cls = getattr(import_module(module_path), class_name)
+
+    sched_cls = None
+    sched_params: dict = {}
+    if cfg.predictor.kwargs.get("scheduler_class") is not None:
+        module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+        sched_cls = getattr(import_module(module_path), class_name)
+        sched_params = dict(cfg.predictor.kwargs.get("scheduler_params", {}))
+
+    return GPPredictor(
+        gp_model=gp_model,
+        input_transform=transforms[0],
+        output_transform=transforms[1],
+        output_var_names=obs_vars,
+        lr=float(cfg.predictor.lr),
+        optimizer_class=optim_cls,
+        optimizer_params=dict(cfg.predictor.kwargs.get("optimizer_params", {})),
+        scheduler_class=sched_cls,
+        scheduler_params=sched_params,
+    )
+
+
+def setup_profiler(cfg: DictConfig) -> Profiler | None:
+    if cfg.profiler.type == "simple":
+        dirpath = os.path.join("profiler_outputs", cfg.logging.group)
+        
+        now_str = datetime.now().strftime("%Y%m%d")
+        slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
+    
+        filename = f"{cfg.logging.run_name_prefix}_{now_str}_job{slurm_job_id}"
+        
+        return SimpleProfiler(dirpath=dirpath, filename=filename)
+
+    if cfg.profiler.type == "none" or cfg.profiler.type is None:
+        return None
+
+    raise ValueError(f"Profiler type {cfg.profiler.type} unknown.")
+        
 def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
@@ -210,8 +320,7 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
             
     logger.info(f"Saved batch fixture object to {out_file}")
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
 
 def get_model_cls(cfg: DictConfig) -> Any:
     model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
@@ -234,7 +343,7 @@ def main(cfg: DictConfig) -> None:
             an uninformed model ({model_cls}). It will be forcibly overridden to 0.0")
         cfg.split.train_split_fraction = 0.0
         
-    dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
+    dataset, len_train_dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
     
     if cfg.get("save_fixtures", False):
         save_fixtures_for_tests(input_transform=input_transform,
@@ -245,6 +354,9 @@ def main(cfg: DictConfig) -> None:
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
     wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
+    
+    # print config
+    logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
 
     if model_type == "baseline":
         from oat.model_module.baseline import NWPInterpolatorConfig
@@ -263,11 +375,51 @@ def main(cfg: DictConfig) -> None:
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
+    elif model_type == "gp_baseline":
+        predictor = setup_gp_predictor(
+            cfg=cfg,
+            field_extent=field_extent,
+            obs_vars=list(dataset.config.obs_vars),
+            transforms=[input_transform, output_transform],
+        )
+
+        profiler = setup_profiler(cfg=cfg)
+
+        trainer = Trainer(
+            **cfg.trainer,
+            callbacks=callbacks,
+            logger=wandb_logger,
+            profiler=profiler,
+        )
+        trainer.fit(
+            model=predictor,
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
+
+        if profiler is not None and trainer.is_global_zero:
+            print(profiler.summary())
     else:
         oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
 
         var_names = dataset.config.obs_vars
+        
+        # Estimate the total number of training steps. Can be used by the OAT loss scheduler if its total_steps is set to None.
+        estimated_total_steps = estimate_total_steps(
+            dataset_size=len_train_dataset,
+            batch_size=cfg.dataloader.train.batch_size,
+            max_epochs=cfg.trainer.max_epochs,
+            max_steps=OmegaConf.select(cfg.trainer, "max_steps", default=None),
+            accumulate_grad_batches=OmegaConf.select(cfg.trainer, "accumulate_grad_batches", default=1),
+            num_nodes=OmegaConf.select(cfg.trainer, "num_nodes", default=1),
+            num_gpus_per_node=OmegaConf.select(cfg.trainer, "devices", default=4),
+            limit_train_batches=OmegaConf.select(cfg.trainer, "limit_train_batches", default=1.0),
+            drop_last=OmegaConf.select(cfg.dataloader.train, "drop_last", default=False)
+        )
+        logger.info(f"Manual estimated total optimizer steps: {estimated_total_steps}")
+
         predictor = setup_oat_predictor(model_cfg=oat_model_cfg,
+                                        estimated_total_step=estimated_total_steps,
                                         var_names=var_names,
                                         transforms=[input_transform, output_transform],
                                         cfg=cfg)
@@ -276,10 +428,15 @@ def main(cfg: DictConfig) -> None:
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
 
-        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger)
+        profiler = setup_profiler(cfg=cfg)
+
+        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
         trainer.fit(model=predictor,
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader)
+
+        if profiler is not None and trainer.is_global_zero:
+            print(profiler.summary())
 
 if __name__ == "__main__":
     # Usage:
