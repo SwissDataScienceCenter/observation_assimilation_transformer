@@ -56,8 +56,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         cond_dim=time_cond_dim,
         out_channels=model_cfg.d_model)
 
-    if cfg.dataset.obs_variable_to_distribution != cfg.model.output_head.variable_to_distribution:
-        raise ValueError("Mismatch between observations variable distributions and output head variable distributions")
+    if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
+        raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")
     if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
         raise ValueError("Variables in output head distribution config do not match observation variables")
     if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):

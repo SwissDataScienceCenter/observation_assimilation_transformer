@@ -136,7 +136,7 @@ class OATPredictor(pl.LightningModule):
             logger.info(f"No OAT loss scheduler configured. Skipping initialization.")
             self.oat_loss_weight_scheduler = None
 
-        assert list(self.model.output_head.variable_to_distribution.keys()) == self.output_var_names
+        assert list(self.model.output_head.variable_to_distribution.keys()) == list(self.output_var_names)
 
     def _format_support_interval(self, support: VariableSupport, idx: int) -> str:
         lo = float(support.lower_bounds[idx].item())
