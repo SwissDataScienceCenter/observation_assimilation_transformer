@@ -21,6 +21,12 @@ dataset:
   - wind_u
   - wind_v
 
+  obs_variable_to_distribution:
+    temperature: "normal"
+    wind_gust: "lognormal"
+    wind_u: "normal"
+    wind_v: "normal"
+
 seed: 42
 
 resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)

@@ -1,8 +1,8 @@
 defaults:
   - global_encoder: mlp
   - topographic_encoder: default
-  - fusion_layer: default
-  - output_head: gaussian
+  - nwp_topo_fusion: default
+  - output_head: default
 
 model_cls: oat.model_module.model.UninformedOAT
 d_model: 16

@@ -4,7 +4,7 @@ Observation Assimilation Transformer (OAT) for Neural Downscaling.
 Following architecture from Neural Downscaling with Station Observation.
 """
 
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, Sequence
 import torch
 from torch import nn
 from dataclasses import dataclass, asdict
@@ -53,13 +53,46 @@ class TopographicEncoderConfig:
 
 
 @dataclass
-class FusionLayerConfig:
-    """Configuration for fusion layers (Eq. 6-7, 16)."""
+class NwpTopoFusionConfig:
+    """Configuration for the NWP+topo fusion layer (Eq. 6-7), used by both UninformedOAT and OAT."""
+    cond_dim: int  # time embedding dimension — data-dependent, must be set explicitly
     out_channels: int = 64
     hidden_channels: int = 128
-    cond_dim: int = 4
     dropout_p: float = 0.1
     norm_layer: str = "AdaLN"
+    norm_first: bool = True
+    n_blocks: int = 1
+    residual_learning: bool = True
+
+
+@dataclass
+class InnovationFusionConfig:
+    """Configuration for the innovation fusion layer (Eq. 16), used only by OAT.
+
+    When condition_on_mask=True, cond_dim must be [time_dim, mask_dim] and the
+    observation mask is concatenated to the time embedding as a second conditioning
+    signal. When False, cond_dim is a plain int (time only).
+    Both are data-dependent and must be set explicitly in the training script.
+    """
+    cond_dim: int | list[int]  # data-dependent, must be set explicitly
+    condition_on_mask: bool = False
+    out_channels: int = 64
+    hidden_channels: int = 128
+    dropout_p: float = 0.1
+    norm_layer: str = "AdaLN"
+    norm_first: bool = True
+    n_blocks: int = 1
+    residual_learning: bool = True
+
+
+@dataclass
+class LearnableGatingConfig:
+    """Configuration for the learnable gating layer."""
+    in_channels: int  # data-dependent, must be set explicitly
+    out_channels: int  # data-dependent, must be set explicitly
+    hidden_channels: int = 32
+    n_layers: int = 2
+    activation: str = "ReLU"
 
 
 @dataclass
@@ -91,14 +124,11 @@ class MaskingConfig:
 @dataclass
 class OutputHeadConfig:
     """Configuration for output head (Eq. 26)."""
-    target_features: int
-    type: str
-    in_features: int = 64
-    std_fn: Optional[str] = 'softplus'
-    loss_fn: str = 'crps'
-    min_std_val: float = 1e-3
-    degree: int = 20
-    num_train_taus: int = 10
+    in_features: int
+    variable_to_distribution: Dict[str, str]
+    loss_scaling: Sequence[float] | torch.Tensor | None = None
+    crps_mc_samples: int = 50
+    observation_assimilation_as: str = "innovation"
 
 
 @dataclass
@@ -106,24 +136,31 @@ class OATConfig:
     """Complete OAT model configuration."""
     global_encoder: GlobalEncoderConfig
     topographic_encoder: TopographicEncoderConfig
-    fusion_layer: FusionLayerConfig
+    nwp_topo_fusion: NwpTopoFusionConfig
+    innovation_fusion: InnovationFusionConfig
     transformer: TransformerConfig
     masking: MaskingConfig
     output_head: OutputHeadConfig
+    learnable_gating: LearnableGatingConfig | None = None
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
-    
+    mask_innovations: bool = True
+
     @classmethod
     def default(cls) -> 'OATConfig':
         """Create default configuration."""
         d_model = 64
+        time_dim = 4
+        n_vars = 1
         return cls(
             global_encoder=GlobalEncoderConfig(out_channels=32),
             topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            fusion_layer=FusionLayerConfig(out_channels=d_model),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=time_dim, out_channels=d_model),
+            innovation_fusion=InnovationFusionConfig(cond_dim=time_dim, out_channels=d_model),
             transformer=TransformerConfig(d_model=d_model),
             masking=MaskingConfig(),
             output_head=OutputHeadConfig(in_features=d_model),
+            learnable_gating=LearnableGatingConfig(in_channels=n_vars, out_channels=d_model),
             num_samples=100
         )
 
@@ -131,10 +168,10 @@ class OATConfig:
 class UninformedOATConfig:
     global_encoder: GlobalEncoderConfig
     topographic_encoder: TopographicEncoderConfig
-    fusion_layer: FusionLayerConfig
+    nwp_topo_fusion: NwpTopoFusionConfig
     output_head: OutputHeadConfig
     num_samples: int = 100
-    
+
     @classmethod
     def default(cls) -> 'UninformedOATConfig':
         """Create default configuration."""
@@ -142,7 +179,7 @@ class UninformedOATConfig:
         return cls(
             global_encoder=GlobalEncoderConfig(out_channels=32),
             topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            fusion_layer=FusionLayerConfig(out_channels=d_model),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=4, out_channels=d_model),
             output_head=OutputHeadConfig(in_features=d_model),
             num_samples=100
         )
@@ -180,11 +217,14 @@ class UninformedOAT(nn.Module):
         )
         self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
             in_channels=[d_global, d_topo],
-            out_channels=config.fusion_layer.out_channels,
-            hidden_channels=config.fusion_layer.hidden_channels,
-            cond_dim=config.fusion_layer.cond_dim,
-            dropout_p=config.fusion_layer.dropout_p,
-            norm_layer=config.fusion_layer.norm_layer,
+            out_channels=config.nwp_topo_fusion.out_channels,
+            hidden_channels=config.nwp_topo_fusion.hidden_channels,
+            cond_dim=config.nwp_topo_fusion.cond_dim,
+            dropout_p=config.nwp_topo_fusion.dropout_p,
+            norm_layer=config.nwp_topo_fusion.norm_layer,
+            norm_first=config.nwp_topo_fusion.norm_first,
+            n_blocks=config.nwp_topo_fusion.n_blocks,
+            residual_learning=config.nwp_topo_fusion.residual_learning,
         )
         self.output_head = self._init_output_head(config=config)
         
@@ -252,36 +292,21 @@ class UninformedOAT(nn.Module):
         raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', and 'ResNetCNN'.")
     
     def _init_output_head(self, config):
-        # Output head for innovation computation (Eq. 8-12)
-        if config.output_head.type == "linear":
-            return output_head.LinearOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                loss_fn=config.output_head.loss_fn,
-            )
-        elif config.output_head.type == "gaussian":
-            return output_head.GaussianOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                loss_fn=config.output_head.loss_fn,
-                std_fn=config.output_head.std_fn,
-                min_std_val=config.output_head.min_std_val,
-            )
-        elif config.output_head.type == "quantile":
-            train_taus = torch.linspace(0.0, 1.0, config.output_head.num_train_taus + 2)[1:-1]
-            return output_head.QuantileOutputHead(
-                in_features=config.output_head.in_features,
-                target_features=config.output_head.target_features,
-                degree=config.output_head.degree,
-                train_taus=train_taus,
-            )
-        raise ValueError(f"Unsupported output head type: {config.output_head.type}. Supported types are 'Linear', 'Gaussian', 'Quantile'.")
-    
+        
+        return output_head.OutputHead(
+            in_features=config.output_head.in_features,
+            variable_to_distribution=config.output_head.variable_to_distribution,
+            loss_scaling=config.output_head.loss_scaling,
+            crps_mc_samples=config.output_head.crps_mc_samples,
+            observation_assimilation_as=config.output_head.observation_assimilation_as
+        )
+   
     def forward(
         self,
         global_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         num_samples: int | None = None,
+        differentiable_samples: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass.
@@ -297,6 +322,7 @@ class UninformedOAT(nn.Module):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
         
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
@@ -310,7 +336,7 @@ class UninformedOAT(nn.Module):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)          
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)          
         out['samples'] = samples
         
         return out
@@ -321,7 +347,8 @@ class UninformedOAT(nn.Module):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None
+        num_samples: int | None = None,
+        differentiable_samples: bool = False,
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward pass.
@@ -339,6 +366,7 @@ class UninformedOAT(nn.Module):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
         
         Returns:
             predictions: Dict with model outputs
@@ -354,7 +382,7 @@ class UninformedOAT(nn.Module):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)
 
         out['samples'] = samples
         
@@ -433,13 +461,14 @@ class OAT(UninformedOAT):
         
         super().__init__(config=UninformedOATConfig(global_encoder=config.global_encoder,
                                                     topographic_encoder=config.topographic_encoder,
-                                                    fusion_layer=config.fusion_layer,
+                                                    nwp_topo_fusion=config.nwp_topo_fusion,
                                                     output_head=config.output_head,
                                                     num_samples=config.num_samples))
         
         if config is None:
             config = OATConfig.default()
         self.config = config
+        self.mask_innovations = config.mask_innovations
         self.register_buffer("_pre_oat_loss_weight", torch.tensor(self.config.pre_oat_loss_weight, dtype=torch.float32))
         
         # Extract dimensions
@@ -448,12 +477,15 @@ class OAT(UninformedOAT):
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
         self.fusion_layer2 = fusion_layer.GatedLinearUnitFusionLayer(
-            in_channels=[d_model, config.output_head.target_features],
-            out_channels=config.fusion_layer.out_channels,
-            hidden_channels=config.fusion_layer.hidden_channels,
-            cond_dim=config.fusion_layer.cond_dim,
-            dropout_p=config.fusion_layer.dropout_p,
-            norm_layer=config.fusion_layer.norm_layer,
+            in_channels=[d_model, self.output_head.target_features],
+            out_channels=config.innovation_fusion.out_channels,
+            hidden_channels=config.innovation_fusion.hidden_channels,
+            cond_dim=config.innovation_fusion.cond_dim,
+            dropout_p=config.innovation_fusion.dropout_p,
+            norm_layer=config.innovation_fusion.norm_layer,
+            norm_first=config.innovation_fusion.norm_first,
+            n_blocks=config.innovation_fusion.n_blocks,
+            residual_learning=config.innovation_fusion.residual_learning,
         )
         
         # Spatial neighborhood search (Eq. 14)
@@ -479,6 +511,13 @@ class OAT(UninformedOAT):
             dim_geo_bias_feedforward=config.transformer.dim_geo_bias_feedforward,
             activation_geo_bias=config.transformer.activation_geo_bias
         )
+        
+        if config.learnable_gating is not None:
+            self.mask_gating = fusion_layer.LearnableGating(in_channels=self.output_head.target_features,
+                                                            out_channels=d_model,
+                                                            hidden_channels=config.learnable_gating.hidden_channels,
+                                                            n_layers=config.learnable_gating.n_layers,
+                                                            activation=config.learnable_gating.activation)
 
     @property
     def pre_oat_loss_weight(self) -> float:
@@ -494,6 +533,7 @@ class OAT(UninformedOAT):
         observation_data: Dict[str, torch.Tensor],
         query_data: Dict[str, torch.Tensor],
         num_samples: int | None = None,
+        differentiable_samples: bool = False,
         return_pre_oat_output: bool = False
     ) -> Dict[str, Any]:
         """
@@ -517,6 +557,7 @@ class OAT(UninformedOAT):
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
+            differentiable_samples: Whether to sample with a reparametrization
             return_pre_oat_output: If True, also returns output before final output head for analysis.
         
         Returns:
@@ -529,7 +570,7 @@ class OAT(UninformedOAT):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)          
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)          
         out['samples'] = samples
         
         if return_pre_oat_output:
@@ -537,7 +578,7 @@ class OAT(UninformedOAT):
             if num_samples is None:
                 num_samples = self.num_samples
             with torch.no_grad():
-                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+                pre_oat_samples = self.output_head.sample(x=None, pred_dist=pre_oat_output, num_samples=num_samples, differentiable=differentiable_samples)
             pre_oat_output['samples'] = pre_oat_samples
             out['pre_oat_output'] = pre_oat_output
             
@@ -550,7 +591,8 @@ class OAT(UninformedOAT):
         query_data: Dict[str, torch.Tensor],
         target_obs: torch.Tensor,
         target_mask_obs: torch.Tensor,
-        num_samples: int | None = None,    
+        num_samples: int | None = None,
+        differentiable_samples: bool = False,    
         return_pre_oat_output: bool = False
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
@@ -578,14 +620,14 @@ class OAT(UninformedOAT):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(out, num_samples=num_samples)
+            samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)
         
         if return_pre_oat_output:
             with torch.no_grad():
                 pre_oat_output = self.output_head(pre_oat_out)
                 if num_samples is None:
                     num_samples = self.num_samples
-                pre_oat_samples = self.output_head.sample(pre_oat_output, num_samples=num_samples)
+                pre_oat_samples = self.output_head.sample(x=None, pred_dist=pre_oat_output, num_samples=num_samples, differentiable=differentiable_samples)
             pre_oat_output['samples'] = pre_oat_samples
             out['pre_oat_output'] = pre_oat_output
             
@@ -624,20 +666,30 @@ class OAT(UninformedOAT):
         innovation = self.output_head.compute_innovation(
             uninformed_kv_token,
             observation_data['obs'],
-            observation_data['mask_obs']
+            mask=observation_data['mask_obs'] if self.mask_innovations else None
         )
         
         # Step 3: Create initial station tokens with innovation (Eq. 16 - fusion)
         # Note: Full station encoding happens in transformer encoder via self-attention
         batch_size = uninformed_kv_token.shape[0]
         n_kv = uninformed_kv_token.shape[1]
-        cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
-        
+        time_cond = global_data['time_emb'].unsqueeze(1).expand(batch_size, n_kv, -1)
+        if self.config.innovation_fusion.condition_on_mask:
+            cond = (time_cond, observation_data['mask_obs'])
+        else:
+            cond = time_cond
+
         station_token = self.fusion_layer2(
             uninformed_kv_token,
             innovation,
             cond=cond
         )
+        
+        # Apply learnable gating to station tokens based on observation mask 
+        # to allow the model to learn how much to trust the innovation signal at each station.
+        if hasattr(self, 'mask_gating'):
+            mask_sigma = self.mask_gating(observation_data['mask_obs'])
+            station_token = (1.0 - mask_sigma) * uninformed_kv_token + mask_sigma * station_token
         
         # Step 4: Create uninformed query tokens (Eq. 1-7)
         query_token = self._create_uninformed_tokens(

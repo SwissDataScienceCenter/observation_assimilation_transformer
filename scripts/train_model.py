@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig:
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
@@ -50,21 +50,34 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         in_channels=len(data_cfg.topo_vars)
         )
 
-    fusion_layer_cfg = model.FusionLayerConfig(
-        **model_cfg.fusion_layer,
+    time_cond_dim = 4 if data_cfg.use_time_embedding else 0
+    nwp_topo_fusion_cfg = model.NwpTopoFusionConfig(
+        **model_cfg.nwp_topo_fusion,
+        cond_dim=time_cond_dim,
         out_channels=model_cfg.d_model)
 
+    if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
+        raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")
+    if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
+        raise ValueError("Variables in output head distribution config do not match observation variables")
+    if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
+        raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
+    logger.info(
+        f"Model will assume the following index to variable mapping: "
+        f"{ {idx: var for idx, var in enumerate(cfg.dataset.obs_vars)} }"
+        "\n And variable to distribution mapping: "
+        f"{ cfg.model.output_head.variable_to_distribution }"
+    )
     output_head_cfg = model.OutputHeadConfig(
-        target_features=len(data_cfg.obs_vars),
         in_features=model_cfg.d_model,
         **model_cfg.output_head)
-    
+
     if get_model_cls(cfg) == model.UninformedOAT:
         logger.info("Initialized uninformed model cfg...")
         return model.UninformedOATConfig(
             global_encoder=global_encoder_cfg,
             topographic_encoder=topography_encoder_cfg,
-            fusion_layer=fusion_layer_cfg,
+            nwp_topo_fusion=nwp_topo_fusion_cfg,
             output_head=output_head_cfg,
             num_samples=model_cfg.num_samples
         )
@@ -76,16 +89,36 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         d_model=model_cfg.d_model,
         **model_cfg.transformer)
 
+    n_obs_vars = len(data_cfg.obs_vars)
+    condition_on_mask = model_cfg.innovation_fusion.condition_on_mask
+    innovation_cond_dim = [time_cond_dim, n_obs_vars] if condition_on_mask else time_cond_dim
+    innovation_fusion_cfg = model.InnovationFusionConfig(
+        **model_cfg.innovation_fusion,
+        cond_dim=innovation_cond_dim,
+        out_channels=model_cfg.d_model)
+
+    if not model_cfg.get("learnable_gating", False):
+        logger.info("Learnable gating disabled.")
+        learnable_gating_cfg = None
+    else:
+        logger.info("Learnable gating enabled.")
+        learnable_gating_cfg = model.LearnableGatingConfig(
+            **model_cfg.learnable_gating,
+            in_channels=n_obs_vars,
+            out_channels=model_cfg.d_model)
 
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
-        fusion_layer=fusion_layer_cfg,
+        nwp_topo_fusion=nwp_topo_fusion_cfg,
+        innovation_fusion=innovation_fusion_cfg,
         masking=masking_cfg,
         transformer=transformer_cfg,
         output_head=output_head_cfg,
+        learnable_gating=learnable_gating_cfg,
         num_samples=model_cfg.num_samples,
-        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight
+        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
+        mask_innovations=model_cfg.mask_innovations
     )
     logger.info("Initialized model cfg...")
     return oat_config
@@ -275,47 +308,22 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
 
     logger.info("Saving examples of transforms as fixtures ...")
     ROOT = Path(__file__).resolve().parents[1]
-    out_file = ROOT / "test" / "oat_test" / f"input_transform_fixture.pickle"
+
+    out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    
     with open(out_file, "wb") as f:
         pickle.dump(input_transform, f)
-        logger.info("Saving examples of transforms as fixtures ...")
-        ROOT = Path(__file__).resolve().parents[1]
-        out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(out_file, "wb") as f:
-            pickle.dump(input_transform, f)
-
-        logger.info(f"Saved input_transform object to {out_file}")
-
-        out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
-
-        with open(out_file, "wb") as f:
-            pickle.dump(output_transform, f)
-
-        logger.info(f"Saved output_transform object to {out_file}")
-        batch = next(iter(train_loader))
-        out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
-        with open(out_file, "wb") as f:
-                pickle.dump(batch, f)
-
-        logger.info(f"Saved batch fixture object to {out_file}")
     logger.info(f"Saved input_transform object to {out_file}")
-    
-    out_file = ROOT / "test" / "oat_test" / f"output_transform_fixture.pickle"
-    
+
+    out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
     with open(out_file, "wb") as f:
         pickle.dump(output_transform, f)
-
-    
     logger.info(f"Saved output_transform object to {out_file}")
+
     batch = next(iter(train_loader))
-    out_file = ROOT / "test" / "oat_test" / f"example_batch_fixture.pickle"
+    out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
     with open(out_file, "wb") as f:
-            pickle.dump(batch, f)
-            
+        pickle.dump(batch, f)
     logger.info(f"Saved batch fixture object to {out_file}")
 
 
@@ -444,5 +452,5 @@ if __name__ == "__main__":
     # Usage:
     # python -m scripts.train_model                              (OAT training)
     # python -m scripts.train_model model=baseline logging=baseline  (baseline evaluation)
-    # python -m scripts.train_model +save_transforms_fixtures=true ++dataloader.batch_size=1
+    # python -m scripts.train_model +saves_fixtures=true ++dataloader.batch_size=1
     main()

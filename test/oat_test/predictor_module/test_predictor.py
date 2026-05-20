@@ -1,12 +1,19 @@
 import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 import pytorch_lightning as pl
+from hydra import compose, initialize_config_dir
 
 from oat.predictor_module import OATPredictor
-from oat.model_module import OAT
 import torch
-import os
 import pytest
-from pytorch_lightning.loggers.logger import DummyLogger
+import logging
+from torch.distributions import constraints
+from scripts.train_model import setup_oat_cfg
+from oat.data_module.support import VariableSupport
+from oat.data_module.transform import IdentityTransform
+from oat.model_module.distributions import _ALL_DISTRIBUTIONS
+from oat.model_module.model import OATConfig
 
 
 @pytest.mark.parametrize("compute_loss", [True, False])
@@ -17,7 +24,7 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
 
@@ -27,16 +34,22 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
         out, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
 
 
-@pytest.mark.parametrize("compile", [True, False])
-def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile):
+@pytest.mark.parametrize("compile", [True, False], ids=["compile", "no_compile"])
+@pytest.mark.parametrize("observation_assimilation_as", ['innovation', 'target'], ids=["innovation", "target"])
+def test_simple_predictor_train_step(batch_fixture, transform_fixture, model_cfg_fixture, compile, observation_assimilation_as):
+    
+    if observation_assimilation_as == 'innovation':
+        model_cfg_fixture.output_head.observation_assimilation_as = 'innovation'
+    else:
+        model_cfg_fixture.output_head.observation_assimilation_as = 'target'
 
-
+    output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
     
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=output_var_names,
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     
@@ -55,7 +68,7 @@ def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninf
     pred = OATPredictor(oat_model_cfg=uninformed_model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(uninformed_model_cfg_fixture.output_head.target_features)],
+                        output_var_names=list(uninformed_model_cfg_fixture.output_head.variable_to_distribution.keys()),
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
     
@@ -65,13 +78,13 @@ def test_uninformed_predictor_train_step(batch_fixture, transform_fixture, uninf
 
 def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
 
-
+    output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys())
     input_transform, output_transform = transform_fixture
     
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
-                        output_var_names=[str(i) for i in range(model_cfg_fixture.output_head.target_features)],
+                        output_var_names=output_var_names,
                         lr=1e-3,
                         optimizer_class=torch.optim.AdamW)
 
@@ -95,15 +108,249 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     pred = pred.eval()
     reloaded_pred = reloaded_pred.eval()
     
+    # Verify they are different instances
+    assert pred is not reloaded_pred
+    
+    pl.seed_everything(42)
     prediction = pred(batch_fixture)
+    
+    pl.seed_everything(42)
     prediction_reloaded = reloaded_pred(batch_fixture)
     # Check that all outputs apart from the samples are equivalent before and 
     # after checkpointing
-    for k in [key for key in prediction.keys() if key != "samples"]:
-        if k == "pre_oat_output":
-            for kk in [key for key in prediction[k].keys() if key != "samples"]:
-                assert (prediction[k][kk] == prediction_reloaded[k][kk]).all()
-        else:
-            assert (prediction[k] == prediction_reloaded[k]).all()
+
+    def same_distribution(d1, d2):
+        if type(d1) != type(d2):
+            return False
+        
+        params1 = d1.__dict__
+        params2 = d2.__dict__
+        
+        if params1.keys() != params2.keys():
+            return False
+        
+        for k in params1:
+            v1, v2 = params1[k], params2[k]
+            if torch.is_tensor(v1):
+                if not torch.allclose(v1, v2):
+                    return False
+            else:
+                if v1 != v2:
+                    return False
+        return True
+
+    # assert predicted distributions are the same (same parametrization)
+    for var_name in output_var_names:
+        assert same_distribution(prediction[var_name], prediction_reloaded[var_name])
+
+        assert same_distribution(prediction['pre_oat_output'][var_name], prediction_reloaded['pre_oat_output'][var_name])
+    # assert that the samples, given that we forced a seed, are the same before and after checkpointing
+    assert torch.allclose(prediction_reloaded['pre_oat_output']['samples'], prediction['pre_oat_output']['samples'])
+
+    
+    
+def test_default_hydra_config(transform_fixture):
+    # this test checks if the default hydra config can be used to instantiate a predictor (without using the cfg fixture)
+    input_transform, output_transform = transform_fixture
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+
+    dummy_field_extent = {
+        "min": [2255500.0, 840500.0],
+        "max": [2964500.0, 1479500.0],
+    }
+
+
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        cfg = compose(config_name="config") # TODO potentially use all configs in this dir, not just config
+
+    logger = logging.getLogger(__name__)
+    oat_cfg = setup_oat_cfg(cfg, dummy_field_extent, logger)
+
+    assert isinstance(oat_cfg, OATConfig)
+    assert oat_cfg.output_head.in_features == cfg.model.d_model
+    assert oat_cfg.output_head.variable_to_distribution == dict(
+        cfg.dataset.obs_variable_to_distribution
+    )
+    assert set(oat_cfg.output_head.variable_to_distribution.keys()) == set(
+        cfg.dataset.obs_vars
+    )
+    
+    
+    pred = OATPredictor(oat_model_cfg=oat_cfg,
+                        input_transform=input_transform,
+                        output_transform=output_transform,
+                        output_var_names=cfg.dataset.obs_vars,
+                        lr=1e-3,
+                        optimizer_class=torch.optim.AdamW)
+
+
+def _make_train_dataset_stub(obs_vars: list[str], obs_support: VariableSupport):
+    # Mirrors TrainDataset.dataset.obs_var_support and .config.obs_vars access pattern.
+    return SimpleNamespace(
+        dataset=SimpleNamespace(
+            obs_var_support=obs_support,
+            config=SimpleNamespace(obs_vars=obs_vars),
+        )
+    )
+
+
+def test_validate_output_head_support_passes_for_compatible_supports(
+    transform_fixture,
+    model_cfg_fixture,
+):
+    input_transform, _ = transform_fixture
+
+    pred = OATPredictor(
+        oat_model_cfg=model_cfg_fixture,
+        input_transform=input_transform,
+        output_transform=IdentityTransform(),
+        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+    obs_vars = list(model_cfg_fixture.output_head.variable_to_distribution.keys())
+    n_vars = len(obs_vars)
+    train_dataset = _make_train_dataset_stub(
+        obs_vars=obs_vars,
+        obs_support=VariableSupport(
+            lower_bounds=torch.full((n_vars,), -1.0),
+            upper_bounds=torch.full((n_vars,), 1.0),
+            lower_open=torch.zeros(n_vars, dtype=torch.bool),
+            upper_open=torch.zeros(n_vars, dtype=torch.bool),
+        )
+    )
+
+    # Should not raise.
+    pred.validate_output_head_supports(train_dataset)
+
+
+def test_validate_output_head_support_raises_with_meaningful_message(
+    transform_fixture,
+    model_cfg_fixture,
+):
+    input_transform, _ = transform_fixture
+
+    pred = OATPredictor(
+        oat_model_cfg=model_cfg_fixture,
+        input_transform=input_transform,
+        output_transform=IdentityTransform(),
+        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+    obs_vars = list(model_cfg_fixture.output_head.variable_to_distribution.keys())
+    first_var = obs_vars[0]
+    # Make first variable stricter than transformed support.
+    pred.model.output_head.distribution_mappers[first_var].support = constraints.nonnegative
+
+    n_vars = len(obs_vars)
+    lower = torch.zeros(n_vars)
+    lower[0] = -2.0
+    upper = torch.ones(n_vars)
+
+    train_dataset = _make_train_dataset_stub(
+        obs_vars=obs_vars,
+        obs_support=VariableSupport(
+            lower_bounds=lower,
+            upper_bounds=upper,
+            lower_open=torch.zeros(n_vars, dtype=torch.bool),
+            upper_open=torch.zeros(n_vars, dtype=torch.bool),
+        )
+    )
+
+    with pytest.raises(ValueError, match=f"{first_var}.*nonnegative.*-2"):
+        pred.validate_output_head_supports(train_dataset)
+
+
+def test_validate_output_head_support_raises_type_error_for_invalid_dataset(
+    transform_fixture,
+    model_cfg_fixture,
+):
+    input_transform, _ = transform_fixture
+
+    pred = OATPredictor(
+        oat_model_cfg=model_cfg_fixture,
+        input_transform=input_transform,
+        output_transform=IdentityTransform(),
+        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+    with pytest.raises(TypeError, match="TrainDataset-like.*obs_var_support.*obs_vars"):
+        pred.validate_output_head_supports(object())
+
+
+def _distribution_class_by_name() -> dict[str, type]:
+    return {
+        dist_cls.name: dist_cls
+        for dist_cls in _ALL_DISTRIBUTIONS
+        if dist_cls.name is not None
+    }
+
+
+@pytest.mark.parametrize(
+    "dist_name,first_var_lower,should_pass",
+    [
+        ("normal", -2.0, True),
+        ("lognormal", 0.1, True),
+        ("exponential", -0.1, False),
+        ("zero_inflated_lognormal", -0.1, False),
+    ],
+)
+def test_validate_output_head_support_selected_all_distributions_cases(
+    transform_fixture,
+    model_cfg_fixture,
+    dist_name,
+    first_var_lower,
+    should_pass,
+):
+    input_transform, _ = transform_fixture
+
+    pred = OATPredictor(
+        oat_model_cfg=model_cfg_fixture,
+        input_transform=input_transform,
+        output_transform=IdentityTransform(),
+        output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+    dist_by_name = _distribution_class_by_name()
+    assert dist_name in dist_by_name, (
+        f"Expected '{dist_name}' to be registered in _ALL_DISTRIBUTIONS"
+    )
+
+    obs_vars = list(model_cfg_fixture.output_head.variable_to_distribution.keys())
+    first_var = obs_vars[0]
+
+    # Override support to exercise predictor validation against selected distributions.
+    pred.model.output_head.distribution_mappers[first_var].support = dist_by_name[
+        dist_name
+    ].support
+    pred.model.output_head.variable_to_distribution[first_var] = dist_name
+
+    n_vars = len(obs_vars)
+    lower = torch.full((n_vars,), 0.1)
+    lower[0] = first_var_lower
+    upper = torch.full((n_vars,), 2.0)
+
+    train_dataset = _make_train_dataset_stub(
+        obs_vars=obs_vars,
+        obs_support=VariableSupport(
+            lower_bounds=lower,
+            upper_bounds=upper,
+            lower_open=torch.zeros(n_vars, dtype=torch.bool),
+            upper_open=torch.zeros(n_vars, dtype=torch.bool),
+        ),
+    )
+
+    if should_pass:
+        pred.validate_output_head_supports(train_dataset)
+    else:
+        with pytest.raises(ValueError, match=f"{first_var}.*{dist_name}"):
+            pred.validate_output_head_supports(train_dataset)
     
     
