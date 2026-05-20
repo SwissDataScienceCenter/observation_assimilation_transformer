@@ -51,6 +51,7 @@ def setup_data_and_transform(
     input_transform, output_transform = train_dataset.get_transform(
         num_data_points=cfg.dataset.data_points_for_stats, 
         dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader.train)
+        type=cfg.model.transform_type
     )
     train_dataset.split_fraction = old_split_fraction
     logger.info("Transforms set up successfully.")

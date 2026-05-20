@@ -16,10 +16,11 @@ import xarray as xr
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from oat.data_module import transform, statistics
 from oat.data_module.support import VariableSupport
 import logging as _logging
+from tqdm import tqdm
 
 dtype_map = {
     "float32": torch.float32,
@@ -590,82 +591,151 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.cos(year_angle)
         ], dtype=dtype_map[self.config.dtype])
         
-    def get_transform(self, num_data_points: int) -> tuple[transform.NestedTransform, transform.Transform]:
+    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None, type: str = 'real') -> tuple[transform.NestedTransform, transform.Transform]:
         """
         Compute data-driven transforms (log, standardization) from random samples.
             num_data_points: Number of random data points to sample for statistics
         Returns: NestedTransform to apply to batches, and output_transform for obs-only.
         """
-        apply_log = ['wind_gust', 'wind_speed']
-        log_indices = [i for i, var in enumerate(self.config.obs_vars) if var in apply_log]
-
-        # Create pre-transform with log
-        log_transform = transform.LogTransform(apply_to=log_indices, 
-                                               feature_dim=-1, 
-                                               offset=1)
-        pre_transform = transform.NestedTransform({
-            'observation_data': {
-                'obs': log_transform
-            }
-        })
         
-        # Initialize statistics gatherers
-        stats_dict = {
-            'observation_data': {
-                'obs': statistics.RunningFeatureStats(
-                    num_features=len(self.config.obs_vars),
-                    feature_dim=-1,
-                ),
-                'topo': statistics.RunningFeatureStats(
-                    num_features=len(self.config.topo_vars),
-                    feature_dim=-3,
-                ),
-                'geo': statistics.RunningFeatureStats(
-                    num_features=self.station_geo.shape[-1],
-                    feature_dim=-1,
-                ),
-            },
-            'global_data': {
-                'global_field': statistics.RunningFeatureStats(
-                    num_features=len(self.config.nwp_vars) + len(self.config.topo_vars),
-                    feature_dim=-3,
-                )
-            
-            }
-        }
-        # Gather statistics
-        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
-            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
-                stats_gatherer.update(sample)
-            elif isinstance(stats_gatherer, dict):
-                for key, stat in stats_gatherer.items():
-                    gather_stats(sample[key], stat)
                     
-        rand_indices = torch.randperm(len(self))[:num_data_points]
-        
-        for idx in rand_indices:
-            sample = self[int(idx)]
-            pre_transformed_sample = pre_transform(sample)
-            gather_stats(pre_transformed_sample, stats_dict)
-        
-        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
-            
-        transform_dict = {
-            'observation_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
-            },
-            'query_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
-            },
-            'global_data': {
-                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+        def _collect_stats(pre_transform: transform.NestedTransform, dataloader: DataLoader | None=None, num_data_points: int | None=None) -> dict[str, dict[str, statistics.RunningFeatureStats]]:
+                        
+            stats_dict = {
+                'observation_data': {
+                    'obs': statistics.RunningFeatureStats(
+                        num_features=len(self.config.obs_vars),
+                        feature_dim=-1,
+                    ),
+                    'topo': statistics.RunningFeatureStats(
+                        num_features=len(self.config.topo_vars),
+                        feature_dim=-3,
+                    ),
+                    'geo': statistics.RunningFeatureStats(
+                        num_features=self.station_geo.shape[-1],
+                        feature_dim=-1,
+                    ),
+                },
+                'global_data': {
+                    'global_field': statistics.RunningFeatureStats(
+                        num_features=len(self.config.nwp_vars) + len(self.config.topo_vars),
+                        feature_dim=-3,
+                    )
+                
+                }
             }
-        }
-        post_transform = transform.NestedTransform(transform_dict)
+            
+            def gather_stats(sample: dict[str, Any] | torch.Tensor, stats_gatherer: dict[str, Any] | statistics.RunningFeatureStats) -> None:
+                if isinstance(stats_gatherer, statistics.RunningFeatureStats):
+                    stats_gatherer.update(sample)
+                elif isinstance(stats_gatherer, dict):
+                    for key, stat in stats_gatherer.items():
+                        gather_stats(sample[key], stat)
+            
+            if dataloader is not None:
+                bs = dataloader.batch_size
+                for i, batch in tqdm(enumerate(dataloader), total=num_data_points // bs, desc="Gathering dataset statistics"):
+                    if i * bs >= num_data_points:
+                        break
+                    pre_transformed_batch = pre_transform(batch)
+                    gather_stats(pre_transformed_batch, stats_dict)
+            else:
+                rand_indices = torch.randperm(len(self))[:num_data_points]
+                for idx in tqdm(rand_indices, desc="Gathering dataset statistics"):
+                    sample = self[int(idx)]
+                    pre_transformed_sample = pre_transform(sample)
+                    gather_stats(pre_transformed_sample, stats_dict)
+            return stats_dict
+            
+        offset = 1e-6  # Small offset to avoid log(0)
+        
+        if type == 'real':
+            #apply_log = ['wind_gust', 'wind_speed', 'precipitation']  # Example variables to log-transform; adjust as needed
+            # log indices where the variable has a non-negative support and a wide range, to help with training stability. Variables with finite upper bounds (e.g. precipitation) are not log-transformed to preserve their support.
+            log_indices = [i for i, var in enumerate(self.config.obs_vars) if self.obs_var_support.lower_bounds[i] >= 0.0 and self.obs_var_support.upper_bounds[i] == float('inf')]
+            # Create pre-transform with log
+            log_transform = transform.LogTransform(apply_to=log_indices, 
+                                                feature_dim=-1, 
+                                                offset=offset)
+            pre_transform = transform.NestedTransform({
+                'observation_data': {
+                    'obs': log_transform
+                }
+            })
+             # Gather statistics
+
+            stats_dict = _collect_stats(pre_transform, dataloader=dataloader, num_data_points=num_data_points)  # Run once to initialize stats with log transform applied
+            output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
+            transform_dict = {
+                'observation_data': {
+                    'obs':output_transform,
+                    'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                    'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+                },
+                'query_data': {
+                    'obs':output_transform,
+                    'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                    'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+                },
+                'global_data': {
+                    'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+                }
+            }
+            post_transform = transform.NestedTransform(transform_dict)
+        elif type == 'keep_support':
+            apply_offset = ['wind_gust', 'wind_speed']
+            
+            # apply only scale that have zero lower bound, to preserve support of variables with non-zero lower bound (e.g. precipitation)
+            
+            
+            offset_indices = [i for i, var in enumerate(self.config.obs_vars) if var in apply_offset]
+            offset_arr = torch.zeros(len(self.config.obs_vars))
+            offset_arr[offset_indices] = offset
+            scale_arr = torch.ones(len(self.config.obs_vars))
+            offset_transform = transform.TranslateScaleTransform(
+                translate=offset_arr,
+                scale=scale_arr,
+                channel_dim=-1
+            )
+            pre_transform = transform.NestedTransform({
+                'observation_data': {
+                    'obs': offset_transform
+                }            
+            })
+            stats_dict = _collect_stats(pre_transform, dataloader=dataloader, num_data_points=num_data_points)  # Run once to initialize stats with
+             # Example variables to standardize; adjust as needed
+            
+            translate_arr = -stats_dict['observation_data']['obs'].mean.clone()
+            # apply only scale where the variable support has zero lower bound and infinite upper bound, to preserve support of variables with finite bounds (e.g. precipitation)
+            apply_only_scale_indices = [i for i, var in enumerate(self.config.obs_vars) 
+                                        if self.obs_var_support.lower_bounds[i] == 0.0 and self.obs_var_support.upper_bounds[i] == float('inf')]
+            translate_arr[apply_only_scale_indices] = 0.0  # Don't translate variables that are only scaled
+            scale_arr = 1.0 / stats_dict['observation_data']['obs'].std.clone()
+            
+            output_transform = transform.ComposedTransform([offset_transform, transform.TranslateScaleTransform(
+                translate=translate_arr,
+                scale=scale_arr,
+                channel_dim=-1
+            )])
+            transform_dict = {
+                'observation_data': {
+                    'obs': output_transform,
+                    'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                    'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+                },
+                'query_data': {
+                    'obs': output_transform,
+                    'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
+                    'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
+                },
+                'global_data': {
+                    'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
+                }
+            }
+            post_transform = transform.NestedTransform(transform_dict)
+        else:
+            raise ValueError(f"Unsupported transform type: {type}. Supported types are 'real' and 'keep_support'.")
+            
         return post_transform, output_transform
 
     def get_baseline_pre_transform(self) -> Callable[[dict[str, Any]], dict[str, Any]]:
