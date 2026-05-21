@@ -591,7 +591,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             np.cos(year_angle)
         ], dtype=dtype_map[self.config.dtype])
         
-    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None, type: str = 'real') -> tuple[transform.NestedTransform, transform.Transform]:
+    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None, type: str = 'real',
+                      data_indices: np.ndarray | None=None) -> tuple[transform.NestedTransform, transform.Transform]:
         """
         Compute data-driven transforms (log, standardization) from random samples.
             num_data_points: Number of random data points to sample for statistics
@@ -643,7 +644,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     pre_transformed_batch = pre_transform(batch)
                     gather_stats(pre_transformed_batch, stats_dict)
             else:
-                rand_indices = torch.randperm(len(self))[:num_data_points]
+                if data_indices is not None:
+                    rand_indices = torch.randperm(len(data_indices))[:num_data_points]
+                    rand_indices = data_indices[rand_indices]
+                else:
+                    rand_indices = torch.randperm(len(self))[:num_data_points]
+                    
                 for idx in tqdm(rand_indices, desc="Gathering dataset statistics"):
                     sample = self[int(idx)]
                     pre_transformed_sample = pre_transform(sample)

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from typing import Any, Dict, Optional, Tuple
-from oat.data_module import transform, statistics
+from oat.data_module import transform, statistics, support
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
@@ -142,6 +142,11 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         return len(self.dataset)
     
     @property
+    def obs_var_support(self) -> support.VariableSupport:
+        """Return the observation variable support for the training stations"""
+        return self.dataset.obs_var_support
+    
+    @property
     def station_names(self) -> list[str]:
         """Return list of station names in the training set"""
         return self.stations.tolist()
@@ -199,7 +204,14 @@ class TrainDataset(Dataset[Dict[str, Any]]):
             num_data_points: Number of random data points to sample for statistics
         Returns: NestedTransform to apply to batches, and output_transform for obs-only.
         """
-        return self.dataset.get_transform(num_data_points=num_data_points, dataloader=dataloader, type=type)
+        if dataloader is None:
+            train_indices = self.train_indices
+        else:
+            train_indices = None
+        return self.dataset.get_transform(num_data_points=num_data_points, 
+                                          dataloader=dataloader, 
+                                          type=type,
+                                          data_indices=train_indices)
     
     
 class EvalDataset(Dataset[Dict[str, Any]]):

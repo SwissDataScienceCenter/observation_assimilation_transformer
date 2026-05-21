@@ -81,7 +81,7 @@ def test_cosmo_peakweather_dataset() -> None:
     os.getenv("CI") == "true",
     reason="Skipped on CI (requires local datasets)"
 )
-def test_splits(observation_fraction: float):
+def test_splits(observation_fraction: float) -> None:
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     
@@ -120,6 +120,22 @@ def test_splits(observation_fraction: float):
                 
         for v in test_dataset[0]['observation_data'].values():
                 assert v.shape[0] == num_train_and_val_station
+                
+    
+    real_transforms = train_dataset.get_transform(0, dataloader=None, type='real')
+    assert isinstance(real_transforms[0], NestedTransform)
+    assert isinstance(real_transforms[1], Transform)
+    keep_support_transforms = train_dataset.get_transform(10, dataloader=None, type='keep_support')
+    input_transform, output_transform = keep_support_transforms
+    assert isinstance(input_transform, NestedTransform)
+    assert isinstance(output_transform, Transform)
+    obs_var_support = train_dataset.obs_var_support
+    post_transform_support = output_transform.transform_support(obs_var_support)
+    assert torch.isclose(post_transform_support.lower_bounds, obs_var_support.lower_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.isclose(post_transform_support.upper_bounds, obs_var_support.upper_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.equal(post_transform_support.lower_open, obs_var_support.lower_open)
+    assert torch.equal(post_transform_support.upper_open, obs_var_support.upper_open)
+    
     
     # TODO check all other shapes (eg query)
     
