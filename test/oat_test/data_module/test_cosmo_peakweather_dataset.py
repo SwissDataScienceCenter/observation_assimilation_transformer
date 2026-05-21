@@ -66,8 +66,8 @@ def test_cosmo_peakweather_dataset() -> None:
     assert isinstance(output_transform, Transform)
     obs_var_support = dataset.obs_var_support
     post_transform_support = output_transform.transform_support(obs_var_support)
-    assert torch.isclose(post_transform_support.lower_bounds, obs_var_support.lower_bounds, atol=1e-5)  # allow for small numerical differences
-    assert torch.isclose(post_transform_support.upper_bounds, obs_var_support.upper_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.allclose(post_transform_support.lower_bounds, obs_var_support.lower_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.allclose(post_transform_support.upper_bounds, obs_var_support.upper_bounds, atol=1e-5)  # allow for small numerical differences
     assert torch.equal(post_transform_support.lower_open, obs_var_support.lower_open)
     assert torch.equal(post_transform_support.upper_open, obs_var_support.upper_open)
     
