@@ -659,8 +659,10 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         offset = 1e-6  # Small offset to avoid log(0)
         
         if type == 'real':
-            #apply_log = ['wind_gust', 'wind_speed', 'precipitation']  # Example variables to log-transform; adjust as needed
-            # log indices where the variable has a non-negative support and a wide range, to help with training stability. Variables with finite upper bounds (e.g. precipitation) are not log-transformed to preserve their support.
+            # Example variables that may benefit from log-transform include non-negative,
+            # unbounded quantities such as wind_gust, wind_speed, and precipitation.
+            # Select variables with non-negative support and no finite upper bound to help
+            # with training stability while preserving the intended support constraints.
             log_indices = [i for i, var in enumerate(self.config.obs_vars) if self.obs_var_support.lower_bounds[i] >= 0.0 and self.obs_var_support.upper_bounds[i] == float('inf')]
             # Create pre-transform with log
             log_transform = transform.LogTransform(apply_to=log_indices, 
