@@ -1,0 +1,15 @@
+defaults:
+  - _self_
+  - cosmo_peakweather/settings@_here_
+  - cosmo_peakweather/catalog@catalog
+
+nwp_vars:
+  - TOT_PREC # TODO think if we need more? Cloud cover?
+
+obs_vars:
+  - precipitation
+
+obs_variable_to_distribution:
+  precipitation: "zero_inflated_lognormal"
+
+station_type: null # with null, all stations are taken, among which there are rain gauges

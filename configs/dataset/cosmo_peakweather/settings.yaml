@@ -30,6 +30,8 @@ obs_vars:
 obs_variable_to_distribution:
   temperature: "normal"
 
+station_type: "meteo_station" # Must be either "null" to get all stations, "meteo_station" for meteorological stations, or "rain_gauge"  for rain gauges
+
 coord_vars:
   - swiss_easting
   - swiss_northing
