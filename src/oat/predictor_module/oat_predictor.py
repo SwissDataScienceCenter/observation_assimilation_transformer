@@ -112,6 +112,9 @@ class OATPredictor(pl.LightningModule):
             self.model = OAT(oat_model_cfg)
         elif isinstance(oat_model_cfg, UninformedOATConfig):
             self.model = UninformedOAT(oat_model_cfg)
+        
+        if not hasattr(self, "model"):
+            raise ValueError(f"oat_model_cfg must be an instance of OATConfig or UninformedOATConfig. Given {type(oat_model_cfg)}")
 
         self.input_transform = input_transform
         self.output_transform = output_transform
