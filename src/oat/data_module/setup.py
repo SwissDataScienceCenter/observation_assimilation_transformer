@@ -50,7 +50,8 @@ def setup_data_and_transform(
     # This changed in the merge of the uninformed baseline. TODO check it.
     input_transform, output_transform = train_dataset.get_transform(
         num_data_points=cfg.dataset.data_points_for_stats, 
-        dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader.train)
+        dataloader=DataLoader(train_dataset, shuffle=True, **cfg.dataloader.train),
+        type=cfg.model.get("transform_type", "real")
     )
     train_dataset.split_fraction = old_split_fraction
     logger.info("Transforms set up successfully.")

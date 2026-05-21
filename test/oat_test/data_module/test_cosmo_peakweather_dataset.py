@@ -57,11 +57,20 @@ def test_cosmo_peakweather_dataset() -> None:
     assert data_sample['global_data']['time_emb'].shape[0] == len(var_names['global_data']['time_emb']) if dataset.config.use_time_embedding else True
     
     
+    real_transforms = dataset.get_transform(0, dataloader=None, type='real')
+    assert isinstance(real_transforms[0], NestedTransform)
+    assert isinstance(real_transforms[1], Transform)
+    keep_support_transforms = dataset.get_transform(10, dataloader=None, type='keep_support')
+    input_transform, output_transform = keep_support_transforms
+    assert isinstance(input_transform, NestedTransform)
+    assert isinstance(output_transform, Transform)
+    obs_var_support = dataset.obs_var_support
+    post_transform_support = output_transform.transform_support(obs_var_support)
+    assert torch.allclose(post_transform_support.lower_bounds, obs_var_support.lower_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.allclose(post_transform_support.upper_bounds, obs_var_support.upper_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.equal(post_transform_support.lower_open, obs_var_support.lower_open)
+    assert torch.equal(post_transform_support.upper_open, obs_var_support.upper_open)
     
-    transforms = dataset.get_transform(0)
-
-    assert isinstance(transforms[0], NestedTransform)
-    assert isinstance(transforms[1], Transform)
     
 @pytest.mark.parametrize(
     "observation_fraction",
@@ -72,7 +81,7 @@ def test_cosmo_peakweather_dataset() -> None:
     os.getenv("CI") == "true",
     reason="Skipped on CI (requires local datasets)"
 )
-def test_splits(observation_fraction: float):
+def test_splits(observation_fraction: float) -> None:
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     
@@ -111,6 +120,22 @@ def test_splits(observation_fraction: float):
                 
         for v in test_dataset[0]['observation_data'].values():
                 assert v.shape[0] == num_train_and_val_station
+                
+    
+    real_transforms = train_dataset.get_transform(0, dataloader=None, type='real')
+    assert isinstance(real_transforms[0], NestedTransform)
+    assert isinstance(real_transforms[1], Transform)
+    keep_support_transforms = train_dataset.get_transform(10, dataloader=None, type='keep_support')
+    input_transform, output_transform = keep_support_transforms
+    assert isinstance(input_transform, NestedTransform)
+    assert isinstance(output_transform, Transform)
+    obs_var_support = train_dataset.obs_var_support
+    post_transform_support = output_transform.transform_support(obs_var_support)
+    assert torch.isclose(post_transform_support.lower_bounds, obs_var_support.lower_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.isclose(post_transform_support.upper_bounds, obs_var_support.upper_bounds, atol=1e-5)  # allow for small numerical differences
+    assert torch.equal(post_transform_support.lower_open, obs_var_support.lower_open)
+    assert torch.equal(post_transform_support.upper_open, obs_var_support.upper_open)
+    
     
     # TODO check all other shapes (eg query)
     
@@ -174,6 +199,57 @@ def test_build_obs_variable_support_reads_catalog_bounds() -> None:
         support.upper_open,
         torch.tensor([True, True, True]),
     )
+
+
+def _check_obs_nwp_alignment(dataset: CosmoPeakWeatherDataset, indices: list[int]) -> None:
+    """For each idx: verify NWP time and obs value both match dataset.times[idx]."""
+    for idx in indices:
+        time = dataset.times[idx]
+        nwp_idx = int(dataset.time_indices[idx])
+
+        nwp_time = pd.to_datetime(dataset.nwp_ds.dates[nwp_idx]).tz_localize('UTC')
+        assert time == nwp_time, (
+            f"NWP time mismatch at idx={idx}: "
+            f"dataset.times={time}, nwp_ds.dates[{nwp_idx}]={nwp_time}"
+        )
+
+        obs_at_t, mask_at_t = dataset.obs_ds.get_observations(
+            first_date=time,
+            last_date=time + pd.Timedelta(hours=1),
+            parameters=list(dataset.config.obs_vars),
+            stations=dataset.stations,
+            return_mask=True,
+            as_numpy=True,
+        )
+        np.testing.assert_array_equal(
+            dataset.obs_np[idx], obs_at_t[0],
+            err_msg=f"obs value mismatch at idx={idx} (time={time})",
+        )
+        np.testing.assert_array_equal(
+            dataset.obs_mask_np[idx], mask_at_t[0],
+            err_msg=f"obs mask mismatch at idx={idx} (time={time})",
+        )
+
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
+def test_obs_nwp_alignment() -> None:
+    """obs_np[idx] must correspond to the same timestamp as NWP at time_indices[idx]."""
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
+
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
+def test_obs_nwp_alignment_with_date_filter() -> None:
+    """Same check with start_date/end_date set — exercises the re-indexing path in _load_observations."""
+    from omegaconf import OmegaConf
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+    OmegaConf.update(cfg, "dataset.start_date", "2021-01-01")
+    OmegaConf.update(cfg, "dataset.end_date", "2021-06-30")
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
 
 
 def test_build_obs_variable_support_raises_for_missing_variable() -> None:

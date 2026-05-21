@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from typing import Any, Dict, Optional, Tuple
-from oat.data_module import transform, statistics
+from oat.data_module import transform, statistics, support
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
@@ -142,6 +142,11 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         return len(self.dataset)
     
     @property
+    def obs_var_support(self) -> support.VariableSupport:
+        """Return the observation variable support for the training stations"""
+        return self.dataset.obs_var_support
+    
+    @property
     def station_names(self) -> list[str]:
         """Return list of station names in the training set"""
         return self.stations.tolist()
@@ -193,90 +198,20 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         }
         return split_data
     
-    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None) -> tuple[transform.NestedTransform, transform.Transform]:
+    def get_transform(self, num_data_points: int, dataloader: DataLoader | None=None, type: str = 'real') -> tuple[transform.NestedTransform, transform.Transform]:
         """
         Compute data-driven transforms (log, standardization) from random samples.
             num_data_points: Number of random data points to sample for statistics
         Returns: NestedTransform to apply to batches, and output_transform for obs-only.
         """
-        apply_log = ['wind_gust', 'wind_speed']
-        log_indices = [i for i, var in enumerate(self.dataset.config.obs_vars) if var in apply_log]
-
-        # Create pre-transform with log
-        log_transform = transform.LogTransform(apply_to=log_indices, 
-                                               feature_dim=-1, 
-                                               offset=1)
-        pre_transform = transform.NestedTransform({
-            'observation_data': {
-                'obs': log_transform
-            }
-        })
-        
-        # Initialize statistics gatherers
-        stats_dict = {
-            'observation_data': {
-                'obs': statistics.RunningFeatureStats(
-                    num_features=len(self.dataset.config.obs_vars),
-                    feature_dim=-1,
-                ),
-                'topo': statistics.RunningFeatureStats(
-                    num_features=len(self.dataset.config.topo_vars),
-                    feature_dim=-3,
-                ),
-                'geo': statistics.RunningFeatureStats(
-                    num_features=len(self.dataset.config.geo_vars),
-                    feature_dim=-1,
-                ),
-            },
-            'global_data': {
-                'global_field': statistics.RunningFeatureStats(
-                    num_features=len(self.dataset.config.nwp_vars) + len(self.dataset.config.topo_vars),
-                    feature_dim=-3,
-                )
-            
-            }
-        }
-        # Gather statistics
-        def gather_stats(sample: dict | torch.Tensor, stats_gatherer: dict | statistics.RunningFeatureStats) -> None:
-            if isinstance(stats_gatherer, statistics.RunningFeatureStats):
-                stats_gatherer.update(sample)
-            elif isinstance(stats_gatherer, dict):
-                for key, stat in stats_gatherer.items():
-                    gather_stats(sample[key], stat)
-                    
-        if dataloader is not None:
-            bs = dataloader.batch_size
-            for i, batch in tqdm(enumerate(dataloader), total=num_data_points // bs, desc="Gathering dataset statistics"):
-                if i * bs >= num_data_points:
-                    break
-                pre_transformed_batch = pre_transform(batch)
-                gather_stats(pre_transformed_batch, stats_dict)
+        if dataloader is None:
+            train_indices = self.train_indices
         else:
-            rand_indices = torch.randperm(len(self))[:num_data_points]
-            for idx in tqdm(rand_indices, desc="Gathering dataset statistics"):
-                sample = self[int(idx)]
-                pre_transformed_sample = pre_transform(sample)
-                gather_stats(pre_transformed_sample, stats_dict)
-        
-        output_transform =  transform.ComposedTransform([log_transform, stats_dict['observation_data']['obs'].get_standard_transform()])
-            
-        transform_dict = {
-            'observation_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
-            },
-            'query_data': {
-                'obs':output_transform,
-                'topo': stats_dict['observation_data']['topo'].get_standard_transform(),
-                'geo': stats_dict['observation_data']['geo'].get_standard_transform(),
-            },
-            'global_data': {
-                'global_field': stats_dict['global_data']['global_field'].get_standard_transform(),
-            }
-        }
-        post_transform = transform.NestedTransform(transform_dict)
-        return post_transform, output_transform
+            train_indices = None
+        return self.dataset.get_transform(num_data_points=num_data_points, 
+                                          dataloader=dataloader, 
+                                          type=type,
+                                          data_indices=train_indices)
     
     
 class EvalDataset(Dataset[Dict[str, Any]]):
