@@ -410,8 +410,11 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             return_mask=True,
             as_numpy=True,
         )
-        self.obs_np = self.obs_np[self.time_indices]  # Align with filtered times
-        self.obs_mask_np = self.obs_mask_np[self.time_indices]
+        # Align with filtered times: convert absolute NWP positions to local offsets
+        # from the fetched obs array (which starts at self.times[0]).
+        local_indices = self.time_indices - self.time_indices[0]
+        self.obs_np = self.obs_np[local_indices]
+        self.obs_mask_np = self.obs_mask_np[local_indices]
         
         # Station metadata
         self.station_coords = torch.tensor(

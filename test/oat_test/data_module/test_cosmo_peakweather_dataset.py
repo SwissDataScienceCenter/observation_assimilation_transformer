@@ -201,6 +201,57 @@ def test_build_obs_variable_support_reads_catalog_bounds() -> None:
     )
 
 
+def _check_obs_nwp_alignment(dataset: CosmoPeakWeatherDataset, indices: list[int]) -> None:
+    """For each idx: verify NWP time and obs value both match dataset.times[idx]."""
+    for idx in indices:
+        time = dataset.times[idx]
+        nwp_idx = int(dataset.time_indices[idx])
+
+        nwp_time = pd.to_datetime(dataset.nwp_ds.dates[nwp_idx]).tz_localize('UTC')
+        assert time == nwp_time, (
+            f"NWP time mismatch at idx={idx}: "
+            f"dataset.times={time}, nwp_ds.dates[{nwp_idx}]={nwp_time}"
+        )
+
+        obs_at_t, mask_at_t = dataset.obs_ds.get_observations(
+            first_date=time,
+            last_date=time + pd.Timedelta(hours=1),
+            parameters=list(dataset.config.obs_vars),
+            stations=dataset.stations,
+            return_mask=True,
+            as_numpy=True,
+        )
+        np.testing.assert_array_equal(
+            dataset.obs_np[idx], obs_at_t[0],
+            err_msg=f"obs value mismatch at idx={idx} (time={time})",
+        )
+        np.testing.assert_array_equal(
+            dataset.obs_mask_np[idx], mask_at_t[0],
+            err_msg=f"obs mask mismatch at idx={idx} (time={time})",
+        )
+
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
+def test_obs_nwp_alignment() -> None:
+    """obs_np[idx] must correspond to the same timestamp as NWP at time_indices[idx]."""
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
+
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
+def test_obs_nwp_alignment_with_date_filter() -> None:
+    """Same check with start_date/end_date set — exercises the re-indexing path in _load_observations."""
+    from omegaconf import OmegaConf
+    with initialize(config_path="../../../configs/", version_base=None):
+        cfg = compose(config_name="config")
+    OmegaConf.update(cfg, "dataset.start_date", "2021-01-01")
+    OmegaConf.update(cfg, "dataset.end_date", "2021-06-30")
+    dataset = CosmoPeakWeatherDataset(cfg.dataset)
+    _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
+
+
 def test_build_obs_variable_support_raises_for_missing_variable() -> None:
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
