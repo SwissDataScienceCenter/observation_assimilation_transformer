@@ -7,11 +7,6 @@ obs_path: "/scratch/mch/cdonner/data/peakweather"
 ref_nwp_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
 nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
 
-# NWP variables (COSMO)
-nwp_vars:
-  - T_2M         # 2m temperature
-  - T_G
-
 # Topographic variables
 topo_vars:
   - DEM                                    # Digital elevation model
@@ -19,16 +14,6 @@ topo_vars:
   - TPI_2000M                              # Topographic position index 2000m
   - WE_DERIVATIVE_2000M_SIGRATIO1          # West-east derivative
   - SN_DERIVATIVE_2000M_SIGRATIO1          # South-north derivative
-
-# Observation variables (PeakWeather)
-# If you change these, make sure to also update obs_variable_to_distribution
-obs_vars:
-  - temperature
-
-# obs variables are the target variables for downscaling
-# here we assign each variable a distribution type (will be used by output_head)
-obs_variable_to_distribution:
-  temperature: "normal"
 
 station_type: "meteo_station" # Must be either "null" to get all stations, "meteo_station" for meteorological stations, or "rain_gauge"  for rain gauges
 

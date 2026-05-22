@@ -1,10 +1,10 @@
 defaults:
-  - _self_
   - cosmo_peakweather/settings@_here_
   - cosmo_peakweather/catalog@catalog
+  - _self_
 
 nwp_vars:
-  - TOT_PREC # TODO think if we need more? Cloud cover?
+  - TOT_PREC_1H # TODO think if we need more? Cloud cover?
 
 obs_vars:
   - precipitation
