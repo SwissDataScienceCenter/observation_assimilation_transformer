@@ -149,7 +149,7 @@ class OutputHead(nn.Module):
         Given an input of shape [batch, station, in_features], a target of shape [batch, station, num_vars]
         and a mask of the same shape as the target, computes the scalar loss by summing the scalar losses of each variable
         which are individually scaled by self.loss_scaling.
-        Returns the predicted distributions, the overall loss, and a dict of per-variable scaled loss scalars.
+        Returns the predicted distributions, a dict of per-variable scaled loss scalars, and the overall loss.
         '''
 
         overall_loss = torch.tensor(0.0, device=x.device)
@@ -178,7 +178,7 @@ class OutputHead(nn.Module):
             per_var_losses[var_name] = loss_scalar.detach()
             overall_loss = overall_loss + loss_scalar
 
-        return out, overall_loss, per_var_losses
+        return out, per_var_losses, overall_loss
 
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:

@@ -46,7 +46,7 @@ def test_output_head(observation_assimilation_as):
     
     
     target = samples_tensor[...,0,:] # get a target that fits the support 
-    out, loss, per_var_losses = head.loss(x=x, target=target, mask=torch.ones_like(target))
+    out, per_var_losses, loss = head.loss(x=x, target=target, mask=torch.ones_like(target))
     
     assert isinstance(loss, torch.Tensor)
     assert isinstance(out, dict)

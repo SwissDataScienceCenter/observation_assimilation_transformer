@@ -295,13 +295,13 @@ class OATPredictor(pl.LightningModule):
         # thee are arguments only required if you need to return the loss
         model_fwd_kwargs["target_obs"] = target_obs
         model_fwd_kwargs["target_mask_obs"] = target_mask_obs
-        out, loss, per_var_losses = self.model.forward_with_loss(**model_fwd_kwargs)
+        out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
 
-        return out, loss, per_var_losses, target_obs, target_mask_obs
+        return out, per_var_losses, loss, target_obs, target_mask_obs
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, per_var_losses, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         self._log_per_var_losses(per_var_losses=per_var_losses,
                                  prefix="train", 
@@ -336,7 +336,7 @@ class OATPredictor(pl.LightningModule):
 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, per_var_losses, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         self._log_per_var_losses(per_var_losses=per_var_losses,
                                  prefix="val", 
@@ -366,7 +366,7 @@ class OATPredictor(pl.LightningModule):
 
     def test_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, per_var_losses, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("test_loss", loss)
         self._log_per_var_losses(per_var_losses=per_var_losses,

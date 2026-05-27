@@ -34,7 +34,7 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     if not compute_loss:
         out = pred(batch_fixture,return_loss_and_targets=False)
     else:
-        out, loss, per_var_losses, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
+        out, per_var_losses, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
         
         assert isinstance(loss, torch.Tensor)
         assert loss.shape == ()

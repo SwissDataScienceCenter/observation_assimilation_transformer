@@ -370,15 +370,15 @@ class UninformedOAT(nn.Module):
 
         Returns:
             predictions: Dict with model outputs
-            loss: Scalar loss tensor (sum of per-variable scaled losses)
             per_var_losses: Dict mapping variable name to its detached scaled loss scalar
+            loss: Scalar loss tensor (sum of per-variable scaled losses)
         """
 
         query_token = self._create_uninformed_tokens(
             global_data=global_data,
             local_data=query_data
         )
-        out, loss, per_var_losses = self.output_head.loss(query_token, target_obs, target_mask_obs)
+        out, per_var_losses, loss = self.output_head.loss(query_token, target_obs, target_mask_obs)
 
         with torch.no_grad():
             if num_samples is None:
@@ -387,8 +387,8 @@ class UninformedOAT(nn.Module):
 
         out['samples'] = samples
 
-        return out, loss, per_var_losses
-    
+        return out, per_var_losses, loss
+
     def _create_uninformed_tokens(
         self,
         global_data: Dict[str, torch.Tensor],
@@ -607,14 +607,14 @@ class OAT(UninformedOAT):
 
         Returns:
             predictions: Dict with model outputs
-            loss: Scalar loss tensor (sum of per-variable scaled losses, blended with pre-OAT loss if applicable)
             per_var_losses: Dict mapping variable name to its detached scaled loss scalar (blended with pre-OAT when pre_oat_loss_weight > 0, so values always sum to loss)
+            loss: Scalar loss tensor (sum of per-variable scaled losses, blended with pre-OAT loss if applicable)
         """
         
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
-        out, loss, per_var_losses = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        out, per_var_losses, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
         if self.pre_oat_loss_weight > 0:
-            _, pre_loss, pre_per_var_losses = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            _, pre_per_var_losses, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
             pre_weight = max(0.0, min(1.0, float(self.pre_oat_loss_weight)))
             loss = (1 - pre_weight) * loss + pre_weight * pre_loss
             # Scale the per-var losses by the pre-oat weight as done with the overall loss scalar
@@ -640,7 +640,7 @@ class OAT(UninformedOAT):
             
         out['samples'] = samples
 
-        return out, loss, per_var_losses
+        return out, per_var_losses, loss
 
     def _forward(
         self,
