@@ -7,7 +7,7 @@ Following architecture from Neural Downscaling with Station Observation.
 from typing import Dict, Tuple, Optional, Any, Sequence
 import torch
 from torch import nn
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from oat.model_module import (
     global_encoder,
@@ -349,10 +349,10 @@ class UninformedOAT(nn.Module):
         target_mask_obs: torch.Tensor,
         num_samples: int | None = None,
         differentiable_samples: bool = False,
-    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Forward pass.
-        
+
         Args:
             global_data: {
                 'nwp': (B, C, H_lr, W_lr) - NWP fields
@@ -367,26 +367,27 @@ class UninformedOAT(nn.Module):
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
             differentiable_samples: Whether to sample with a reparametrization
-        
+
         Returns:
             predictions: Dict with model outputs
-            loss: Scalar loss tensor
+            loss: Scalar loss tensor (sum of per-variable scaled losses)
+            per_var_losses: Dict mapping variable name to its detached scaled loss scalar
         """
 
         query_token = self._create_uninformed_tokens(
             global_data=global_data,
             local_data=query_data
         )
-        out, loss = self.output_head.loss(query_token, target_obs, target_mask_obs)
-        
+        out, loss, per_var_losses = self.output_head.loss(query_token, target_obs, target_mask_obs)
+
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
             samples = self.output_head.sample(x=None, pred_dist=out, num_samples=num_samples, differentiable=differentiable_samples)
 
         out['samples'] = samples
-        
-        return out, loss
+
+        return out, loss, per_var_losses
     
     def _create_uninformed_tokens(
         self,
@@ -594,7 +595,7 @@ class OAT(UninformedOAT):
         num_samples: int | None = None,
         differentiable_samples: bool = False,    
         return_pre_oat_output: bool = False
-    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Forward pass with loss computation.
 
@@ -606,15 +607,21 @@ class OAT(UninformedOAT):
 
         Returns:
             predictions: Dict with model outputs
-            loss: Scalar loss tensor
+            loss: Scalar loss tensor (sum of per-variable scaled losses, blended with pre-OAT loss if applicable)
+            per_var_losses: Dict mapping variable name to its detached scaled loss scalar (blended with pre-OAT when pre_oat_loss_weight > 0, so values always sum to loss)
         """
         
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
-        out, loss = self.output_head.loss(oat_out, target_obs, target_mask_obs)
+        out, loss, per_var_losses = self.output_head.loss(oat_out, target_obs, target_mask_obs)
         if self.pre_oat_loss_weight > 0:
-            _, pre_loss = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
+            _, pre_loss, pre_per_var_losses = self.output_head.loss(pre_oat_out, target_obs, target_mask_obs)
             pre_weight = max(0.0, min(1.0, float(self.pre_oat_loss_weight)))
             loss = (1 - pre_weight) * loss + pre_weight * pre_loss
+            # Scale the per-var losses by the pre-oat weight as done with the overall loss scalar
+            per_var_losses = {
+                var: (1 - pre_weight) * v + pre_weight * pre_per_var_losses[var]
+                for var, v in per_var_losses.items()
+            }
             
         
         with torch.no_grad():
@@ -632,8 +639,8 @@ class OAT(UninformedOAT):
             out['pre_oat_output'] = pre_oat_output
             
         out['samples'] = samples
-        
-        return out, loss
+
+        return out, loss, per_var_losses
 
     def _forward(
         self,
