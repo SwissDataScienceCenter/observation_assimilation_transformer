@@ -4,7 +4,8 @@ defaults:
   - _self_
 
 nwp_vars:
-  - TOT_PREC_1H # TODO think if we need more? Cloud cover?
+  - TOT_PREC_1H
+  - CLCT
 
 obs_vars:
   - precipitation
