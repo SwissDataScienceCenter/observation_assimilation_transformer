@@ -6,7 +6,7 @@ defaults:
 nwp_vars:
   - U_10M
   - V_10M
-  - VMAX_10M
+  # - VMAX_10M
 
 obs_vars:
   - wind_speed
