@@ -294,7 +294,7 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     # NOTE maybe use cfg for patience
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=10,
+        patience=40,
         mode="min",
         verbose=True
     )

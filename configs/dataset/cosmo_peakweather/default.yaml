@@ -1,0 +1,14 @@
+defaults:
+  - cosmo_peakweather/settings@_here_
+  - cosmo_peakweather/catalog@catalog
+  - _self_
+
+nwp_vars:
+  - T_2M
+  - T_G
+
+obs_vars:
+  - temperature
+
+obs_variable_to_distribution:
+  temperature: "normal"

@@ -1,4 +1,4 @@
-from typing import Any, Type, Optional, List
+from typing import Any, Literal, Type, Optional, List
 import logging
 
 import pytorch_lightning as pl
@@ -386,12 +386,20 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal ['samples', 'distribution'] = 'samples') -> torch.Tensor:
         batch = self._normalize_batch(batch)
 
         y_hat = self(batch, return_loss_and_targets=False)
 
-        return self.output_transform.inverse(y_hat['samples'])
+        if return_as == 'samples':
+            return self.output_transform.inverse(y_hat['samples'])
+        elif return_as == 'distribution':
+            y_hat.pop('samples')
+            y_hat.pop('pre_oat_output', None)
+            logger.warning("The returned distributions are still parameterized in the transformed space. Ensure to apply the appropriate inverse transform to the distribution parameters before using them.")
+            return y_hat
+        else:
+            raise ValueError(f"Invalid value for return_as: {return_as}. Expected 'samples' or 'distribution'.")
     
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 

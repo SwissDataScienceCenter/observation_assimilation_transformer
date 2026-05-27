@@ -1,5 +1,5 @@
 defaults:
-  - dataset: default
+  - dataset: cosmo_peakweather/default
   - split: default
   - dataloader: default
   - model: oat
