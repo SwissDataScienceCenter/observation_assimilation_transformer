@@ -144,40 +144,41 @@ class OutputHead(nn.Module):
         norm_loss = torch.mean(loss_per_sample / normalization)  # [B]
         return norm_loss
     
-    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    def loss(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, Dict[str, torch.Tensor]]:
         '''
-        Given an input of shape [batch, station, in_features], a target of shape [batch, station, num_vars] 
+        Given an input of shape [batch, station, in_features], a target of shape [batch, station, num_vars]
         and a mask of the same shape as the target, computes the scalar loss by summing the scalar losses of each variable
         which are individually scaled by self.loss_scaling.
-        It returns the predicted distributions as a dictionary and the overall loss as a scalar tensor.
+        Returns the predicted distributions, a dict of per-variable scaled loss scalars, and the overall loss.
         '''
-        
+
         overall_loss = torch.tensor(0.0, device=x.device)
-        
+        per_var_losses: Dict[str, torch.Tensor] = {}
+
         batch_dim, station_dim, num_vars = target.shape
-        
+
         assert num_vars == len(self.variable_to_distribution)
 
         out = self.forward(x, as_dict=True)
         for i, (var_name, dist) in enumerate(out.items()):
-            
+
             # mask=mask[..., i:i+1]
             if dist.event_shape == ():
                 target_i = target[..., i]
             else:
                 raise NotImplementedError() # if event shape is (1,) one must use target[..., i:i+1] (to be checked)
 
-            # crps_mc_samples only used if the distribution does not have a closed form CRPS, otherwise it is ignored.            
+            # crps_mc_samples only used if the distribution does not have a closed form CRPS, otherwise it is ignored.
             loss_values = dist.crps(target=target_i, num_samples=self.crps_mc_samples).unsqueeze(-1) # [B, S, 1]
             assert loss_values.shape == (batch_dim, station_dim, 1)
 
             mask_i = mask[..., i:i+1]
-            
+
             loss_scalar = self.loss_normalization_per_sample(loss_values, mask_i) * self.loss_scaling[i]
-            
+            per_var_losses[var_name] = loss_scalar.detach()
             overall_loss = overall_loss + loss_scalar
-        
-        return out, overall_loss
+
+        return out, per_var_losses, overall_loss
 
     
     def compute_innovation(self, x: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
@@ -185,7 +186,7 @@ class OutputHead(nn.Module):
         if self.observation_assimilation_as == "innovation":
             predicted_distributions = self.forward(x, as_dict=True)
             innovations = []
-            for i, (var_name, dist) in enumerate(predicted_distributions.items()):
+            for i, (_, dist) in enumerate(predicted_distributions.items()):
                 target_i = target[..., i] if dist.event_shape == () else target[..., i:i+1]
                 innovation_i = dist.innovation(target=target_i)
                 if mask is not None:

@@ -1,5 +1,5 @@
 defaults:
-  - dataset: cosmo_peakweather/default
+  - dataset: cosmo_peakweather/temperature
   - split: no_conditioning # uses 0% of the stations as "key-values"
   - dataloader: default
   - model: uninformed_oat
