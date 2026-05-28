@@ -2,23 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
 
 
 class MeteostatObservations:
-    """
-    Wraps Meteostat parquet files with the interface expected by ERA5MeteostatDataset.
-
-    Parameters
-    ----------
-    obs_path:
-        Hourly observations parquet. Required columns: station, time, and one
-        column per observed variable (temp, rhum, prcp, wspd, wpgt).
-    station_meta_path:
-        station_quality.parquet. Required columns: station, latitude,
-        longitude, elevation.
-    """
-
     def __init__(self, obs_path: str, station_meta_path: str) -> None:
         meta = pd.read_parquet(station_meta_path)
         if "station" in meta.columns:
@@ -35,7 +21,7 @@ class MeteostatObservations:
         self._obs: pd.DataFrame = obs.set_index(["time", "station"]).sort_index()
 
     @property
-    def stations(self) -> NDArray[np.str_]:
+    def stations(self) -> np.ndarray:
         obs_ids = set(self._obs.index.get_level_values("station").unique())
         meta_ids = set(self.stations_table.index)
         return np.array(sorted(obs_ids & meta_ids))
@@ -45,11 +31,10 @@ class MeteostatObservations:
         first_date: pd.Timestamp,
         last_date: pd.Timestamp,
         parameters: list[str],
-        stations: NDArray[np.str_] | list[str],
+        stations: np.ndarray | list[str],
         return_mask: bool = True,
         as_numpy: bool = True,
-    ) -> tuple[NDArray[np.float32], NDArray[np.bool_]] | NDArray[np.float32]:
-        """Return (T, N, V) float32 obs array and bool mask (True = valid)."""
+    ) -> tuple[np.ndarray, np.ndarray] | np.ndarray:
         if not as_numpy:
             raise NotImplementedError("Only as_numpy=True is supported.")
 
@@ -71,14 +56,13 @@ class MeteostatObservations:
         except KeyError:
             window = pd.DataFrame(columns=parameters)
 
-        time_idx = {t: i for i, t in enumerate(times)}
-        stn_idx = {s: i for i, s in enumerate(stations)}
-
-        for (t, s), row in window.iterrows():
-            ti = time_idx.get(t)
-            si = stn_idx.get(s)
-            if ti is not None and si is not None:
-                obs_arr[ti, si] = row.values.astype(np.float32)
+        if not window.empty:
+            unstacked = window.unstack(level="station")
+            for vi, param in enumerate(parameters):
+                if param not in unstacked.columns.get_level_values(0):
+                    continue
+                param_data = unstacked[param].reindex(index=times, columns=stations)
+                obs_arr[:, :, vi] = param_data.to_numpy(dtype=np.float32, na_value=np.nan)
 
         mask = ~np.isnan(obs_arr)
         return (obs_arr, mask) if return_mask else obs_arr
