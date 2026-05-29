@@ -1,0 +1,14 @@
+defaults:
+  - era5_meteostat/settings@_here_
+  - era5_meteostat/catalog@catalog
+  - _self_
+
+nwp_vars:
+  - 2t
+  - tcc
+
+obs_vars:
+  - temp
+
+obs_variable_to_distribution:
+  temp: "normal"
