@@ -127,6 +127,44 @@ class OATPlotter:
             label=f"[{quantile_lo:.0%}, {quantile_hi:.0%}]",
         )
 
+    def plot_timeseries_at_station(
+        self,
+        ax: Any,
+        station_idx: int,
+        var: str,
+        time_indices: list[int],
+        quantile_lo: float = 0.1,
+        quantile_hi: float = 0.9,
+    ) -> None:
+        """Plot predicted timeseries at a station location, with observed values.
+
+        Wraps :meth:`plot_timeseries` and additionally overlays the actual
+        station observations as a scatter plot.  Missing observations
+        (``obs_mask_tensor == 0``) are rendered as NaN and therefore omitted.
+
+        Args:
+            ax: Matplotlib Axes to draw onto.
+            station_idx: Index into ``dataset.station_coords``.
+            var: Variable name (must be in predictor.var_to_indx).
+            time_indices: Dataset time indices to predict at.
+            quantile_lo: Lower quantile for the uncertainty band.
+            quantile_hi: Upper quantile for the uncertainty band.
+        """
+        coords = self.dataset.station_coords[station_idx]
+        center = (coords[0].item(), coords[1].item())
+        self.plot_timeseries(ax, center, var, time_indices, quantile_lo=quantile_lo, quantile_hi=quantile_hi)
+
+        var_idx = self.predictor.var_to_indx[var]
+        times = [self.dataset.times[i] for i in time_indices]
+        obs_values = []
+        for t_idx in time_indices:
+            mask = self.dataset.obs_mask_tensor[t_idx, station_idx, var_idx].item()
+            if mask:
+                obs_values.append(self.dataset.obs_tensor[t_idx, station_idx, var_idx].item())
+            else:
+                obs_values.append(float("nan"))
+        ax.scatter(times, obs_values, label="observation", zorder=5)
+
     def plot_spatial_snapshot(
         self,
         ax: Any,

@@ -166,3 +166,72 @@ def test_plotter_importable_from_package():
     from oat.plotting_module import OATPlotter as _OATPlotter
 
     assert _OATPlotter is OATPlotter
+
+
+def test_plot_timeseries_at_station_delegates_to_plot_timeseries():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    dataset.station_coords = torch.tensor(
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]]
+    )
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "plot_timeseries") as mock_ts:
+        plotter.plot_timeseries_at_station(
+            ax=ax, station_idx=2, var="temp", time_indices=[0, 1]
+        )
+    mock_ts.assert_called_once_with(
+        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.1, quantile_hi=0.9
+    )
+    plt.close(fig)
+
+
+def test_plot_timeseries_at_station_plots_observations():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=3, n_times=4, n_vars=2)
+    dataset.station_coords = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    # Set known observation values for station 1, var "temp" (index 0)
+    dataset.obs_tensor = torch.zeros(4, 3, 2)
+    dataset.obs_tensor[:, 1, 0] = torch.tensor([10.0, 20.0, 30.0, 40.0])
+    dataset.obs_mask_tensor = torch.ones(4, 3, 2)  # all observed
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "plot_timeseries"):
+        plotter.plot_timeseries_at_station(
+            ax=ax, station_idx=1, var="temp", time_indices=[0, 1, 2, 3]
+        )
+
+    # A scatter call adds a PathCollection to ax.collections
+    scatter_collections = [c for c in ax.collections]
+    assert len(scatter_collections) >= 1, "Expected at least one scatter (observations)"
+    plt.close(fig)
+
+
+def test_plot_timeseries_at_station_masks_missing_observations():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=3, n_times=4, n_vars=2)
+    dataset.station_coords = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    dataset.obs_tensor = torch.zeros(4, 3, 2)
+    dataset.obs_tensor[:, 0, 0] = torch.tensor([10.0, 20.0, 30.0, 40.0])
+    # Mark time indices 1 and 3 as missing for station 0, var 0
+    dataset.obs_mask_tensor = torch.ones(4, 3, 2)
+    dataset.obs_mask_tensor[1, 0, 0] = 0.0
+    dataset.obs_mask_tensor[3, 0, 0] = 0.0
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "plot_timeseries"):
+        plotter.plot_timeseries_at_station(
+            ax=ax, station_idx=0, var="temp", time_indices=[0, 1, 2, 3]
+        )
+
+    # Retrieve the y-data of the scatter
+    scatter_ys = list(ax.collections[0].get_offsets()[:, 1])
+    import math
+    assert math.isnan(scatter_ys[1]), "Missing observation at t=1 should be NaN"
+    assert math.isnan(scatter_ys[3]), "Missing observation at t=3 should be NaN"
+    assert not math.isnan(scatter_ys[0])
+    assert not math.isnan(scatter_ys[2])
+    plt.close(fig)
