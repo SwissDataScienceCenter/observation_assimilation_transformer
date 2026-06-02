@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -27,7 +27,7 @@ class OATPlotter:
     def __init__(
         self,
         predictor: OATPredictor,
-        dataset,
+        dataset: Any,
         obs_station_indices: Sequence[int] | None = None,
         n_samples: int = 100,
         device: str = "cpu",
@@ -58,7 +58,7 @@ class OATPlotter:
 
         query_data = self.dataset.get_query(query_coords)
 
-        def _add_batch(d: dict) -> dict:
+        def _add_batch(d: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
             return {k: v.unsqueeze(0).to(self.device) for k, v in d.items()}
 
         batch = {
