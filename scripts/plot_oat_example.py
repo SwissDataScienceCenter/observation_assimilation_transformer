@@ -178,36 +178,70 @@ def main() -> None:
     ckpt_tag = Path(args.checkpoint).parent.name
     fig.suptitle(f"OAT — {var} — {ckpt_tag}")
 
-    plotter.plot_timeseries(ax=axes[0], center=center, var=var, time_indices=time_indices)
-    axes[0].set_title(f"Timeseries (E={center[0]:.0f}, N={center[1]:.0f})")
-    axes[0].set_xlabel("Time")
-    axes[0].set_ylabel(var)
-    axes[0].legend()
-    axes[0].tick_params(axis="x", rotation=30)
+    if args.station is not None:
+        plotter.plot_timeseries_at_station(
+            ax=axes[0], station_idx=args.station, var=var, time_indices=time_indices
+        )
+        axes[0].set_title(f"Timeseries — {station_label} (E={center[0]:.0f}, N={center[1]:.0f})")
+        axes[0].set_xlabel("Time")
+        axes[0].set_ylabel(var)
+        axes[0].legend()
+        axes[0].tick_params(axis="x", rotation=30)
 
-    mesh_mean = plotter.plot_spatial_snapshot(
-        ax=axes[1],
-        var=var,
-        time_idx=snap_idx,
-        center=center,
-        extent=extent,
-        resolution=resolution,
-        plot_type="mean",
-    )
-    plt.colorbar(mesh_mean, ax=axes[1], label=var)
-    axes[1].set_title(f"Mean  ({snap_time_iso})")
-    axes[1].set_xlabel("Easting (m)")
-    axes[1].set_ylabel("Northing (m)")
+        mesh_mean = plotter.plot_spatial_snapshot_at_station(
+            ax=axes[1],
+            var=var,
+            time_idx=snap_idx,
+            station_idx=args.station,
+            extent=extent,
+            resolution=resolution,
+            plot_type="mean",
+        )
+        plt.colorbar(mesh_mean, ax=axes[1], label=var)
+        axes[1].set_title(f"Mean  ({snap_time_iso})")
+        axes[1].set_xlabel("Easting (m)")
+        axes[1].set_ylabel("Northing (m)")
 
-    mesh_std = plotter.plot_spatial_snapshot(
-        ax=axes[2],
-        var=var,
-        time_idx=snap_idx,
-        center=center,
-        extent=extent,
-        resolution=resolution,
-        plot_type="std",
-    )
+        mesh_std = plotter.plot_spatial_snapshot_at_station(
+            ax=axes[2],
+            var=var,
+            time_idx=snap_idx,
+            station_idx=args.station,
+            extent=extent,
+            resolution=resolution,
+            plot_type="std",
+        )
+    else:
+        plotter.plot_timeseries(ax=axes[0], center=center, var=var, time_indices=time_indices)
+        axes[0].set_title(f"Timeseries (E={center[0]:.0f}, N={center[1]:.0f})")
+        axes[0].set_xlabel("Time")
+        axes[0].set_ylabel(var)
+        axes[0].legend()
+        axes[0].tick_params(axis="x", rotation=30)
+
+        mesh_mean = plotter.plot_spatial_snapshot(
+            ax=axes[1],
+            var=var,
+            time_idx=snap_idx,
+            center=center,
+            extent=extent,
+            resolution=resolution,
+            plot_type="mean",
+        )
+        plt.colorbar(mesh_mean, ax=axes[1], label=var)
+        axes[1].set_title(f"Mean  ({snap_time_iso})")
+        axes[1].set_xlabel("Easting (m)")
+        axes[1].set_ylabel("Northing (m)")
+
+        mesh_std = plotter.plot_spatial_snapshot(
+            ax=axes[2],
+            var=var,
+            time_idx=snap_idx,
+            center=center,
+            extent=extent,
+            resolution=resolution,
+            plot_type="std",
+        )
     plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
     axes[2].set_title("Predictive std")
     axes[2].set_xlabel("Easting (m)")

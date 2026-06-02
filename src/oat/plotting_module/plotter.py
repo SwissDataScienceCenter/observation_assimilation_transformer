@@ -172,7 +172,7 @@ class OATPlotter:
                 )
             else:
                 obs_values.append(float("nan"))
-        ax.scatter(times, obs_values, label="observation", zorder=5)
+        ax.scatter(times, obs_values, label="observation", zorder=5, c='k')
 
     def plot_spatial_snapshot(
         self,
