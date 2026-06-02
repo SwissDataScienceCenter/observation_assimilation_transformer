@@ -68,7 +68,7 @@ class OATPlotter:
             "query_data": _add_batch(query_data),
         }
 
-        batch = self.predictor._normalize_batch(batch)  # type: ignore[assignment]
+        batch = self.predictor._normalize_batch(batch)  # type: ignore[arg-type]
 
         original_n_samples = self.predictor.model.num_samples
         self.predictor.model.num_samples = self.n_samples
