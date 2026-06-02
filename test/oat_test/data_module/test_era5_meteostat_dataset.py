@@ -121,3 +121,30 @@ def test_nwp_extent(dataset):
 def test_stations_is_array(dataset):
     assert isinstance(dataset.stations, np.ndarray)
     assert len(dataset.stations) == 2
+
+
+def test_get_transform_real_returns_two_transforms(dataset):
+    post_t, out_t = dataset.get_transform(num_data_points=2, type="real")
+    from oat.data_module.transform import NestedTransform, Transform
+    assert isinstance(post_t, NestedTransform)
+    assert isinstance(out_t, Transform)
+
+
+def test_get_transform_keep_support_returns_two_transforms(dataset):
+    post_t, out_t = dataset.get_transform(num_data_points=2, type="keep_support")
+    from oat.data_module.transform import NestedTransform, Transform
+    assert isinstance(post_t, NestedTransform)
+    assert isinstance(out_t, Transform)
+
+
+def test_get_transform_keep_support_does_not_translate_wspd(dataset):
+    # wspd has lower_bound=0 and upper_bound=inf → only-scale branch → translate=0
+    _, out_t = dataset.get_transform(num_data_points=2, type="keep_support")
+    sample = dataset[0]["observation_data"]["obs"]
+    transformed = out_t(sample)
+    assert transformed.shape == sample.shape
+
+
+def test_get_transform_unknown_type_raises(dataset):
+    with pytest.raises(ValueError, match="Unsupported transform type"):
+        dataset.get_transform(num_data_points=2, type="bogus")

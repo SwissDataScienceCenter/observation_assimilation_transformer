@@ -270,9 +270,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         self.patch_grid = torch.stack([lon_off, lat_off], dim=-1)
 
     def _load_observations(self) -> None:
-        self.obs_np: np.ndarray[Any, np.dtype[np.floating[Any]]]
-        self.obs_mask_np: np.ndarray[Any, np.dtype[np.floating[Any]]]
-        self.obs_np, self.obs_mask_np = self.obs_ds.get_observations(
+        obs_arr, mask_arr = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1] + pd.Timedelta(hours=1),
             parameters=list(self.config.obs_vars),
@@ -281,8 +279,8 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             as_numpy=True,
         )
         local_indices = self.time_indices - self.time_indices[0]
-        self.obs_np = self.obs_np[local_indices]
-        self.obs_mask_np = self.obs_mask_np[local_indices]
+        self.obs_tensor = torch.from_numpy(obs_arr[local_indices])
+        self.obs_mask_tensor = torch.from_numpy(mask_arr[local_indices])
 
         meta = self.obs_ds.stations_table.loc[self.stations]
         self.station_coords = torch.tensor(
@@ -290,9 +288,13 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             dtype=dtype_map[self.config.dtype],
         )
         self.station_geo = self._get_geo(self.station_coords)
+        self.obs_ds._obs = None  # free 17.6 GB DataFrame; obs_tensor is in shared memory
 
     def _mark_shared_memory(self) -> None:
-        for attr in ("topo_field", "topo_on_nwp_grid", "station_coords", "station_geo"):
+        for attr in (
+            "topo_field", "topo_on_nwp_grid", "station_coords", "station_geo",
+            "obs_tensor", "obs_mask_tensor",
+        ):
             if hasattr(self, attr):
                 getattr(self, attr).share_memory_()
 
@@ -332,12 +334,8 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             "topo": self._extract_patches(
                 self.station_coords, self.topo_field, self.patch_grid, self.topo_extent
             ),
-            "obs": torch.from_numpy(self.obs_np[idx].copy()).to(
-                dtype_map[self.config.dtype]
-            ),
-            "mask_obs": torch.from_numpy(self.obs_mask_np[idx].copy()).to(
-                dtype_map[self.config.dtype]
-            ),
+            "obs": self.obs_tensor[idx].to(dtype_map[self.config.dtype]).nan_to_num(nan=0.0),
+            "mask_obs": self.obs_mask_tensor[idx].to(dtype_map[self.config.dtype]),
         }
 
         return {
@@ -462,44 +460,106 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
                     _gather(pre_t(self[int(idx)]), stats)
             return stats
 
-        if type != "real":
-            raise ValueError(f"Unsupported transform type: {type!r}")
-
         offset = 1e-6
-        log_indices = [
-            i
-            for i, v in enumerate(self.config.obs_vars)
-            if self.obs_var_support.lower_bounds[i] >= 0.0
-            and self.obs_var_support.upper_bounds[i] == float("inf")
-        ]
-        log_t = transform.LogTransform(
-            apply_to=log_indices, feature_dim=-1, offset=offset
-        )
-        pre_t = transform.NestedTransform({"observation_data": {"obs": log_t}})
-        stats = _collect_stats(pre_t, dataloader, num_data_points)
 
-        output_transform = transform.ComposedTransform(
-            [log_t, stats["observation_data"]["obs"].get_standard_transform()]
-        )
-        post_transform = transform.NestedTransform(
-            {
-                "observation_data": {
-                    "obs": output_transform,
-                    "topo": stats["observation_data"]["topo"].get_standard_transform(),
-                    "geo": stats["observation_data"]["geo"].get_standard_transform(),
-                },
-                "query_data": {
-                    "obs": output_transform,
-                    "topo": stats["observation_data"]["topo"].get_standard_transform(),
-                    "geo": stats["observation_data"]["geo"].get_standard_transform(),
-                },
-                "global_data": {
-                    "global_field": stats["global_data"][
-                        "global_field"
-                    ].get_standard_transform(),
-                },
-            }
-        )
+        if type == "real":
+            log_indices = [
+                i
+                for i, v in enumerate(self.config.obs_vars)
+                if self.obs_var_support.lower_bounds[i] >= 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            log_t = transform.LogTransform(
+                apply_to=log_indices, feature_dim=-1, offset=offset
+            )
+            pre_t = transform.NestedTransform({"observation_data": {"obs": log_t}})
+            stats = _collect_stats(pre_t, dataloader, num_data_points)
+
+            topo_t = stats["observation_data"]["topo"].get_standard_transform()
+            geo_t = stats["observation_data"]["geo"].get_standard_transform()
+            gf_t = stats["global_data"]["global_field"].get_standard_transform()
+            output_transform = transform.ComposedTransform(
+                [log_t, stats["observation_data"]["obs"].get_standard_transform()]
+            )
+            post_transform = transform.NestedTransform(
+                {
+                    "observation_data": {
+                        "obs": output_transform,
+                        "topo": topo_t,
+                        "geo": geo_t,
+                    },
+                    "query_data": {
+                        "obs": output_transform,
+                        "topo": topo_t,
+                        "geo": geo_t,
+                    },
+                    "global_data": {
+                        "global_field": gf_t,
+                    },
+                }
+            )
+        elif type == "keep_support":
+            # Shift strictly-positive variables away from zero before standardising
+            # so that the support constraint is preserved after the inverse transform.
+            apply_offset_vars = ["wspd", "wpgt"]
+            offset_indices = [
+                i for i, v in enumerate(self.config.obs_vars) if v in apply_offset_vars
+            ]
+            offset_arr = torch.zeros(len(list(self.config.obs_vars)))
+            offset_arr[offset_indices] = offset
+            scale_arr = torch.ones(len(list(self.config.obs_vars)))
+            offset_t = transform.TranslateScaleTransform(
+                translate=offset_arr, scale=scale_arr, channel_dim=-1
+            )
+            pre_t = transform.NestedTransform({"observation_data": {"obs": offset_t}})
+            stats = _collect_stats(pre_t, dataloader, num_data_points)
+
+            translate_arr = -stats["observation_data"]["obs"].mean.clone()
+            # Variables with zero lower bound and infinite upper bound are only
+            # scaled (not translated) to preserve their non-negativity.
+            only_scale_indices = [
+                i
+                for i in range(len(list(self.config.obs_vars)))
+                if self.obs_var_support.lower_bounds[i] == 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            translate_arr[only_scale_indices] = 0.0
+            scale_arr = 1.0 / stats["observation_data"]["obs"].std.clone()
+
+            output_transform = transform.ComposedTransform(
+                [
+                    offset_t,
+                    transform.TranslateScaleTransform(
+                        translate=translate_arr, scale=scale_arr, channel_dim=-1
+                    ),
+                ]
+            )
+            topo_t = stats["observation_data"]["topo"].get_standard_transform()
+            geo_t = stats["observation_data"]["geo"].get_standard_transform()
+            gf_t = stats["global_data"]["global_field"].get_standard_transform()
+            post_transform = transform.NestedTransform(
+                {
+                    "observation_data": {
+                        "obs": output_transform,
+                        "topo": topo_t,
+                        "geo": geo_t,
+                    },
+                    "query_data": {
+                        "obs": output_transform,
+                        "topo": topo_t,
+                        "geo": geo_t,
+                    },
+                    "global_data": {
+                        "global_field": gf_t,
+                    },
+                }
+            )
+        else:
+            raise ValueError(
+                f"Unsupported transform type: {type!r}. "
+                "Supported: 'real', 'keep_support'."
+            )
+
         return post_transform, output_transform
 
     def get_baseline_pre_transform(
