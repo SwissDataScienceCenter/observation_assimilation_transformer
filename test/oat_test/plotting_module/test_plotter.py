@@ -4,9 +4,9 @@ import pytest  # noqa: F401
 import torch
 
 matplotlib.use("Agg")
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-import matplotlib.pyplot as plt  # noqa: F401
+import matplotlib.pyplot as plt
 
 from oat.plotting_module.plotter import OATPlotter
 
@@ -72,3 +72,22 @@ def test_plotter_default_n_samples():
     predictor = _make_predictor()
     dataset = _make_dataset()
     assert OATPlotter(predictor, dataset).n_samples == 100
+
+
+def test_plot_timeseries_draws_line_and_band():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(1, 10, 2)  # [N_q=1, n_samples, n_vars]
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_timeseries(
+            ax=ax, center=(8.0, 47.0), var="temp", time_indices=[0, 1, 2, 3]
+        )
+
+    assert len(ax.lines) >= 1, "Expected at least one line (mean)"
+    assert (
+        len(ax.collections) >= 1
+    ), "Expected at least one collection (uncertainty band)"
+    plt.close(fig)

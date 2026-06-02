@@ -80,3 +80,47 @@ class OATPlotter:
         # y_hat["samples"]: [1, N_q, n_samples, n_vars]
         samples = self.predictor.output_transform.inverse(y_hat["samples"])
         return samples[0]  # [N_q, n_samples, n_vars]
+
+    def plot_timeseries(
+        self,
+        ax: Any,
+        center: tuple[float, float],
+        var: str,
+        time_indices: list[int],
+        quantile_lo: float = 0.1,
+        quantile_hi: float = 0.9,
+    ) -> None:
+        """Plot predicted distribution over time at an arbitrary location.
+
+        Draws a mean line and a shaded uncertainty band onto *ax*.
+
+        Args:
+            ax: Matplotlib Axes to draw onto.
+            center: Query location as (x, y) in the dataset's coordinate frame.
+            var: Name of the variable to plot (must be in predictor.var_to_indx).
+            time_indices: Dataset time indices to predict at.
+            quantile_lo: Lower quantile for the uncertainty band.
+            quantile_hi: Upper quantile for the uncertainty band.
+        """
+        var_idx = self.predictor.var_to_indx[var]
+        query_coords = torch.tensor([center], dtype=torch.float32)  # [1, 2]
+
+        means, lo_vals, hi_vals = [], [], []
+
+        for t_idx in time_indices:
+            samples = self._run_inference(t_idx, query_coords)  # [1, n_samples, n_vars]
+            var_samples = samples[0, :, var_idx]  # [n_samples]
+            means.append(var_samples.mean().item())
+            lo_vals.append(var_samples.quantile(quantile_lo).item())
+            hi_vals.append(var_samples.quantile(quantile_hi).item())
+
+        times = [self.dataset.times[i] for i in time_indices]
+
+        ax.plot(times, means, label="mean")
+        ax.fill_between(
+            times,
+            lo_vals,
+            hi_vals,
+            alpha=0.3,
+            label=f"[{quantile_lo:.0%}, {quantile_hi:.0%}]",
+        )
