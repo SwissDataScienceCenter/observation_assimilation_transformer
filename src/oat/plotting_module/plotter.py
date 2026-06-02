@@ -231,3 +231,42 @@ class OATPlotter:
 
         mesh = ax.pcolormesh(xs, ys, field, shading="auto")
         return mesh
+
+    def plot_spatial_snapshot_at_station(
+        self,
+        ax: Any,
+        var: str,
+        time_idx: int,
+        station_idx: int,
+        extent: float = 5.0,
+        resolution: float = 0.1,
+        plot_type: Literal["mean", "std"] = "mean",
+    ) -> Any:
+        """Plot a spatial snapshot centered on a station location.
+
+        Wraps :meth:`plot_spatial_snapshot`, resolving the grid center from
+        ``dataset.station_coords[station_idx]``.
+
+        Args:
+            ax: Matplotlib Axes to draw onto.
+            var: Variable name (must be in predictor.var_to_indx).
+            time_idx: Dataset time index to predict at.
+            station_idx: Index into ``dataset.station_coords``.
+            extent: Half-extent of the grid in coordinate units (default 5.0).
+            resolution: Grid spacing in coordinate units (default 0.1).
+            plot_type: "mean" or "std" of the predictive distribution.
+
+        Returns:
+            The QuadMesh returned by ``ax.pcolormesh``.
+        """
+        coords = self.dataset.station_coords[station_idx]
+        center = (coords[0].item(), coords[1].item())
+        return self.plot_spatial_snapshot(
+            ax,
+            var,
+            time_idx,
+            center,
+            extent=extent,
+            resolution=resolution,
+            plot_type=plot_type,
+        )

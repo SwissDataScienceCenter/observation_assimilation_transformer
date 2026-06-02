@@ -164,6 +164,33 @@ def test_plot_spatial_snapshot_invalid_plot_type():
     plt.close(fig)
 
 
+def test_plot_spatial_snapshot_at_station_delegates_to_plot_spatial_snapshot():
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    dataset.station_coords = torch.tensor(
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]]
+    )
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    sentinel = object()
+    with patch.object(plotter, "plot_spatial_snapshot", return_value=sentinel) as mock_sp:
+        result = plotter.plot_spatial_snapshot_at_station(
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            station_idx=3,
+            extent=0.4,
+            resolution=0.2,
+            plot_type="std",
+        )
+    mock_sp.assert_called_once_with(
+        ax, "temp", 0, (7.0, 8.0), extent=0.4, resolution=0.2, plot_type="std"
+    )
+    assert result is sentinel
+    plt.close(fig)
+
+
 def test_plotter_importable_from_package():
     from oat.plotting_module import OATPlotter as _OATPlotter
 
