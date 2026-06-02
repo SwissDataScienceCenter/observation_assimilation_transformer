@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
 import torch
 
 if TYPE_CHECKING:
@@ -124,3 +125,61 @@ class OATPlotter:
             alpha=0.3,
             label=f"[{quantile_lo:.0%}, {quantile_hi:.0%}]",
         )
+
+    def plot_spatial_snapshot(
+        self,
+        ax: Any,
+        var: str,
+        time_idx: int,
+        center: tuple[float, float],
+        extent: float = 5.0,
+        resolution: float = 0.1,
+        plot_type: Literal["mean", "std"] = "mean",
+    ) -> Any:
+        """Plot a spatial field at a single timestep.
+
+        Creates a regular grid centered at *center*, runs inference on every
+        grid cell, and renders a pcolormesh of either the predictive mean or
+        std for *var* onto *ax*.
+
+        Args:
+            ax: Matplotlib Axes to draw onto.
+            var: Variable name (must be in predictor.var_to_indx).
+            time_idx: Dataset time index to predict at.
+            center: Grid center as (x, y) in the dataset's coordinate frame.
+            extent: Half-extent of the grid in coordinate units (default 5.0).
+            resolution: Grid spacing in coordinate units (default 0.1).
+            plot_type: "mean" or "std" of the predictive distribution.
+
+        Returns:
+            The QuadMesh returned by ``ax.pcolormesh``.
+
+        Raises:
+            ValueError: If plot_type is not "mean" or "std".
+        """
+        if plot_type not in ("mean", "std"):
+            raise ValueError(f"plot_type must be 'mean' or 'std', got {plot_type!r}.")
+
+        var_idx = self.predictor.var_to_indx[var]
+
+        xs = np.arange(center[0] - extent, center[0] + extent + 1e-9, resolution)
+        ys = np.arange(center[1] - extent, center[1] + extent + 1e-9, resolution)
+        x_grid, y_grid = np.meshgrid(xs, ys)
+        query_coords = torch.tensor(
+            np.stack([x_grid.ravel(), y_grid.ravel()], axis=1),
+            dtype=torch.float32,
+        )  # [N_q, 2]
+
+        # [N_q, n_samples, n_vars]
+        samples = self._run_inference(time_idx, query_coords)
+        var_samples = samples[:, :, var_idx]  # [N_q, n_samples]
+
+        if plot_type == "mean":
+            field = var_samples.mean(dim=1).numpy()
+        else:
+            field = var_samples.std(dim=1).numpy()
+
+        field = field.reshape(y_grid.shape)
+
+        mesh = ax.pcolormesh(xs, ys, field, shading="auto")
+        return mesh

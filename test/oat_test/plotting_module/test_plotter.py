@@ -1,6 +1,6 @@
 import matplotlib
 import pandas as pd
-import pytest  # noqa: F401
+import pytest
 import torch
 
 matplotlib.use("Agg")
@@ -90,4 +90,73 @@ def test_plot_timeseries_draws_line_and_band():
     assert (
         len(ax.collections) >= 1
     ), "Expected at least one collection (uncertainty band)"
+    plt.close(fig)
+
+
+def _spatial_plotter(extent=0.4, resolution=0.2):
+    """Returns a plotter where _run_inference is patched to the right N_q."""
+    # With extent=0.4, resolution=0.2:
+    #   axis0: center-0.4 … center+0.4, step 0.2  → 5 values
+    #   axis1: center-0.4 … center+0.4, step 0.2  → 5 values  → N_q = 25
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset()
+    return OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+
+def test_plot_spatial_snapshot_returns_quadmesh():
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+
+    # 5 x 5 = 25 query points, 2 vars
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="mean",
+        )
+
+    assert mesh is not None
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_std():
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax,
+            var="wspd",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="std",
+        )
+
+    assert mesh is not None
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_invalid_plot_type():
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        with pytest.raises(ValueError, match="plot_type"):
+            plotter.plot_spatial_snapshot(
+                ax=ax,
+                var="temp",
+                time_idx=0,
+                center=(8.0, 47.0),
+                extent=0.4,
+                resolution=0.2,
+                plot_type="median",  # invalid
+            )
     plt.close(fig)
