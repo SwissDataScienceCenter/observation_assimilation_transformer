@@ -1,10 +1,12 @@
-import pytest
-import torch
-import pandas as pd
 import matplotlib
+import pandas as pd
+import pytest  # noqa: F401
+import torch
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from unittest.mock import MagicMock
+
+import matplotlib.pyplot as plt  # noqa: F401
 
 from oat.plotting_module.plotter import OATPlotter
 
@@ -51,7 +53,9 @@ def test_run_inference_returns_correct_shape():
     predictor = _make_predictor(N_q=N_q, n_samples=n_samples, n_vars=n_vars)
     dataset = _make_dataset()
 
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples
+    )
     query_coords = torch.zeros(N_q, 2)
     samples = plotter._run_inference(time_idx=0, query_coords=query_coords)
 

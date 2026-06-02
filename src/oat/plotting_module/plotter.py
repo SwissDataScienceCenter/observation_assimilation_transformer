@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
-import numpy as np
 
 if TYPE_CHECKING:
     from oat.predictor_module.oat_predictor import OATPredictor
@@ -26,7 +26,7 @@ class OATPlotter:
 
     def __init__(
         self,
-        predictor: "OATPredictor",
+        predictor: OATPredictor,
         dataset,
         obs_station_indices: Sequence[int] | None = None,
         n_samples: int = 100,
@@ -41,9 +41,7 @@ class OATPlotter:
         self.n_samples = n_samples
         self.device = torch.device(device)
 
-    def _run_inference(
-        self, time_idx: int, query_coords: torch.Tensor
-    ) -> torch.Tensor:
+    def _run_inference(self, time_idx: int, query_coords: torch.Tensor) -> torch.Tensor:
         """Run one forward pass and return unnormalized samples.
 
         Args:
