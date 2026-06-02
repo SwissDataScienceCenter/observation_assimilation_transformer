@@ -70,6 +70,7 @@ class OATPlotter:
 
         batch = self.predictor._normalize_batch(batch)  # type: ignore[arg-type]
 
+        # OATPredictor.forward() doesn't expose num_samples; mutate and restore.
         original_n_samples = self.predictor.model.num_samples
         self.predictor.model.num_samples = self.n_samples
         try:
