@@ -36,7 +36,8 @@ def _parse_args() -> argparse.Namespace:
         description="OATPlotter diagnostic: info mode when only checkpoint is given."
     )
     p.add_argument("checkpoint", help="Path to .ckpt file")
-    p.add_argument(
+    loc_group = p.add_mutually_exclusive_group()
+    loc_group.add_argument(
         "--center",
         nargs=2,
         type=float,
@@ -44,6 +45,14 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Centre position in Swiss LV95 metres (easting northing). "
         f"Default: Bern {_BERN_LV95}",
+    )
+    loc_group.add_argument(
+        "--station",
+        type=int,
+        default=None,
+        metavar="IDX",
+        help="Station index (see info mode for eligible stations). "
+        "Sets the plot centre to the station's coordinates.",
     )
     p.add_argument(
         "--time",
@@ -101,7 +110,12 @@ def _print_info(ckpt_path: str, predictor, dataset) -> None:
         f"  ({len(dataset)} timesteps)"
     )
     print(f"NWP extent : E {e_min:.0f}–{e_max:.0f} m  N {n_min:.0f}–{n_max:.0f} m")
-    print(f"Stations   : {len(dataset.station_coords)}")
+    n_stations = dataset.station_coords.shape[0]
+    print(f"Stations   : {n_stations}  (use --station <idx> to select one)")
+    names = dataset.station_names if hasattr(dataset, "station_names") else [str(i) for i in range(n_stations)]
+    for i, (name, coords) in enumerate(zip(names, dataset.station_coords)):
+        e, n = coords[0].item(), coords[1].item()
+        print(f"  [{i:>4d}] {name:<12s}  E={e:.0f}  N={n:.0f}")
 
 
 def main() -> None:
@@ -112,7 +126,7 @@ def main() -> None:
 
     info_mode = all(
         v is None
-        for v in [args.center, args.time, args.hours, args.extent, args.resolution, args.var]
+        for v in [args.center, args.station, args.time, args.hours, args.extent, args.resolution, args.var]
     )
 
     predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint)
@@ -127,7 +141,16 @@ def main() -> None:
 
     # Apply defaults for plotting path
     var: str = args.var if args.var is not None else next(iter(predictor.var_to_indx))
-    center: tuple[float, float] = tuple(args.center) if args.center is not None else _BERN_LV95
+    if args.station is not None:
+        n_stations = dataset.station_coords.shape[0]
+        if not 0 <= args.station < n_stations:
+            raise SystemExit(f"--station {args.station} out of range (0–{n_stations - 1})")
+        coords = dataset.station_coords[args.station]
+        center: tuple[float, float] = (coords[0].item(), coords[1].item())
+        station_label = dataset.station_names[args.station] if hasattr(dataset, "station_names") else str(args.station)
+        logger.info("Station %d (%s): E=%.0f N=%.0f", args.station, station_label, *center)
+    else:
+        center = tuple(args.center) if args.center is not None else _BERN_LV95
     hours: int = args.hours if args.hours is not None else 24
     extent: float = args.extent if args.extent is not None else 50_000.0
     resolution: float = args.resolution if args.resolution is not None else 1_000.0
