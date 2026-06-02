@@ -18,7 +18,7 @@ class MeteostatObservations:
         obs["time"] = pd.to_datetime(obs["time"], utc=True)
         obs["station"] = obs["station"].astype(str)
         obs = obs[obs["station"].isin(set(self.stations_table.index))]
-        self._obs: pd.DataFrame = obs.set_index(["time", "station"]).sort_index()
+        self._obs: pd.DataFrame | None = obs.set_index(["time", "station"]).sort_index()
 
     @property
     def stations(self) -> np.ndarray:
@@ -35,6 +35,11 @@ class MeteostatObservations:
         return_mask: bool = True,
         as_numpy: bool = True,
     ) -> tuple[np.ndarray, np.ndarray] | np.ndarray:
+        if self._obs is None:
+            raise RuntimeError(
+                "Observation DataFrame has been freed to reduce memory. "
+                "Create a fresh MeteostatObservations object to access raw observations."
+            )
         if not as_numpy:
             raise NotImplementedError("Only as_numpy=True is supported.")
 
