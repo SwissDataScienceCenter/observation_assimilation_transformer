@@ -174,7 +174,9 @@ def test_plot_spatial_snapshot_at_station_delegates_to_plot_spatial_snapshot():
 
     fig, ax = plt.subplots()
     sentinel = object()
-    with patch.object(plotter, "plot_spatial_snapshot", return_value=sentinel) as mock_sp:
+    with patch.object(
+        plotter, "plot_spatial_snapshot", return_value=sentinel
+    ) as mock_sp:
         result = plotter.plot_spatial_snapshot_at_station(
             ax=ax,
             var="temp",
