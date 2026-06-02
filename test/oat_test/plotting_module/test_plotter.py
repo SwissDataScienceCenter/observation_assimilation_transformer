@@ -1,3 +1,5 @@
+import math
+
 import matplotlib
 import pandas as pd
 import pytest
@@ -229,7 +231,6 @@ def test_plot_timeseries_at_station_masks_missing_observations():
 
     # Retrieve the y-data of the scatter
     scatter_ys = list(ax.collections[0].get_offsets()[:, 1])
-    import math
     assert math.isnan(scatter_ys[1]), "Missing observation at t=1 should be NaN"
     assert math.isnan(scatter_ys[3]), "Missing observation at t=3 should be NaN"
     assert not math.isnan(scatter_ys[0])

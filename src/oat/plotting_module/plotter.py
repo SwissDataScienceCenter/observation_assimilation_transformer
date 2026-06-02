@@ -152,7 +152,14 @@ class OATPlotter:
         """
         coords = self.dataset.station_coords[station_idx]
         center = (coords[0].item(), coords[1].item())
-        self.plot_timeseries(ax, center, var, time_indices, quantile_lo=quantile_lo, quantile_hi=quantile_hi)
+        self.plot_timeseries(
+            ax,
+            center,
+            var,
+            time_indices,
+            quantile_lo=quantile_lo,
+            quantile_hi=quantile_hi,
+        )
 
         var_idx = self.predictor.var_to_indx[var]
         times = [self.dataset.times[i] for i in time_indices]
@@ -160,7 +167,9 @@ class OATPlotter:
         for t_idx in time_indices:
             mask = self.dataset.obs_mask_tensor[t_idx, station_idx, var_idx].item()
             if mask:
-                obs_values.append(self.dataset.obs_tensor[t_idx, station_idx, var_idx].item())
+                obs_values.append(
+                    self.dataset.obs_tensor[t_idx, station_idx, var_idx].item()
+                )
             else:
                 obs_values.append(float("nan"))
         ax.scatter(times, obs_values, label="observation", zorder=5)
