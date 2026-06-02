@@ -162,14 +162,12 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         
     def _mark_shared_memory(self) -> None:
         """Mark tensors for sharing across workers"""
-        if hasattr(self, 'topo_field'):
-            self.topo_field.share_memory_()
-        if hasattr(self, 'topo_on_nwp_grid'):
-            self.topo_on_nwp_grid.share_memory_()
-        if hasattr(self, 'station_coords'):
-            self.station_coords.share_memory_()
-        if hasattr(self, 'station_geo'):
-            self.station_geo.share_memory_()
+        for attr in (
+            "topo_field", "topo_on_nwp_grid", "station_coords", "station_geo",
+            "obs_tensor", "obs_mask_tensor",
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).share_memory_()
         
     def _load_datasets(self) -> None:
         """Load NWP, topography, and station data"""
@@ -399,7 +397,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                 "times available (self.times is empty). Ensure times are set "
                 "before loading observations."
             )
-        self.obs_np, self.obs_mask_np = self.obs_ds.get_observations(
+        obs_arr, mask_arr = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1] + pd.Timedelta(hours=1),  # Include last time
             parameters=self.config.obs_vars,
@@ -410,8 +408,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         # Align with filtered times: convert absolute NWP positions to local offsets
         # from the fetched obs array (which starts at self.times[0]).
         local_indices = self.time_indices - self.time_indices[0]
-        self.obs_np = self.obs_np[local_indices]
-        self.obs_mask_np = self.obs_mask_np[local_indices]
+        self.obs_tensor = torch.from_numpy(obs_arr[local_indices])
+        self.obs_mask_tensor = torch.from_numpy(mask_arr[local_indices])
         
         # Station metadata
         self.station_coords = torch.tensor(
@@ -471,8 +469,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         if self.config.use_time_embedding:
             global_data['time_emb'] = self._get_time_embedding(time)
             
-        obs_values = self.obs_np[idx]       # (N_stations, C_obs)
-        obs_mask = self.obs_mask_np[idx]    # (N_stations, C_obs)
+        obs_values = self.obs_tensor[idx]       # (N_stations, C_obs)
+        obs_mask = self.obs_mask_tensor[idx]    # (N_stations, C_obs)
 
         topo_field = self.topo_field  # No loading, no conversion
         topo_patches = self._extract_patches(
@@ -486,8 +484,8 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
             'coords': self.station_coords,
             'geo': self.station_geo,
             'topo': topo_patches,
-            'obs': torch.from_numpy(obs_values.copy()).to(dtype_map[self.config.dtype]),
-            'mask_obs': torch.from_numpy(obs_mask.copy()).to(dtype_map[self.config.dtype]),
+            'obs': obs_values.to(dtype_map[self.config.dtype]).nan_to_num(nan=0.0),
+            'mask_obs': obs_mask.to(dtype_map[self.config.dtype]),
         }
         
         return {
