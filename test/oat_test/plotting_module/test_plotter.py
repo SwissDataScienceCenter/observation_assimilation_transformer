@@ -160,3 +160,9 @@ def test_plot_spatial_snapshot_invalid_plot_type():
                 plot_type="median",  # invalid
             )
     plt.close(fig)
+
+
+def test_plotter_importable_from_package():
+    from oat.plotting_module import OATPlotter as _OATPlotter
+
+    assert _OATPlotter is OATPlotter
