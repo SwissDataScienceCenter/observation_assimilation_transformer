@@ -188,7 +188,13 @@ def test_plot_spatial_snapshot_at_station_delegates_to_plot_spatial_snapshot():
             plot_type="std",
         )
     mock_sp.assert_called_once_with(
-        ax, "temp", 0, (7.0, 8.0), extent=0.4, resolution=0.2, plot_type="std",
+        ax,
+        "temp",
+        0,
+        (7.0, 8.0),
+        extent=0.4,
+        resolution=0.2,
+        plot_type="std",
         show_stations=True,
     )
     assert result is sentinel
@@ -273,7 +279,11 @@ def test_plot_timeseries_at_station_masks_missing_observations():
 
 
 def _path_collections(ax):
-    return [c for c in ax.collections if isinstance(c, matplotlib.collections.PathCollection)]
+    return [
+        c
+        for c in ax.collections
+        if isinstance(c, matplotlib.collections.PathCollection)
+    ]
 
 
 def test_plot_spatial_snapshot_stations_default():
@@ -283,8 +293,12 @@ def test_plot_spatial_snapshot_stations_default():
     fixed_samples = torch.randn(25, 10, 2)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
-            extent=0.4, resolution=0.2,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
         )
     # 2 station groups (observed circles, not-observed squares) + 1 POI marker
     assert len(_path_collections(ax)) == 3, "Expected two station groups + POI"
@@ -298,8 +312,13 @@ def test_plot_spatial_snapshot_no_stations():
     fixed_samples = torch.randn(25, 10, 2)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
-            extent=0.4, resolution=0.2, show_stations=False,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            show_stations=False,
         )
     assert len(_path_collections(ax)) == 0
     plt.close(fig)
@@ -323,8 +342,12 @@ def test_plot_spatial_snapshot_stations_observed_vs_not():
     fixed_samples = torch.randn(25, 10, 2)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0),
-            extent=0.4, resolution=0.2,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(0.0, 0.0),
+            extent=0.4,
+            resolution=0.2,
         )
 
     pcs = _path_collections(ax)
@@ -333,7 +356,9 @@ def test_plot_spatial_snapshot_stations_observed_vs_not():
     assert len(station_pcs) == 2
     observed_pc, not_observed_pc = station_pcs
     assert len(observed_pc.get_offsets()) == 2, "Stations 0 and 2 should be observed"
-    assert len(not_observed_pc.get_offsets()) == 3, "Stations 1, 3, 4 should be not observed"
+    assert (
+        len(not_observed_pc.get_offsets()) == 3
+    ), "Stations 1, 3, 4 should be not observed"
     plt.close(fig)
 
 
@@ -346,7 +371,12 @@ def test_plot_spatial_snapshot_sets_axis_limits():
     extent = 0.4
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=center, extent=extent, resolution=0.2,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=center,
+            extent=extent,
+            resolution=0.2,
         )
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
@@ -364,8 +394,12 @@ def test_plot_spatial_snapshot_legend_shown():
     fixed_samples = torch.randn(25, 10, 2)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
-            extent=0.4, resolution=0.2,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
         )
     assert ax.get_legend() is not None
     plt.close(fig)
@@ -385,8 +419,13 @@ def test_plot_spatial_snapshot_observed_colored_in_mean_mode():
     fixed_samples = torch.randn(25, 10, 2)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
         plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0),
-            extent=0.4, resolution=0.2, plot_type="mean",
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(0.0, 0.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="mean",
         )
 
     observed_pc = _path_collections(ax)[0]
@@ -394,7 +433,9 @@ def test_plot_spatial_snapshot_observed_colored_in_mean_mode():
     # With obs values [5.0, 0.0, 0.0] and a non-trivial field, colors should not all be identical
     assert facecolors.shape[0] == 3, "Three observed stations"
     # Stations have different obs values so their RGBA should differ
-    assert not (facecolors[0] == facecolors[1]).all(), "Different obs values → different colors"
+    assert not (
+        facecolors[0] == facecolors[1]
+    ).all(), "Different obs values → different colors"
     plt.close(fig)
 
 
@@ -422,7 +463,9 @@ def test_plot_spatial_snapshot_eval_all_observed():
     )
     fig, ax = plt.subplots()
     with patch.object(plotter, "_run_inference", return_value=torch.zeros(25, 10, 2)):
-        plotter.plot_spatial_snapshot(ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2)
+        plotter.plot_spatial_snapshot(
+            ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2
+        )
     pcs = _path_collections(ax)
     # Collect groups by non-zero point count (skip POI which is 1 point at center)
     station_counts = sorted(
@@ -444,12 +487,16 @@ def test_plot_spatial_snapshot_eval_with_missing_obs():
     )
     fig, ax = plt.subplots()
     with patch.object(plotter, "_run_inference", return_value=torch.zeros(25, 10, 2)):
-        plotter.plot_spatial_snapshot(ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2)
+        plotter.plot_spatial_snapshot(
+            ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2
+        )
     pcs = _path_collections(ax)
     # Filter out POI (zorder=6); station groups use zorder=5
-    station_counts = sorted(
-        len(pc.get_offsets()) for pc in pcs if pc.get_zorder() < 6
-    )
+    station_counts = sorted(len(pc.get_offsets()) for pc in pcs if pc.get_zorder() < 6)
     # 2 colored circles (obs 0,2) + 1 white circle (missing obs 1) + 2 eval squares (3,4)
-    assert station_counts == [1, 2, 2], "1 missing-obs circle + 2 obs circles + 2 eval squares"
+    assert station_counts == [
+        1,
+        2,
+        2,
+    ], "1 missing-obs circle + 2 obs circles + 2 eval squares"
     plt.close(fig)
