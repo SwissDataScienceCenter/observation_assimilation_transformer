@@ -393,3 +393,17 @@ def test_plot_spatial_snapshot_observed_colored_in_mean_mode():
     # Stations have different obs values so their RGBA should differ
     assert not (facecolors[0] == facecolors[1]).all(), "Different obs values → different colors"
     plt.close(fig)
+
+
+def test_plotter_stores_eval_indices():
+    plotter = OATPlotter(
+        predictor=_make_predictor(),
+        dataset=_make_dataset(),
+        eval_indices=[3, 4],
+    )
+    assert plotter.eval_indices == [3, 4]
+
+
+def test_plotter_default_eval_indices_empty():
+    plotter = OATPlotter(predictor=_make_predictor(), dataset=_make_dataset())
+    assert plotter.eval_indices == []

@@ -20,6 +20,9 @@ class OATPlotter:
         obs_station_indices: Station indices (into dataset.stations) used as
             observation context for every forward pass. If None, all stations
             in the dataset are used.
+        eval_indices: Station indices shown as evaluation targets (squares) in
+            the spatial plot. If None, falls back to current behaviour (all
+            stations not in obs_station_indices are shown as squares).
         n_samples: Number of samples drawn from the predictive distribution
             for every plot. Default 100.
         device: Torch device for inference (e.g. "cpu", "cuda").
@@ -30,6 +33,7 @@ class OATPlotter:
         predictor: OATPredictor,
         dataset: Any,
         obs_station_indices: Sequence[int] | None = None,
+        eval_indices: Sequence[int] | None = None,
         n_samples: int = 100,
         device: str = "cpu",
     ) -> None:
@@ -39,6 +43,7 @@ class OATPlotter:
             self.obs_indices: list[int] = list(range(dataset.station_coords.shape[0]))
         else:
             self.obs_indices = list(obs_station_indices)
+        self.eval_indices: list[int] = list(eval_indices) if eval_indices is not None else []
         self.n_samples = n_samples
         self.device = torch.device(device)
 
