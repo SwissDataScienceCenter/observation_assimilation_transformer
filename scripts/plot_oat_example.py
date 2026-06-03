@@ -157,6 +157,7 @@ def main() -> None:
             args.extent,
             args.resolution,
             args.var,
+            args.split,
         ]
     )
 

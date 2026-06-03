@@ -284,15 +284,16 @@ class OATPlotter:
             else:
                 obs_colors = "white"
 
-            ax.scatter(
-                obs_x,
-                obs_y,
-                marker="o",
-                c=obs_colors,
-                edgecolors="black",
-                zorder=5,
-                label="observed",
-            )
+            if obs_x:
+                ax.scatter(
+                    obs_x,
+                    obs_y,
+                    marker="o",
+                    c=obs_colors,
+                    edgecolors="black",
+                    zorder=5,
+                    label="observed",
+                )
             if missing_obs_x:
                 ax.scatter(
                     missing_obs_x,
@@ -304,15 +305,16 @@ class OATPlotter:
                     label="missing",
                 )
             sq_label = "eval" if eval_set else "not observed"
-            ax.scatter(
-                sq_x,
-                sq_y,
-                marker="s",
-                facecolors="white",
-                edgecolors="black",
-                zorder=5,
-                label=sq_label,
-            )
+            if sq_x:
+                ax.scatter(
+                    sq_x,
+                    sq_y,
+                    marker="s",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label=sq_label,
+                )
             ax.legend()
             ax.scatter(
                 center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"

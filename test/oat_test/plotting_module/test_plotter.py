@@ -221,7 +221,7 @@ def test_plot_timeseries_at_station_delegates_to_plot_timeseries():
             ax=ax, station_idx=2, var="temp", time_indices=[0, 1]
         )
     mock_ts.assert_called_once_with(
-        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.1, quantile_hi=0.9
+        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.05, quantile_hi=0.95
     )
     plt.close(fig)
 
