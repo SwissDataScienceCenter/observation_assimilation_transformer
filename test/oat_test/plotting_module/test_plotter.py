@@ -430,7 +430,8 @@ def test_plot_spatial_snapshot_observed_colored_in_mean_mode():
 
     observed_pc = _path_collections(ax)[0]
     facecolors = observed_pc.get_facecolor()
-    # With obs values [5.0, 0.0, 0.0] and a non-trivial field, colors should not all be identical
+    # With obs values [5.0, 0.0, 0.0] and a non-trivial field, colors should not all
+    # be identical
     assert facecolors.shape[0] == 3, "Three observed stations"
     # Stations have different obs values so their RGBA should differ
     assert not (
@@ -454,7 +455,9 @@ def test_plotter_default_eval_indices_empty():
 
 
 def test_plot_spatial_snapshot_eval_all_observed():
-    """eval_indices mode, all obs have mask: 2 station groups (colored circles + eval squares)."""
+    """eval_indices mode, all obs have mask: 2 station groups
+    (colored circles + eval squares).
+    """
     plotter = OATPlotter(
         predictor=_make_predictor(N_q=25, n_samples=10),
         dataset=_make_dataset(),  # all masks = 1
@@ -493,7 +496,8 @@ def test_plot_spatial_snapshot_eval_with_missing_obs():
     pcs = _path_collections(ax)
     # Filter out POI (zorder=6); station groups use zorder=5
     station_counts = sorted(len(pc.get_offsets()) for pc in pcs if pc.get_zorder() < 6)
-    # 2 colored circles (obs 0,2) + 1 white circle (missing obs 1) + 2 eval squares (3,4)
+    # 2 colored circles (obs 0,2) + 1 white circle (missing obs 1)
+    # + 2 eval squares (3,4)
     assert station_counts == [
         1,
         2,
