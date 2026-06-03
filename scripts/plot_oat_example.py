@@ -85,6 +85,13 @@ def _parse_args() -> argparse.Namespace:
         help="Variable to plot. Default: first variable in predictor.",
     )
     p.add_argument(
+        "--n-samples",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Number of samples drawn from the predictive distribution (default: 200).",
+    )
+    p.add_argument(
         "--out",
         default=None,
         help="Path to output figure. Default: data/figures/<checkpoint_folder>_<var>_<time>.png",
@@ -133,7 +140,7 @@ def main() -> None:
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
-    dataset, num_train, *_ = setup_data_and_transform(cfg, logger)
+    dataset, num_train, _, val_loader, *_  = setup_data_and_transform(cfg, logger)
 
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
@@ -158,7 +165,7 @@ def main() -> None:
     if args.time is not None:
         snap_idx = _resolve_time_idx(dataset, args.time)
     else:
-        snap_idx = num_train
+        snap_idx = val_loader.dataset.indices[0] if hasattr(val_loader.dataset, "indices") else 0
 
     time_indices = list(range(snap_idx, snap_idx + hours))
     snap_time_iso = dataset.times[snap_idx].strftime("%Y-%m-%dT%H")
@@ -171,7 +178,7 @@ def main() -> None:
         hours,
     )
 
-    plotter = OATPlotter(predictor=predictor, dataset=dataset, n_samples=50, device="cpu")
+    plotter = OATPlotter(predictor=predictor, dataset=dataset, n_samples=args.n_samples, device="cpu")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))

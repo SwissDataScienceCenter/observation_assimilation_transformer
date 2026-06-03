@@ -1,6 +1,7 @@
 import math
 
 import matplotlib
+import matplotlib.collections
 import pandas as pd
 import pytest
 import torch
@@ -187,7 +188,8 @@ def test_plot_spatial_snapshot_at_station_delegates_to_plot_spatial_snapshot():
             plot_type="std",
         )
     mock_sp.assert_called_once_with(
-        ax, "temp", 0, (7.0, 8.0), extent=0.4, resolution=0.2, plot_type="std"
+        ax, "temp", 0, (7.0, 8.0), extent=0.4, resolution=0.2, plot_type="std",
+        show_stations=True,
     )
     assert result is sentinel
     plt.close(fig)
@@ -264,4 +266,130 @@ def test_plot_timeseries_at_station_masks_missing_observations():
     assert math.isnan(scatter_ys[3]), "Missing observation at t=3 should be NaN"
     assert not math.isnan(scatter_ys[0])
     assert not math.isnan(scatter_ys[2])
+    plt.close(fig)
+
+
+# --- station overlay tests ---
+
+
+def _path_collections(ax):
+    return [c for c in ax.collections if isinstance(c, matplotlib.collections.PathCollection)]
+
+
+def test_plot_spatial_snapshot_stations_default():
+    """show_stations=True (default) adds two PathCollections to the axes."""
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
+            extent=0.4, resolution=0.2,
+        )
+    assert len(_path_collections(ax)) == 2, "Expected one scatter per group (observed, not observed)"
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_no_stations():
+    """show_stations=False leaves no PathCollection on the axes."""
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
+            extent=0.4, resolution=0.2, show_stations=False,
+        )
+    assert len(_path_collections(ax)) == 0
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_stations_observed_vs_not():
+    """Correct station counts in each group.
+
+    obs_station_indices=[0, 1, 2], n_stations=5.
+    At time_idx=0, var='temp' (idx 0): station 1 mask=0 → not observed.
+    Expected: observed={0, 2} (2 pts), not_observed={1, 3, 4} (3 pts).
+    """
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4, n_vars=2)
+    # Mark station 1 as missing at time 0, var 0
+    dataset.obs_mask_tensor = torch.ones(4, 5, 2)
+    dataset.obs_mask_tensor[0, 1, 0] = 0.0
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0),
+            extent=0.4, resolution=0.2,
+        )
+
+    pcs = _path_collections(ax)
+    assert len(pcs) == 2
+    observed_pc, not_observed_pc = pcs
+    assert len(observed_pc.get_offsets()) == 2, "Stations 0 and 2 should be observed"
+    assert len(not_observed_pc.get_offsets()) == 3, "Stations 1, 3, 4 should be not observed"
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_sets_axis_limits():
+    """Axis limits are clamped to the grid extent after plotting."""
+    plotter = _spatial_plotter(extent=0.4, resolution=0.2)
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    center = (8.0, 47.0)
+    extent = 0.4
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=center, extent=extent, resolution=0.2,
+        )
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    assert abs(xlim[0] - (center[0] - extent)) < 1e-6
+    assert abs(xlim[1] - (center[0] + extent)) < 1e-6
+    assert abs(ylim[0] - (center[1] - extent)) < 1e-6
+    assert abs(ylim[1] - (center[1] + extent)) < 1e-6
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_legend_shown():
+    """A legend is added when show_stations=True."""
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
+            extent=0.4, resolution=0.2,
+        )
+    assert ax.get_legend() is not None
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_observed_colored_in_mean_mode():
+    """Observed station markers are colored by obs value (not white) in mean mode."""
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(n_stations=3, n_times=4, n_vars=2)
+    # Give obs_tensor a non-zero value so the color is distinguishable
+    dataset.obs_tensor = torch.zeros(4, 3, 2)
+    dataset.obs_tensor[0, 0, 0] = 5.0
+    dataset.obs_mask_tensor = torch.ones(4, 3, 2)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0),
+            extent=0.4, resolution=0.2, plot_type="mean",
+        )
+
+    observed_pc = _path_collections(ax)[0]
+    facecolors = observed_pc.get_facecolor()
+    # With obs values [5.0, 0.0, 0.0] and a non-trivial field, colors should not all be identical
+    assert facecolors.shape[0] == 3, "Three observed stations"
+    # Stations have different obs values so their RGBA should differ
+    assert not (facecolors[0] == facecolors[1]).all(), "Different obs values → different colors"
     plt.close(fig)

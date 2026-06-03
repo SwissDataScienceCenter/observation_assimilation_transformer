@@ -89,8 +89,8 @@ class OATPlotter:
         center: tuple[float, float],
         var: str,
         time_indices: list[int],
-        quantile_lo: float = 0.1,
-        quantile_hi: float = 0.9,
+        quantile_lo: float = 0.05,
+        quantile_hi: float = 0.95,
     ) -> None:
         """Plot predicted distribution over time at an arbitrary location.
 
@@ -107,18 +107,19 @@ class OATPlotter:
         var_idx = self.predictor.var_to_indx[var]
         query_coords = torch.tensor([center], dtype=torch.float32)  # [1, 2]
 
-        means, lo_vals, hi_vals = [], [], []
+        medians, lo_vals, hi_vals = [], [], []
 
         for t_idx in time_indices:
             samples = self._run_inference(t_idx, query_coords)  # [1, n_samples, n_vars]
             var_samples = samples[0, :, var_idx]  # [n_samples]
-            means.append(var_samples.mean().item())
+            medians.append(var_samples.median().item())
+            std = var_samples.std().item()
             lo_vals.append(var_samples.quantile(quantile_lo).item())
             hi_vals.append(var_samples.quantile(quantile_hi).item())
 
         times = [self.dataset.times[i] for i in time_indices]
 
-        ax.plot(times, means, label="mean")
+        ax.plot(times, medians, label="median")
         ax.fill_between(
             times,
             lo_vals,
@@ -133,8 +134,8 @@ class OATPlotter:
         station_idx: int,
         var: str,
         time_indices: list[int],
-        quantile_lo: float = 0.1,
-        quantile_hi: float = 0.9,
+        quantile_lo: float = 0.05,
+        quantile_hi: float = 0.95,
     ) -> None:
         """Plot predicted timeseries at a station location, with observed values.
 
@@ -183,6 +184,7 @@ class OATPlotter:
         extent: float = 5.0,
         resolution: float = 0.1,
         plot_type: Literal["mean", "std"] = "mean",
+        show_stations: bool = True,
     ) -> Any:
         """Plot a spatial field at a single timestep.
 
@@ -198,6 +200,9 @@ class OATPlotter:
             extent: Half-extent of the grid in coordinate units (default 5.0).
             resolution: Grid spacing in coordinate units (default 0.1).
             plot_type: "mean" or "std" of the predictive distribution.
+            show_stations: If True, overlay all dataset stations as scatter
+                markers, distinguishing observed (in context, mask==1) from
+                not observed.
 
         Returns:
             The QuadMesh returned by ``ax.pcolormesh``.
@@ -230,6 +235,45 @@ class OATPlotter:
         field = field.reshape(y_grid.shape)
 
         mesh = ax.pcolormesh(xs, ys, field, shading="auto")
+
+        ax.set_xlim(center[0] - extent, center[0] + extent)
+        ax.set_ylim(center[1] - extent, center[1] + extent)
+
+        if show_stations:
+            obs_set = set(self.obs_indices)
+            n_st = self.dataset.station_coords.shape[0]
+            obs_x, obs_y, obs_vals = [], [], []
+            unobs_x, unobs_y = [], []
+            for s in range(n_st):
+                sx = self.dataset.station_coords[s, 0].item()
+                sy = self.dataset.station_coords[s, 1].item()
+                mask_val = self.dataset.obs_mask_tensor[time_idx, s, var_idx].item()
+                if s in obs_set and mask_val:
+                    obs_x.append(sx)
+                    obs_y.append(sy)
+                    obs_vals.append(
+                        self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                    )
+                else:
+                    unobs_x.append(sx)
+                    unobs_y.append(sy)
+
+            if plot_type == "mean" and obs_vals:
+                obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))  # [N, 4] RGBA
+            else:
+                obs_colors = "white"
+
+            ax.scatter(
+                obs_x, obs_y, marker="o", c=obs_colors,
+                edgecolors="black", zorder=5, label="observed",
+            )
+            ax.scatter(
+                unobs_x, unobs_y, marker="s", facecolors="white",
+                edgecolors="black", zorder=5, label="not observed",
+            )
+            ax.legend()
+            ax.scatter(center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI")
+
         return mesh
 
     def plot_spatial_snapshot_at_station(
@@ -241,6 +285,7 @@ class OATPlotter:
         extent: float = 5.0,
         resolution: float = 0.1,
         plot_type: Literal["mean", "std"] = "mean",
+        show_stations: bool = True,
     ) -> Any:
         """Plot a spatial snapshot centered on a station location.
 
@@ -255,6 +300,7 @@ class OATPlotter:
             extent: Half-extent of the grid in coordinate units (default 5.0).
             resolution: Grid spacing in coordinate units (default 0.1).
             plot_type: "mean" or "std" of the predictive distribution.
+            show_stations: Passed through to :meth:`plot_spatial_snapshot`.
 
         Returns:
             The QuadMesh returned by ``ax.pcolormesh``.
@@ -269,4 +315,5 @@ class OATPlotter:
             extent=extent,
             resolution=resolution,
             plot_type=plot_type,
+            show_stations=show_stations,
         )
