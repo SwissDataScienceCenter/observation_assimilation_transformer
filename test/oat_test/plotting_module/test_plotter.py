@@ -277,7 +277,7 @@ def _path_collections(ax):
 
 
 def test_plot_spatial_snapshot_stations_default():
-    """show_stations=True (default) adds two PathCollections to the axes."""
+    """show_stations=True (default) adds station and POI PathCollections to the axes."""
     plotter = _spatial_plotter()
     fig, ax = plt.subplots()
     fixed_samples = torch.randn(25, 10, 2)
@@ -286,7 +286,8 @@ def test_plot_spatial_snapshot_stations_default():
             ax=ax, var="temp", time_idx=0, center=(8.0, 47.0),
             extent=0.4, resolution=0.2,
         )
-    assert len(_path_collections(ax)) == 2, "Expected one scatter per group (observed, not observed)"
+    # 2 station groups (observed circles, not-observed squares) + 1 POI marker
+    assert len(_path_collections(ax)) == 3, "Expected two station groups + POI"
     plt.close(fig)
 
 
@@ -327,8 +328,10 @@ def test_plot_spatial_snapshot_stations_observed_vs_not():
         )
 
     pcs = _path_collections(ax)
-    assert len(pcs) == 2
-    observed_pc, not_observed_pc = pcs
+    # Exclude POI (zorder=6); station groups use zorder=5
+    station_pcs = [pc for pc in pcs if pc.get_zorder() < 6]
+    assert len(station_pcs) == 2
+    observed_pc, not_observed_pc = station_pcs
     assert len(observed_pc.get_offsets()) == 2, "Stations 0 and 2 should be observed"
     assert len(not_observed_pc.get_offsets()) == 3, "Stations 1, 3, 4 should be not observed"
     plt.close(fig)
@@ -407,3 +410,46 @@ def test_plotter_stores_eval_indices():
 def test_plotter_default_eval_indices_empty():
     plotter = OATPlotter(predictor=_make_predictor(), dataset=_make_dataset())
     assert plotter.eval_indices == []
+
+
+def test_plot_spatial_snapshot_eval_all_observed():
+    """eval_indices mode, all obs have mask: 2 station groups (colored circles + eval squares)."""
+    plotter = OATPlotter(
+        predictor=_make_predictor(N_q=25, n_samples=10),
+        dataset=_make_dataset(),  # all masks = 1
+        obs_station_indices=[0, 1, 2],
+        eval_indices=[3, 4],
+    )
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.zeros(25, 10, 2)):
+        plotter.plot_spatial_snapshot(ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2)
+    pcs = _path_collections(ax)
+    # Collect groups by non-zero point count (skip POI which is 1 point at center)
+    station_counts = sorted(
+        len(pc.get_offsets()) for pc in pcs if len(pc.get_offsets()) > 1
+    )
+    assert station_counts == [2, 3], "2 eval squares + 3 colored obs circles"
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_eval_with_missing_obs():
+    """eval_indices mode, one obs missing: 3 station groups."""
+    dataset = _make_dataset()
+    dataset.obs_mask_tensor[0, 1, 0] = 0.0  # station 1 missing at time 0, var 0
+    plotter = OATPlotter(
+        predictor=_make_predictor(N_q=25, n_samples=10),
+        dataset=dataset,
+        obs_station_indices=[0, 1, 2],
+        eval_indices=[3, 4],
+    )
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.zeros(25, 10, 2)):
+        plotter.plot_spatial_snapshot(ax, "temp", 0, (0.0, 0.0), extent=0.4, resolution=0.2)
+    pcs = _path_collections(ax)
+    # Filter out POI (zorder=6); station groups use zorder=5
+    station_counts = sorted(
+        len(pc.get_offsets()) for pc in pcs if pc.get_zorder() < 6
+    )
+    # 2 colored circles (obs 0,2) + 1 white circle (missing obs 1) + 2 eval squares (3,4)
+    assert station_counts == [1, 2, 2], "1 missing-obs circle + 2 obs circles + 2 eval squares"
+    plt.close(fig)

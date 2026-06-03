@@ -249,25 +249,38 @@ class OATPlotter:
 
         if show_stations:
             obs_set = set(self.obs_indices)
+            eval_set = set(self.eval_indices)
             n_st = self.dataset.station_coords.shape[0]
             obs_x, obs_y, obs_vals = [], [], []
-            unobs_x, unobs_y = [], []
+            missing_obs_x, missing_obs_y = [], []
+            sq_x, sq_y = [], []
+
             for s in range(n_st):
                 sx = self.dataset.station_coords[s, 0].item()
                 sy = self.dataset.station_coords[s, 1].item()
                 mask_val = self.dataset.obs_mask_tensor[time_idx, s, var_idx].item()
-                if s in obs_set and mask_val:
-                    obs_x.append(sx)
-                    obs_y.append(sy)
-                    obs_vals.append(
-                        self.dataset.obs_tensor[time_idx, s, var_idx].item()
-                    )
-                else:
-                    unobs_x.append(sx)
-                    unobs_y.append(sy)
+                if s in obs_set:
+                    if mask_val:
+                        obs_x.append(sx)
+                        obs_y.append(sy)
+                        obs_vals.append(
+                            self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                        )
+                    elif eval_set:
+                        missing_obs_x.append(sx)
+                        missing_obs_y.append(sy)
+                    else:
+                        sq_x.append(sx)
+                        sq_y.append(sy)
+                elif s in eval_set:
+                    sq_x.append(sx)
+                    sq_y.append(sy)
+                elif not eval_set:
+                    sq_x.append(sx)
+                    sq_y.append(sy)
 
             if plot_type == "mean" and obs_vals:
-                obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))  # [N, 4] RGBA
+                obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))
             else:
                 obs_colors = "white"
 
@@ -280,14 +293,25 @@ class OATPlotter:
                 zorder=5,
                 label="observed",
             )
+            if missing_obs_x:
+                ax.scatter(
+                    missing_obs_x,
+                    missing_obs_y,
+                    marker="o",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label="missing",
+                )
+            sq_label = "eval" if eval_set else "not observed"
             ax.scatter(
-                unobs_x,
-                unobs_y,
+                sq_x,
+                sq_y,
                 marker="s",
                 facecolors="white",
                 edgecolors="black",
                 zorder=5,
-                label="not observed",
+                label=sq_label,
             )
             ax.legend()
             ax.scatter(
