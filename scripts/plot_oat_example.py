@@ -96,6 +96,16 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Path to output figure. Default: data/figures/<checkpoint_folder>_<var>_<time>.png",
     )
+    p.add_argument(
+        "--split",
+        choices=["val", "test"],
+        default=None,
+        help=(
+            "Show station split mode. 'val': observed (train) stations as circles, "
+            "validation stations as squares. 'test': observed (train+val) as circles, "
+            "test stations as squares."
+        ),
+    )
     return p.parse_args()
 
 
@@ -119,43 +129,81 @@ def _print_info(ckpt_path: str, predictor, dataset) -> None:
     print(f"NWP extent : E {e_min:.0f}–{e_max:.0f} m  N {n_min:.0f}–{n_max:.0f} m")
     n_stations = dataset.station_coords.shape[0]
     print(f"Stations   : {n_stations}  (use --station <idx> to select one)")
-    names = dataset.station_names if hasattr(dataset, "station_names") else [str(i) for i in range(n_stations)]
+    names = (
+        dataset.station_names
+        if hasattr(dataset, "station_names")
+        else [str(i) for i in range(n_stations)]
+    )
     for i, (name, coords) in enumerate(zip(names, dataset.station_coords)):
         e, n = coords[0].item(), coords[1].item()
         print(f"  [{i:>4d}] {name:<12s}  E={e:.0f}  N={n:.0f}")
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
 
     info_mode = all(
         v is None
-        for v in [args.center, args.station, args.time, args.hours, args.extent, args.resolution, args.var]
+        for v in [
+            args.center,
+            args.station,
+            args.time,
+            args.hours,
+            args.extent,
+            args.resolution,
+            args.var,
+        ]
     )
 
     predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint)
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
-    dataset, num_train, _, val_loader, *_  = setup_data_and_transform(cfg, logger)
+    dataset, num_train, _, val_loader, test_loader, *_ = setup_data_and_transform(
+        cfg, logger
+    )
 
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
         sys.exit(0)
+
+    obs_station_indices = None
+    eval_indices = None
+    if args.split is not None:
+        split_loader = val_loader if args.split == "val" else test_loader
+        split_dataset = split_loader.dataset
+        obs_station_indices = list(split_dataset.observed_indices)  # type: ignore[attr-defined]
+        eval_indices = list(split_dataset.eval_indices)  # type: ignore[attr-defined]
+        logger.info(
+            "Split '%s': %d observed stations, %d eval stations",
+            args.split,
+            len(obs_station_indices),
+            len(eval_indices),
+        )
 
     # Apply defaults for plotting path
     var: str = args.var if args.var is not None else next(iter(predictor.var_to_indx))
     if args.station is not None:
         n_stations = dataset.station_coords.shape[0]
         if not 0 <= args.station < n_stations:
-            raise SystemExit(f"--station {args.station} out of range (0–{n_stations - 1})")
+            raise SystemExit(
+                f"--station {args.station} out of range (0–{n_stations - 1})"
+            )
         coords = dataset.station_coords[args.station]
         center: tuple[float, float] = (coords[0].item(), coords[1].item())
-        station_label = dataset.station_names[args.station] if hasattr(dataset, "station_names") else str(args.station)
-        logger.info("Station %d (%s): E=%.0f N=%.0f", args.station, station_label, *center)
+        station_label = (
+            dataset.station_names[args.station]
+            if hasattr(dataset, "station_names")
+            else str(args.station)
+        )
+        logger.info(
+            "Station %d (%s): E=%.0f N=%.0f", args.station, station_label, *center
+        )
     else:
         center = tuple(args.center) if args.center is not None else _BERN_LV95
     hours: int = args.hours if args.hours is not None else 24
@@ -165,7 +213,11 @@ def main() -> None:
     if args.time is not None:
         snap_idx = _resolve_time_idx(dataset, args.time)
     else:
-        snap_idx = val_loader.dataset.indices[0] if hasattr(val_loader.dataset, "indices") else 0
+        snap_idx = (
+            val_loader.dataset.indices[0]
+            if hasattr(val_loader.dataset, "indices")
+            else 0
+        )
 
     time_indices = list(range(snap_idx, snap_idx + hours))
     snap_time_iso = dataset.times[snap_idx].strftime("%Y-%m-%dT%H")
@@ -178,7 +230,14 @@ def main() -> None:
         hours,
     )
 
-    plotter = OATPlotter(predictor=predictor, dataset=dataset, n_samples=args.n_samples, device="cpu")
+    plotter = OATPlotter(
+        predictor=predictor,
+        dataset=dataset,
+        obs_station_indices=obs_station_indices,
+        eval_indices=eval_indices,
+        n_samples=args.n_samples,
+        device="cpu",
+    )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -189,7 +248,9 @@ def main() -> None:
         plotter.plot_timeseries_at_station(
             ax=axes[0], station_idx=args.station, var=var, time_indices=time_indices
         )
-        axes[0].set_title(f"Timeseries — {station_label} (E={center[0]:.0f}, N={center[1]:.0f})")
+        axes[0].set_title(
+            f"Timeseries — {station_label} (E={center[0]:.0f}, N={center[1]:.0f})"
+        )
         axes[0].set_xlabel("Time")
         axes[0].set_ylabel(var)
         axes[0].legend()
@@ -219,7 +280,9 @@ def main() -> None:
             plot_type="std",
         )
     else:
-        plotter.plot_timeseries(ax=axes[0], center=center, var=var, time_indices=time_indices)
+        plotter.plot_timeseries(
+            ax=axes[0], center=center, var=var, time_indices=time_indices
+        )
         axes[0].set_title(f"Timeseries (E={center[0]:.0f}, N={center[1]:.0f})")
         axes[0].set_xlabel("Time")
         axes[0].set_ylabel(var)
