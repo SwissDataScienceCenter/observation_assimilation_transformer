@@ -35,6 +35,16 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
     'wind_direction': (['U_10M', 'V_10M'], lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0),
 }
 
+# Mapping from obs variable name → (list of required NWP vars, conversion fn).
+# fn receives a dict {nwp_var: tensor(H, W)} and returns tensor(H, W).
+_OBS_NWP_MAPPING: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    'temperature':   (['T_2M'],             lambda nwp: nwp['T_2M'] - 273.15),
+    'wind_u':        (['U_10M'],            lambda nwp: nwp['U_10M']),
+    'wind_v':        (['V_10M'],            lambda nwp: nwp['V_10M']),
+    'wind_speed':    (['U_10M', 'V_10M'],   lambda nwp: torch.sqrt(nwp['U_10M'] ** 2 + nwp['V_10M'] ** 2)),
+    'precipitation': (['TOT_PREC_1H'],      lambda nwp: 600.0 * nwp['TOT_PREC_1H']),
+}
+
 
 def _build_obs_variable_support(catalog: Any, obs_vars: list[str]) -> VariableSupport:
     catalog_obs_vars = catalog.obs_vars
@@ -748,62 +758,35 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
         return post_transform, output_transform
 
     def get_baseline_pre_transform(self) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        """Return a pre-transform that maps NWP fields to observation variables.
+        """Return a closure that replaces global_field NWP channels with obs-unit channels.
 
-        This encapsulates data-specific knowledge (which NWP variables correspond
-        to which observation variables, unit conversions, etc.) without knowing
-        about the baseline predictor construction.
+        Channel order in the returned field matches self.config.obs_vars exactly.
+        Raises ValueError if any obs var has no mapping or if a required NWP dep is absent.
         """
-        obs_nwp_matching = {
-            'temperature': ['T_2M'],
-            'wind_u': ['U_10M'],
-            'wind_v': ['V_10M'],
-            'wind_speed': ['U_10M', 'V_10M'],
-        }
-
         for obs_var in self.config.obs_vars:
-            if obs_var not in obs_nwp_matching:
+            if obs_var not in _OBS_NWP_MAPPING:
                 raise ValueError(
-                    f"No matching NWP variable defined for observation variable "
-                    f"{obs_var!r}. Cannot create baseline predictor."
+                    f"No NWP mapping defined for obs variable {obs_var!r}. "
+                    f"Supported: {list(_OBS_NWP_MAPPING)}."
                 )
-            nwp_var = obs_nwp_matching[obs_var]
-            if not all(var in self.config.nwp_vars for var in nwp_var):
+            deps, _ = _OBS_NWP_MAPPING[obs_var]
+            missing = [d for d in deps if d not in self.config.nwp_vars]
+            if missing:
                 raise ValueError(
-                    f"To create baseline predictor, the following NWP variables must "
-                    f"be included in config.nwp_vars: {nwp_var}. Currently included "
-                    f"NWP variables are: {self.config.nwp_vars}"
+                    f"NWP deps {missing} for obs variable {obs_var!r} are not in "
+                    f"config.nwp_vars {list(self.config.nwp_vars)}."
                 )
 
         nwp_vars = list(self.config.nwp_vars)
         obs_vars = list(self.config.obs_vars)
 
-        def baseline_pre_transform(sample: dict[str, Any]) -> dict[str, Any]:
+        def _pre(sample: dict[str, Any]) -> dict[str, Any]:
             nwp_fields = sample['global_data']['global_field']  # (C_nwp + C_topo, H, W)
-            nwp_dict = {var: nwp_fields[..., i, :, :] for i, var in enumerate(nwp_vars)}
+            nwp = {var: nwp_fields[..., i, :, :] for i, var in enumerate(nwp_vars)}
+            new_field = torch.stack([_OBS_NWP_MAPPING[v][1](nwp) for v in obs_vars], dim=-3)
+            return {**sample, 'global_data': {**sample['global_data'], 'global_field': new_field}}
 
-            baseline_nwp = []
-            for obs_var in obs_vars:
-                matching_nwp_vars = obs_nwp_matching[obs_var]
-
-                if len(matching_nwp_vars) == 1:
-                    if obs_var == 'temperature':
-                        baseline_nwp.append(nwp_dict[matching_nwp_vars[0]] - 273.15)
-                    else:
-                        baseline_nwp.append(nwp_dict[matching_nwp_vars[0]])
-                elif obs_var == 'wind_speed':
-                    u = nwp_dict['U_10M']
-                    v = nwp_dict['V_10M']
-                    speed = torch.sqrt(u**2 + v**2)
-                    baseline_nwp.append(speed)
-                else:
-                    raise ValueError(f"Unsupported case for obs variable {obs_var}")
-
-            new_field = torch.stack(baseline_nwp, dim=-3)  # (C_obs, H, W)
-            new_global_data = {**sample['global_data'], 'global_field': new_field}
-            return {**sample, 'global_data': new_global_data}
-
-        return baseline_pre_transform
+        return _pre
 # Example usage
 if __name__ == "__main__":
     config = CosmoPeakWeatherConfig(
