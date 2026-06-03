@@ -7,14 +7,15 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    from oat.predictor_module.oat_predictor import OATPredictor
+    from oat.predictor_module.base_predictor import BasePredictor
 
 
 class OATPlotter:
-    """Wraps an OATPredictor and a dataset to produce diagnostic plots.
+    """Wraps a BasePredictor and a dataset to produce diagnostic plots.
 
     Args:
-        predictor: A loaded OATPredictor (or compatible duck-typed object).
+        predictor: Any BasePredictor implementation (e.g. OATPredictor or
+            NWPInterpolatorPredictor).
         dataset: Dataset instance with `station_coords`, `obs_tensor`,
             `obs_mask_tensor`, `times`, `__getitem__`, and `get_query()`.
         obs_station_indices: Station indices (into dataset.stations) used as
@@ -30,7 +31,7 @@ class OATPlotter:
 
     def __init__(
         self,
-        predictor: OATPredictor,
+        predictor: BasePredictor,
         dataset: Any,
         obs_station_indices: Sequence[int] | None = None,
         eval_indices: Sequence[int] | None = None,
@@ -76,19 +77,9 @@ class OATPlotter:
             "query_data": _add_batch(query_data),
         }
 
-        batch = self.predictor._normalize_batch(batch)  # type: ignore[arg-type]
-
-        # OATPredictor.forward() doesn't expose num_samples; mutate and restore.
-        original_n_samples = self.predictor.model.num_samples
-        self.predictor.model.num_samples = self.n_samples
-        try:
-            with torch.no_grad():
-                y_hat = self.predictor(batch, return_loss_and_targets=False)
-        finally:
-            self.predictor.model.num_samples = original_n_samples
-
-        # y_hat["samples"]: [1, N_q, n_samples, n_vars]
-        samples = self.predictor.output_transform.inverse(y_hat["samples"])
+        batch = self.predictor._normalize_batch(batch)
+        samples = self.predictor.predict_samples(batch, self.n_samples)
+        # samples: [1, N_q, n_samples, n_vars]
         return samples[0]  # [N_q, n_samples, n_vars]
 
     def plot_timeseries(

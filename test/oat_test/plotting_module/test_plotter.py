@@ -19,8 +19,17 @@ def _make_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2):
     predictor.var_to_indx = {"temp": 0, "wspd": 1}
     predictor.output_var_names = ["temp", "wspd"]
     predictor._normalize_batch.side_effect = lambda batch: batch
-    predictor.output_transform.inverse.side_effect = lambda x: x
-    predictor.return_value = {"samples": torch.zeros(1, N_q, n_samples, n_vars)}
+    predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
+    return predictor
+
+
+def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2):
+    """Mock that matches NWPInterpolatorPredictor's plotter interface."""
+    predictor = MagicMock()
+    predictor.var_to_indx = {"temp": 0, "wspd": 1}
+    predictor.output_var_names = ["temp", "wspd"]
+    predictor._normalize_batch.side_effect = lambda batch: batch
+    predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
     return predictor
 
 
@@ -75,6 +84,21 @@ def test_plotter_default_n_samples():
     predictor = _make_predictor()
     dataset = _make_dataset()
     assert OATPlotter(predictor, dataset).n_samples == 100
+
+
+def test_run_inference_with_baseline_predictor():
+    """OATPlotter works with a mock satisfying the BasePredictor interface."""
+    N_q, n_samples, n_vars = 3, 10, 2
+    predictor = _make_baseline_predictor(N_q=N_q, n_samples=n_samples, n_vars=n_vars)
+    dataset = _make_dataset()
+
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+    samples = plotter._run_inference(time_idx=0, query_coords=torch.zeros(N_q, 2))
+
+    assert samples.shape == (N_q, n_samples, n_vars)
+    predictor._normalize_batch.assert_called_once()
+    predictor.predict_samples.assert_called_once()
+    assert predictor.predict_samples.call_args[0][1] == n_samples
 
 
 def test_plot_timeseries_draws_line_and_band():
