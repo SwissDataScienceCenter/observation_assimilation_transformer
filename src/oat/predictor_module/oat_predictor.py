@@ -231,7 +231,7 @@ class OATPredictor(BasePredictor):
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return self.input_transform(batch)
 
-    def predict_samples(self, batch: dict[str, torch.Tensor], n_samples: int) -> torch.Tensor:
+    def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
         original_n_samples = self.model.num_samples
         self.model.num_samples = n_samples
         try:
