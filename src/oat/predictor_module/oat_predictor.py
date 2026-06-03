@@ -15,6 +15,7 @@ from oat.model_module.model import (
 )
 from oat.data_module.transform import Transform
 from oat.data_module.support import VariableSupport
+from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
     point_mae,
@@ -23,7 +24,7 @@ from oat.predictor_module.functional_metrics import (
 
 logger = logging.getLogger(__name__)
 
-class OATPredictor(pl.LightningModule):
+class OATPredictor(BasePredictor):
     
     """
     PyTorch Lightning module for training and evaluating an OAT-based model
@@ -98,7 +99,7 @@ class OATPredictor(pl.LightningModule):
                  oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
                  oat_loss_scheduler_params:  Optional[dict]  = None,
                  ):
-        super().__init__()
+        super().__init__(output_var_names=output_var_names)
 
         self.save_hyperparameters()
 
@@ -112,16 +113,12 @@ class OATPredictor(pl.LightningModule):
             self.model = OAT(oat_model_cfg)
         elif isinstance(oat_model_cfg, UninformedOATConfig):
             self.model = UninformedOAT(oat_model_cfg)
-        
+
         if not hasattr(self, "model"):
             raise ValueError(f"oat_model_cfg must be an instance of OATConfig or UninformedOATConfig. Given {type(oat_model_cfg)}")
 
         self.input_transform = input_transform
         self.output_transform = output_transform
-        
-        self.output_var_names = output_var_names
-        self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
-        self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
         
         # NOTE perhaps make this configurable?
         self.metrics_fn = {
@@ -233,6 +230,16 @@ class OATPredictor(pl.LightningModule):
 
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return self.input_transform(batch)
+
+    def predict_samples(self, batch: dict[str, torch.Tensor], n_samples: int) -> torch.Tensor:
+        original_n_samples = self.model.num_samples
+        self.model.num_samples = n_samples
+        try:
+            with torch.no_grad():
+                y_hat = self(batch, return_loss_and_targets=False)
+        finally:
+            self.model.num_samples = original_n_samples
+        return self.output_transform.inverse(y_hat["samples"])
 
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
