@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import torch
 
@@ -5,10 +7,10 @@ from oat.predictor_module.base_predictor import BasePredictor
 
 
 class _ConcretePredictor(BasePredictor):
-    def _normalize_batch(self, batch):
+    def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         return batch
 
-    def predict_samples(self, batch, n_samples):
+    def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
         return torch.zeros(1, 1, n_samples, len(self.output_var_names))
 
 
