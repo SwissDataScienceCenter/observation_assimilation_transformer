@@ -1,3 +1,4 @@
+from .base_predictor import BasePredictor
 from .oat_predictor import OATPredictor
 from .baseline_predictor import NWPInterpolatorPredictor, create_baseline_predictor
 from .gp_predictor import GPPredictor
