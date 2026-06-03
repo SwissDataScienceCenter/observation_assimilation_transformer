@@ -11,7 +11,7 @@ Plot mode (all optional args have sensible defaults):
         --var temperature
 """
 
-from __future__ import annotations
+from __future__ import annotations  
 
 import argparse
 import logging
@@ -22,7 +22,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
+from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.checkpoint_utils import load_checkpoint
 
@@ -240,8 +242,28 @@ def main() -> None:
         device="cpu",
     )
 
+    nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
+    print(f"Observable variables: {dataset.config.obs_vars}")
+
+    baseline_pre_transform = dataset.get_baseline_pre_transform()
+    nwp_predictor = NWPInterpolatorPredictor(
+        config=nwp_config,
+        output_var_names=dataset.config.obs_vars,
+        input_transform=baseline_pre_transform,
+    ).eval()
+    print("Var_idx:", nwp_predictor.var_to_indx)
+    print("OAT predictor var_idx:", predictor.var_to_indx)
+    nwp_plotter = OATPlotter(
+        predictor=nwp_predictor,
+        dataset=dataset,
+        obs_station_indices=obs_station_indices,
+        eval_indices=eval_indices,
+        n_samples=1,
+        device="cpu",
+    )
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
     ckpt_tag = Path(args.checkpoint).parent.name
     fig.suptitle(f"OAT — {var} — {ckpt_tag}")
 
@@ -280,6 +302,7 @@ def main() -> None:
             resolution=resolution,
             plot_type="std",
         )
+
     else:
         plotter.plot_timeseries(
             ax=axes[0], center=center, var=var, time_indices=time_indices
@@ -316,6 +339,20 @@ def main() -> None:
     plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
     axes[2].set_title("Predictive std")
     axes[2].set_xlabel("Easting (m)")
+
+    if args.station is not None:
+        mesh_nwp = nwp_plotter.plot_spatial_snapshot_at_station(
+            ax=axes[3], var=var, time_idx=snap_idx, station_idx=args.station,
+            extent=extent, resolution=resolution, plot_type="mean",
+        )
+    else:
+        mesh_nwp = nwp_plotter.plot_spatial_snapshot(
+            ax=axes[3], var=var, time_idx=snap_idx, center=center,
+            extent=extent, resolution=resolution, plot_type="mean",
+        )
+    plt.colorbar(mesh_nwp, ax=axes[3], label=var)
+    axes[3].set_title(f"NWP interp.  ({snap_time_iso})")
+    axes[3].set_xlabel("Easting (m)")
 
     fig.tight_layout()
     out_path = OUT_DIR / f"{ckpt_tag}_{var}_{snap_time_iso}.png"

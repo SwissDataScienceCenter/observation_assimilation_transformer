@@ -308,7 +308,7 @@ class OATPlotter:
                 )
             ax.legend()
             ax.scatter(
-                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
+                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
             )
 
         return mesh

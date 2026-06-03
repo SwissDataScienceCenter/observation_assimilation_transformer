@@ -65,6 +65,8 @@ class NWPInterpolatorPredictor(BasePredictor):
 
     def predict_samples(self, batch: Dict[str, Any], n_samples: int) -> torch.Tensor:
         """NWP interpolation is deterministic; all n_samples slices are identical."""
+        if self.input_transform is not None:
+            batch = self.input_transform(batch)
         with torch.no_grad():
             out, _, _ = self(batch)  # [B, N_q, n_vars]
         return out.unsqueeze(2).expand(-1, -1, n_samples, -1)
