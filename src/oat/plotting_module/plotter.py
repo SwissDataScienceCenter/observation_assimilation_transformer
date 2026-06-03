@@ -43,7 +43,10 @@ class OATPlotter:
             self.obs_indices: list[int] = list(range(dataset.station_coords.shape[0]))
         else:
             self.obs_indices = list(obs_station_indices)
-        self.eval_indices: list[int] = list(eval_indices) if eval_indices is not None else []
+        if eval_indices is None:
+            self.eval_indices: list[int] = []
+        else:
+            self.eval_indices = list(eval_indices)
         self.n_samples = n_samples
         self.device = torch.device(device)
 
@@ -178,7 +181,7 @@ class OATPlotter:
                 )
             else:
                 obs_values.append(float("nan"))
-        ax.scatter(times, obs_values, label="observation", zorder=5, c='k')
+        ax.scatter(times, obs_values, label="observation", zorder=5, c="k")
 
     def plot_spatial_snapshot(
         self,
@@ -269,15 +272,27 @@ class OATPlotter:
                 obs_colors = "white"
 
             ax.scatter(
-                obs_x, obs_y, marker="o", c=obs_colors,
-                edgecolors="black", zorder=5, label="observed",
+                obs_x,
+                obs_y,
+                marker="o",
+                c=obs_colors,
+                edgecolors="black",
+                zorder=5,
+                label="observed",
             )
             ax.scatter(
-                unobs_x, unobs_y, marker="s", facecolors="white",
-                edgecolors="black", zorder=5, label="not observed",
+                unobs_x,
+                unobs_y,
+                marker="s",
+                facecolors="white",
+                edgecolors="black",
+                zorder=5,
+                label="not observed",
             )
             ax.legend()
-            ax.scatter(center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI")
+            ax.scatter(
+                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
+            )
 
         return mesh
 
