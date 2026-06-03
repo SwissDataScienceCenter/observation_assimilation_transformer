@@ -3,6 +3,7 @@ import torch
 from typing import Any, Dict
 
 from oat.model_module.baseline import NWPInterpolatorConfig
+from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 
 
@@ -87,3 +88,38 @@ def test_predictor_with_batch_fixture(
     predictions, _, _ = predictor(batch_fixture)
 
     assert predictions.shape == (B, S_query, C_global)
+
+
+def test_nwp_predictor_is_base_predictor(nwp_config: NWPInterpolatorConfig) -> None:
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
+    assert isinstance(predictor, BasePredictor)
+
+
+def test_normalize_batch_is_identity(nwp_config: NWPInterpolatorConfig) -> None:
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
+    batch = {"global_data": {"global_field": torch.randn(1, 1, 8, 8)}}
+    result = predictor._normalize_batch(batch)
+    assert result is batch
+
+
+def test_predict_samples_shape(nwp_config: NWPInterpolatorConfig) -> None:
+    B, C, S_query, n_samples = 2, 3, 6, 10
+    obs_vars = [f"var_{i}" for i in range(C)]
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
+    batch = make_batch(B, C, S_query, include_obs=False)
+
+    samples = predictor.predict_samples(batch, n_samples)
+
+    assert samples.shape == (B, S_query, n_samples, C)
+
+
+def test_predict_samples_deterministic(nwp_config: NWPInterpolatorConfig) -> None:
+    """All n_samples slices are identical since NWP interpolation is deterministic."""
+    B, C, S_query, n_samples = 1, 2, 4, 5
+    obs_vars = [f"var_{i}" for i in range(C)]
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
+    batch = make_batch(B, C, S_query, include_obs=False)
+
+    samples = predictor.predict_samples(batch, n_samples)  # [B, S, n_samples, C]
+
+    assert torch.allclose(samples[:, :, 0, :], samples[:, :, 1, :])
