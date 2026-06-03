@@ -14,7 +14,6 @@ import pandas as pd
 import pytest
 import torch
 import os
-import torch
 
 
 def _dataset_stub(obs_vars: list[str], nwp_vars: list[str]):
@@ -307,6 +306,20 @@ def test_baseline_pre_transform_raises_when_nwp_dep_missing() -> None:
     stub = _dataset_stub(['precipitation'], ['T_2M'])  # TOT_PREC_1H absent
     with pytest.raises(ValueError, match="TOT_PREC_1H"):
         CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+
+def test_obs_nwp_mapping_contains_expected_keys() -> None:
+    assert set(_OBS_NWP_MAPPING) == {'temperature', 'wind_u', 'wind_v', 'wind_speed', 'precipitation'}
+
+
+def test_baseline_pre_transform_channel_order_follows_obs_vars() -> None:
+    stub = _dataset_stub(['temperature', 'precipitation'], ['T_2M', 'TOT_PREC_1H'])
+    fn = CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+    nwp_field = torch.stack([torch.full((4, 4), 273.15 + 5.0), torch.full((4, 4), 0.1)], dim=0)
+    out = fn({'global_data': {'global_field': nwp_field}})
+    field = out['global_data']['global_field']
+    torch.testing.assert_close(field[0], torch.full((4, 4), 5.0))   # temperature channel
+    torch.testing.assert_close(field[1], torch.full((4, 4), 60.0))  # precipitation channel
 
 
 def test_build_obs_variable_support_raises_for_missing_variable() -> None:
