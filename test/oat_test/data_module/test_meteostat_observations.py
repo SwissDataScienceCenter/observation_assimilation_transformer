@@ -57,7 +57,7 @@ def test_stations_table_columns_and_index(obs_store):
 def test_get_observations_shape(obs_store):
     obs, mask = obs_store.get_observations(
         first_date=pd.Timestamp("2020-01-01 00:00", tz="UTC"),
-        last_date=pd.Timestamp("2020-01-01 03:00", tz="UTC"),
+        last_date=pd.Timestamp("2020-01-01 04:00", tz="UTC"),
         parameters=["temp", "wspd"],
         stations=np.array(["A001", "A002"]),
         return_mask=True, as_numpy=True,
