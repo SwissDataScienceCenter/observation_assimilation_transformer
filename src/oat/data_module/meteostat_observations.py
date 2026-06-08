@@ -43,12 +43,13 @@ class MeteostatObservations:
             raise NotImplementedError("Only as_numpy=True is supported.")
 
         stations = [str(s) for s in stations]
+        end_exclusive = last_date.ceil("h")
         times = pd.date_range(
             first_date.floor("h"),
-            last_date.ceil("h"),
+            end_exclusive,
             freq="1h",
             tz="UTC",
-            inclusive="both",
+            inclusive="left",
         )
         T, N, V = len(times), len(stations), len(parameters)
         obs_arr = np.full((T, N, V), np.nan, dtype=np.float32)
