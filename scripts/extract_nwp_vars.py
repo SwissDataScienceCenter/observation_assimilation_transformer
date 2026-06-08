@@ -22,7 +22,7 @@ import zarr
 from anemoi.datasets import open_dataset
 
 DEFAULT_INPUT = (
-    "/scratch/mch/fzanetta/data/anemoi/datasets/"
+    "/store_new/mch/msopr/ml/datasets/"
     "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
 )
 DEFAULT_OUTPUT = (
