@@ -51,16 +51,26 @@ class OATPlotter:
         self.n_samples = n_samples
         self.device = torch.device(device)
 
-    def _run_inference(self, time_idx: int, query_coords: torch.Tensor) -> torch.Tensor:
+    def _run_inference(
+        self,
+        time_idx: int,
+        query_coords: torch.Tensor,
+        predictor: BasePredictor | None = None,
+    ) -> torch.Tensor:
         """Run one forward pass and return unnormalized samples.
 
         Args:
             time_idx: Index into `dataset.times`.
             query_coords: Shape [N_q, 2] in the dataset's coordinate frame.
+            predictor: If provided, use this predictor instead of self.predictor
+                for normalization and sampling. The dataset and indices from
+                self are always used.
 
         Returns:
             Samples tensor of shape [N_q, n_samples, n_vars] (unnormalized).
         """
+        p = predictor if predictor is not None else self.predictor
+
         raw = self.dataset[time_idx]
 
         obs_raw = raw["observation_data"]
@@ -77,8 +87,8 @@ class OATPlotter:
             "query_data": _add_batch(query_data),
         }
 
-        batch = self.predictor._normalize_batch(batch)
-        samples = self.predictor.predict_samples(batch, self.n_samples)
+        batch = p._normalize_batch(batch)
+        samples = p.predict_samples(batch, self.n_samples)
         # samples: [1, N_q, n_samples, n_vars]
         return samples[0]  # [N_q, n_samples, n_vars]
 
@@ -352,5 +362,172 @@ class OATPlotter:
             extent=extent,
             resolution=resolution,
             plot_type=plot_type,
+            show_stations=show_stations,
+        )
+
+    def plot_spatial_difference(
+        self,
+        other: BasePredictor,
+        ax: Any,
+        var: str,
+        time_idx: int,
+        center: tuple[float, float],
+        extent: float = 5.0,
+        resolution: float = 0.1,
+        show_stations: bool = True,
+    ) -> Any:
+        """Plot the difference of predicted mean spatial fields for two predictors.
+
+        Creates a regular grid centered at *center*, runs inference with both
+        ``self.predictor`` and *other*, and renders a diverging pcolormesh of
+        the mean difference (self − other) for *var* onto *ax*.  The dataset,
+        observation indices, number of samples, and device are all taken from
+        ``self``.
+
+        Args:
+            other: Second predictor whose mean is subtracted from self's mean.
+            ax: Matplotlib Axes to draw onto.
+            var: Variable name (must be in predictor.var_to_indx).
+            time_idx: Dataset time index to predict at.
+            center: Grid center as (x, y) in the dataset's coordinate frame.
+            extent: Half-extent of the grid in coordinate units (default 5.0).
+            resolution: Grid spacing in coordinate units (default 0.1).
+            show_stations: If True, overlay dataset stations as scatter markers.
+
+        Returns:
+            The QuadMesh returned by ``ax.pcolormesh``.
+        """
+        var_idx = self.predictor.var_to_indx[var]
+
+        xs = np.arange(center[0] - extent, center[0] + extent + 1e-9, resolution)
+        ys = np.arange(center[1] - extent, center[1] + extent + 1e-9, resolution)
+        x_grid, y_grid = np.meshgrid(xs, ys)
+        query_coords = torch.tensor(
+            np.stack([x_grid.ravel(), y_grid.ravel()], axis=1),
+            dtype=torch.float32,
+        )  # [N_q, 2]
+
+        samples_a = self._run_inference(time_idx, query_coords)
+        samples_b = self._run_inference(time_idx, query_coords, predictor=other)
+
+        diff = (
+            samples_a[:, :, var_idx].mean(dim=1) - samples_b[:, :, var_idx].mean(dim=1)
+        ).numpy()
+        field = diff.reshape(y_grid.shape)
+
+        vmax = float(np.abs(field).max()) or 1.0
+        mesh = ax.pcolormesh(
+            xs, ys, field, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto"
+        )
+
+        ax.set_xlim(center[0] - extent, center[0] + extent)
+        ax.set_ylim(center[1] - extent, center[1] + extent)
+
+        if show_stations:
+            obs_set = set(self.obs_indices)
+            eval_set = set(self.eval_indices)
+            n_st = self.dataset.station_coords.shape[0]
+            obs_x, obs_y = [], []
+            missing_obs_x, missing_obs_y = [], []
+            sq_x, sq_y = [], []
+
+            for s in range(n_st):
+                sx = self.dataset.station_coords[s, 0].item()
+                sy = self.dataset.station_coords[s, 1].item()
+                mask_val = self.dataset.obs_mask_tensor[time_idx, s, var_idx].item()
+                if s in obs_set:
+                    if mask_val:
+                        obs_x.append(sx)
+                        obs_y.append(sy)
+                    elif eval_set:
+                        missing_obs_x.append(sx)
+                        missing_obs_y.append(sy)
+                    else:
+                        sq_x.append(sx)
+                        sq_y.append(sy)
+                elif s in eval_set:
+                    sq_x.append(sx)
+                    sq_y.append(sy)
+                elif not eval_set:
+                    sq_x.append(sx)
+                    sq_y.append(sy)
+
+            if obs_x:
+                ax.scatter(
+                    obs_x,
+                    obs_y,
+                    marker="o",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label="observed",
+                )
+            if missing_obs_x:
+                ax.scatter(
+                    missing_obs_x,
+                    missing_obs_y,
+                    marker="o",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label="missing",
+                )
+            sq_label = "eval" if eval_set else "not observed"
+            if sq_x:
+                ax.scatter(
+                    sq_x,
+                    sq_y,
+                    marker="s",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label=sq_label,
+                )
+            ax.legend()
+            ax.scatter(
+                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
+            )
+
+        return mesh
+
+    def plot_spatial_difference_at_station(
+        self,
+        other: BasePredictor,
+        ax: Any,
+        var: str,
+        time_idx: int,
+        station_idx: int,
+        extent: float = 5.0,
+        resolution: float = 0.1,
+        show_stations: bool = True,
+    ) -> Any:
+        """Plot a spatial difference centered on a station location.
+
+        Wraps :meth:`plot_spatial_difference`, resolving the grid center from
+        ``dataset.station_coords[station_idx]``.
+
+        Args:
+            other: Second predictor whose mean is subtracted from self's mean.
+            ax: Matplotlib Axes to draw onto.
+            var: Variable name (must be in predictor.var_to_indx).
+            time_idx: Dataset time index to predict at.
+            station_idx: Index into ``dataset.station_coords``.
+            extent: Half-extent of the grid in coordinate units (default 5.0).
+            resolution: Grid spacing in coordinate units (default 0.1).
+            show_stations: Passed through to :meth:`plot_spatial_difference`.
+
+        Returns:
+            The QuadMesh returned by ``ax.pcolormesh``.
+        """
+        coords = self.dataset.station_coords[station_idx]
+        center = (coords[0].item(), coords[1].item())
+        return self.plot_spatial_difference(
+            other,
+            ax,
+            var,
+            time_idx,
+            center,
+            extent=extent,
+            resolution=resolution,
             show_stations=show_stations,
         )

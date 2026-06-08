@@ -528,3 +528,155 @@ def test_plot_spatial_snapshot_eval_with_missing_obs():
         2,
     ], "1 missing-obs circle + 2 obs circles + 2 eval squares"
     plt.close(fig)
+
+
+# --- plot_spatial_difference tests ---
+
+
+def test_plot_spatial_difference_returns_quadmesh():
+    plotter = _spatial_plotter()
+    other = _make_predictor(N_q=25, n_samples=10)
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        mesh = plotter.plot_spatial_difference(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+        )
+    assert mesh is not None
+    plt.close(fig)
+
+
+def test_plot_spatial_difference_axis_limits():
+    plotter = _spatial_plotter()
+    other = _make_predictor(N_q=25, n_samples=10)
+    fig, ax = plt.subplots()
+    center = (8.0, 47.0)
+    extent = 0.4
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+        plotter.plot_spatial_difference(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=center,
+            extent=extent,
+            resolution=0.2,
+        )
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    assert abs(xlim[0] - (center[0] - extent)) < 1e-6
+    assert abs(xlim[1] - (center[0] + extent)) < 1e-6
+    assert abs(ylim[0] - (center[1] - extent)) < 1e-6
+    assert abs(ylim[1] - (center[1] + extent)) < 1e-6
+    plt.close(fig)
+
+
+def test_plot_spatial_difference_no_stations():
+    plotter = _spatial_plotter()
+    other = _make_predictor(N_q=25, n_samples=10)
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+        plotter.plot_spatial_difference(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            show_stations=False,
+        )
+    assert len(_path_collections(ax)) == 0
+    plt.close(fig)
+
+
+def test_plot_spatial_difference_stations_shown():
+    """show_stations=True adds observed circles, not-observed squares, and POI marker."""
+    plotter = _spatial_plotter()
+    other = _make_predictor(N_q=25, n_samples=10)
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+        plotter.plot_spatial_difference(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            show_stations=True,
+        )
+    # 2 station groups (observed circles, not-observed squares) + 1 POI marker
+    assert len(_path_collections(ax)) == 3
+    plt.close(fig)
+
+
+def test_plot_spatial_difference_calls_both_predictors():
+    """_run_inference is called twice: once for self, once with other predictor."""
+    plotter = _spatial_plotter()
+    other = _make_predictor(N_q=25, n_samples=10)
+    fig, ax = plt.subplots()
+
+    samples_a = torch.ones(25, 10, 2)
+    samples_b = torch.zeros(25, 10, 2)
+
+    def _side_effect(time_idx, query_coords, predictor=None):
+        return samples_b if predictor is not None else samples_a
+
+    with patch.object(plotter, "_run_inference", side_effect=_side_effect) as mock_inf:
+        plotter.plot_spatial_difference(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+        )
+
+    assert mock_inf.call_count == 2
+    # Second call must have passed the other predictor
+    second_call_kwargs = mock_inf.call_args_list[1].kwargs
+    assert second_call_kwargs.get("predictor") is other
+    plt.close(fig)
+
+
+def test_plot_spatial_difference_at_station_delegates():
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    dataset.station_coords = torch.tensor(
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]]
+    )
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+    other = _make_predictor(N_q=25, n_samples=10)
+
+    fig, ax = plt.subplots()
+    sentinel = object()
+    with patch.object(plotter, "plot_spatial_difference", return_value=sentinel) as mock_diff:
+        result = plotter.plot_spatial_difference_at_station(
+            other,
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            station_idx=3,
+            extent=0.4,
+            resolution=0.2,
+        )
+    mock_diff.assert_called_once_with(
+        other,
+        ax,
+        "temp",
+        0,
+        (7.0, 8.0),
+        extent=0.4,
+        resolution=0.2,
+        show_stations=True,
+    )
+    assert result is sentinel
+    plt.close(fig)
