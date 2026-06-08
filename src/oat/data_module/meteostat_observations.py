@@ -18,13 +18,12 @@ class MeteostatObservations:
         obs["time"] = pd.to_datetime(obs["time"], utc=True)
         obs["station"] = obs["station"].astype(str)
         obs = obs[obs["station"].isin(set(self.stations_table.index))]
+        self._stations: np.ndarray = np.array(sorted(obs["station"].unique()), dtype=str)
         self._obs: pd.DataFrame | None = obs.set_index(["time", "station"]).sort_index()
 
     @property
     def stations(self) -> np.ndarray:
-        obs_ids = set(self._obs.index.get_level_values("station").unique())
-        meta_ids = set(self.stations_table.index)
-        return np.array(sorted(obs_ids & meta_ids))
+        return self._stations
 
     def get_observations(
         self,
