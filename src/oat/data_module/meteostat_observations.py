@@ -56,7 +56,7 @@ class MeteostatObservations:
 
         try:
             window = self._obs.loc[
-                first_date : last_date - pd.Timedelta(seconds=1), parameters
+                first_date : last_date - pd.Timedelta("1ns"), parameters
             ]
         except KeyError:
             window = pd.DataFrame(columns=parameters)
