@@ -18,13 +18,12 @@ class MeteostatObservations:
         obs["time"] = pd.to_datetime(obs["time"], utc=True)
         obs["station"] = obs["station"].astype(str)
         obs = obs[obs["station"].isin(set(self.stations_table.index))]
+        self._stations: np.ndarray = np.array(sorted(obs["station"].unique()), dtype=str)
         self._obs: pd.DataFrame | None = obs.set_index(["time", "station"]).sort_index()
 
     @property
     def stations(self) -> np.ndarray:
-        obs_ids = set(self._obs.index.get_level_values("station").unique())
-        meta_ids = set(self.stations_table.index)
-        return np.array(sorted(obs_ids & meta_ids))
+        return self._stations
 
     def get_observations(
         self,
@@ -44,20 +43,22 @@ class MeteostatObservations:
             raise NotImplementedError("Only as_numpy=True is supported.")
 
         stations = [str(s) for s in stations]
+        end_exclusive = last_date.ceil("h")
         times = pd.date_range(
             first_date.floor("h"),
-            last_date.ceil("h"),
+            end_exclusive,
             freq="1h",
             tz="UTC",
-            inclusive="both",
+            inclusive="left",
         )
         T, N, V = len(times), len(stations), len(parameters)
         obs_arr = np.full((T, N, V), np.nan, dtype=np.float32)
 
         try:
-            window = self._obs.loc[
-                first_date : last_date - pd.Timedelta(seconds=1), parameters
-            ]
+            time_unit = self._obs.index.get_level_values("time").unit
+            first_ts = first_date.as_unit(time_unit)
+            last_ts = last_date.as_unit(time_unit) - pd.Timedelta(1, unit=time_unit)
+            window = self._obs.loc[first_ts:last_ts, parameters]
         except KeyError:
             window = pd.DataFrame(columns=parameters)
 

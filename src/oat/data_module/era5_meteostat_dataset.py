@@ -264,10 +264,10 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
 
         topo_res = abs(float(topo_ds.latitude[1] - topo_ds.latitude[0]))
         h, w = self.config.patch_size
-        gx = torch.linspace(-(w // 2) * topo_res, (w // 2) * topo_res, w)
         gy = torch.linspace(-(h // 2) * topo_res, (h // 2) * topo_res, h)
-        lon_off, lat_off = torch.meshgrid(gx, gy, indexing="ij")
-        self.patch_grid = torch.stack([lon_off, lat_off], dim=-1)
+        gx = torch.linspace(-(w // 2) * topo_res, (w // 2) * topo_res, w)
+        lat_off, lon_off = torch.meshgrid(gy, gx, indexing="ij")  # (h, w)
+        self.patch_grid = torch.stack([lon_off, lat_off], dim=-1)  # (h, w, 2)
 
     def _load_observations(self) -> None:
         obs_arr, mask_arr = self.obs_ds.get_observations(
