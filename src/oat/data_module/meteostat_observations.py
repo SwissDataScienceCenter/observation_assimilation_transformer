@@ -55,9 +55,10 @@ class MeteostatObservations:
         obs_arr = np.full((T, N, V), np.nan, dtype=np.float32)
 
         try:
-            window = self._obs.loc[
-                first_date : last_date - pd.Timedelta("1ns"), parameters
-            ]
+            time_unit = self._obs.index.get_level_values("time").unit
+            first_ts = first_date.as_unit(time_unit)
+            last_ts = last_date.as_unit(time_unit) - pd.Timedelta(1, unit=time_unit)
+            window = self._obs.loc[first_ts:last_ts, parameters]
         except KeyError:
             window = pd.DataFrame(columns=parameters)
 
