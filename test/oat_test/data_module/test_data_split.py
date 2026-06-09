@@ -168,7 +168,7 @@ def test_temporal_split_zero_test_days_empty_test_time_indices() -> None:
     assert result["test_time_indices"] == []
 
 
-def test_train_val_and_test_time_indices_partition_all_times():
+def test_train_val_and_test_time_indices_partition_all_times() -> None:
     """train/val and test time indices cover all time steps exactly once."""
     ds = MockDataset(num_stations=20, num_times=200)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2,
@@ -179,3 +179,4 @@ def test_train_val_and_test_time_indices_partition_all_times():
     assert len(train_val_idx) == train_val_size
     assert train_val_idx.isdisjoint(test_idx)
     assert train_val_idx | test_idx == set(range(len(ds)))
+
