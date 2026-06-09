@@ -161,7 +161,7 @@ def test_temporal_split_cutoff_is_last_n_days():
     assert (ds.times[non_test] <= expected_cutoff).all()
 
 
-def test_temporal_split_zero_test_days_empty_test_time_indices():
+def test_temporal_split_zero_test_days_empty_test_time_indices() -> None:
     ds = MockDataset(num_stations=20, num_times=100)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2,
                            test_days=0, seed=0)
