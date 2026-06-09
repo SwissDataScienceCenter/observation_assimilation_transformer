@@ -36,19 +36,19 @@ class MockDataset(Dataset):
 
 # ── TrainDataset with time_indices ───────────────────────────────────────────
 
-def test_train_dataset_no_time_indices_uses_all_times():
+def test_train_dataset_no_time_indices_uses_all_times() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     train_ds = TrainDataset(ds, np.arange(12))
     assert len(train_ds) == 100
 
 
-def test_train_dataset_time_indices_restricts_length():
+def test_train_dataset_time_indices_restricts_length() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     train_ds = TrainDataset(ds, np.arange(12), time_indices=np.arange(80))
     assert len(train_ds) == 80
 
 
-def test_train_dataset_getitem_maps_through_time_indices():
+def test_train_dataset_getitem_maps_through_time_indices() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     time_idx = np.array([10, 20, 30])
     # split_fraction=1.0 so all stations are "observed" — keeps __getitem__ simple
