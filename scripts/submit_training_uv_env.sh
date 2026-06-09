@@ -75,4 +75,6 @@ print("✅ CUDA is available.")
 EOF
 
 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 srun python -m scripts.train_model "${HYDRA_ARGS[@]}"

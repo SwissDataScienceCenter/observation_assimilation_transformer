@@ -1,0 +1,75 @@
+obs_vars:
+  temp:
+    description: "2m air temperature"
+    unit: "°C"
+
+  rhum:
+    description: "Relative humidity"
+    unit: "%"
+    lower_bound: 0.0
+    upper_bound: 100.0
+
+  prcp:
+    description: "Hourly precipitation accumulation"
+    unit: "mm/h"
+    lower_bound: 0.0
+    lower_open: false
+
+  wspd:
+    description: "10m horizontal wind speed magnitude"
+    unit: "m/s"
+    lower_bound: 0.0
+    lower_open: true
+
+  wpgt:
+    description: "Maximum 10m wind gust speed"
+    unit: "m/s"
+    lower_bound: 0.0
+    lower_open: true
+
+nwp_vars:
+  2t:
+    description: "2m temperature from ERA5"
+    unit: "K"
+  10u:
+    description: "10m zonal wind component from ERA5"
+    unit: "m/s"
+  10v:
+    description: "10m meridional wind component from ERA5"
+    unit: "m/s"
+  tcc:
+    description: "Total cloud cover from ERA5"
+    unit: "fraction [0,1]"
+  tp:
+    description: "Total precipitation from ERA5"
+    unit: "m/h"
+  wind_speed:
+    description: "10m wind speed derived from 10u and 10v"
+    unit: "m/s"
+
+topo_vars:
+  elevation:
+    description: "Surface elevation (SRTM DEM)"
+    unit: "m"
+  distance_to_coast:
+    description: "Distance to nearest ocean pixel"
+    unit: "m"
+
+coord_vars:
+  longitude:
+    description: "Station longitude (WGS84)"
+    unit: "degrees_east"
+  latitude:
+    description: "Station latitude (WGS84)"
+    unit: "degrees_north"
+
+geo_vars:
+  longitude:
+    description: "Station longitude (WGS84)"
+    unit: "degrees_east"
+  latitude:
+    description: "Station latitude (WGS84)"
+    unit: "degrees_north"
+  elevation:
+    description: "Station elevation interpolated from DEM"
+    unit: "m"

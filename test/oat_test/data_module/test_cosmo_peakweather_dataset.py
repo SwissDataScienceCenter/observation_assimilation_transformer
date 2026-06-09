@@ -25,8 +25,8 @@ def test_cosmo_peakweather_dataset() -> None:
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     
     # check dates
-    # obs_np has exactly one row per dataset time (missing times get NaN fill)
-    assert len(dataset.obs_np) == len(dataset.times)
+    # obs_tensor has exactly one row per dataset time (missing times get NaN fill)
+    assert len(dataset.obs_tensor) == len(dataset.times)
     # only missing nwp times are missing
     nwp_times = pd.to_datetime(dataset.nwp_ds.dates).tz_localize('UTC')
     missing_nwp_idx = np.where(~nwp_times.isin(dataset.times))
@@ -222,18 +222,18 @@ def _check_obs_nwp_alignment(dataset: CosmoPeakWeatherDataset, indices: list[int
             as_numpy=True,
         )
         np.testing.assert_array_equal(
-            dataset.obs_np[idx], obs_at_t[0],
+            dataset.obs_tensor[idx].numpy(), obs_at_t[0],
             err_msg=f"obs value mismatch at idx={idx} (time={time})",
         )
         np.testing.assert_array_equal(
-            dataset.obs_mask_np[idx], mask_at_t[0],
+            dataset.obs_mask_tensor[idx].numpy(), mask_at_t[0],
             err_msg=f"obs mask mismatch at idx={idx} (time={time})",
         )
 
 
 @pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
 def test_obs_nwp_alignment() -> None:
-    """obs_np[idx] must correspond to the same timestamp as NWP at time_indices[idx]."""
+    """obs_tensor[idx] must correspond to the same timestamp as NWP at time_indices[idx]."""
     with initialize(config_path="../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
