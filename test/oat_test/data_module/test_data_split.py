@@ -125,7 +125,7 @@ def test_station_indices_returned_in_result():
 
 # ── create_splits — temporal test split ─────────────────────────────────────
 
-def test_no_temporal_split_uses_all_times():
+def test_no_temporal_split_uses_all_times() -> None:
     """test_days=0 (default): all three datasets span all time steps."""
     ds = MockDataset(num_stations=20, num_times=100)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2, seed=0)
