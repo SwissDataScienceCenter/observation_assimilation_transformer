@@ -685,3 +685,86 @@ def test_plot_spatial_difference_at_station_delegates():
     )
     assert result is sentinel
     plt.close(fig)
+
+
+# ── _overlay_stations ──────────────────────────────────────────────────────
+
+class TestOverlayStations:
+    def setup_method(self):
+        matplotlib.use("Agg")
+
+    def _make_plotter(self, obs_indices=None, eval_indices=None, n_stations=5):
+        predictor = _make_predictor()
+        dataset = _make_dataset(n_stations=n_stations)
+        dataset.station_coords = torch.tensor(
+            [[float(i), float(i)] for i in range(n_stations)]
+        )
+        dataset.obs_mask_tensor = torch.ones(4, n_stations, 2)
+        dataset.obs_tensor = torch.ones(4, n_stations, 2) * 2.0
+        return OATPlotter(
+            predictor, dataset,
+            obs_station_indices=obs_indices,
+            eval_indices=eval_indices,
+        )
+
+    def test_observed_stations_rendered_as_circles(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        assert any(c.get_label() == "observed" for c in ax.collections)
+        plt.close(fig)
+
+    def test_missing_obs_no_eval_set_renders_as_square(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        plotter.dataset.obs_mask_tensor[0, 0, 0] = 0  # station 0 missing at t=0
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "not observed" in labels
+        plt.close(fig)
+
+    def test_eval_stations_rendered_as_squares(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[2, 3])
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "eval observed" in labels
+        plt.close(fig)
+
+    def test_missing_obs_with_eval_set_renders_as_missing(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[2])
+        plotter.dataset.obs_mask_tensor[0, 0, 0] = 0
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "missing" in labels
+        plt.close(fig)
+
+    def test_missing_eval_renders_as_eval_missing(self):
+        plotter = self._make_plotter(obs_indices=[0], eval_indices=[1])
+        plotter.dataset.obs_mask_tensor[0, 1, 0] = 0
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "eval missing" in labels
+        plt.close(fig)
+
+    def test_mesh_colors_obs_stations(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        fig, ax = plt.subplots()
+        mesh = ax.pcolormesh([[0, 1], [2, 3]])
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0, mesh=mesh)
+        obs_scatter = next(c for c in ax.collections if c.get_label() == "observed")
+        # When mesh is provided, facecolors should be RGBA arrays (not a single string)
+        assert obs_scatter.get_facecolor().shape[1] == 4
+        plt.close(fig)
+
+    def test_color_by_overrides_obs_values(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        plotter.dataset.obs_tensor[0, 0, 0] = 999.0
+        fig, ax = plt.subplots()
+        mesh = ax.pcolormesh([[0, 1], [2, 3]])
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0, mesh=mesh, color_by={0: 1.0, 1: 2.0})
+        obs_scatter = next(c for c in ax.collections if c.get_label() == "obs − NWP")
+        assert obs_scatter is not None
+        plt.close(fig)

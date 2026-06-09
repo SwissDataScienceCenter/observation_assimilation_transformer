@@ -93,6 +93,114 @@ class OATPlotter:
         # samples: [1, N_q, n_samples, n_vars]
         return samples[0]  # [N_q, n_samples, n_vars]
 
+    def _overlay_stations(
+        self,
+        ax: Any,
+        time_idx: int,
+        var_idx: int,
+        mesh: Any = None,
+        color_by: dict[int, float] | None = None,
+    ) -> None:
+        """Overlay station markers on *ax*, optionally colour-coded by a mesh.
+
+        Observed stations (in self.obs_indices with mask==1) are drawn as circles;
+        evaluation stations (self.eval_indices) as squares.  Pass *mesh* to derive
+        colours from its colormap/norm; pass *color_by* (station_idx → scalar) to
+        override the per-station value used for colouring (e.g. obs − NWP).
+        """
+        obs_set = set(self.obs_indices)
+        eval_set = set(self.eval_indices)
+        n_st = self.dataset.station_coords.shape[0]
+        obs_x: list[float] = []
+        obs_y: list[float] = []
+        obs_vals: list[float] = []
+        missing_obs_x: list[float] = []
+        missing_obs_y: list[float] = []
+        eval_x: list[float] = []
+        eval_y: list[float] = []
+        eval_vals: list[float] = []
+        missing_eval_x: list[float] = []
+        missing_eval_y: list[float] = []
+        sq_x: list[float] = []
+        sq_y: list[float] = []
+
+        for s in range(n_st):
+            sx = self.dataset.station_coords[s, 0].item()
+            sy = self.dataset.station_coords[s, 1].item()
+            mask_val = self.dataset.obs_mask_tensor[time_idx, s, var_idx].item()
+            if s in obs_set:
+                if mask_val:
+                    obs_x.append(sx)
+                    obs_y.append(sy)
+                    val = (
+                        color_by[s]
+                        if (color_by is not None and s in color_by)
+                        else self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                    )
+                    obs_vals.append(val)
+                elif eval_set:
+                    missing_obs_x.append(sx)
+                    missing_obs_y.append(sy)
+                else:
+                    sq_x.append(sx)
+                    sq_y.append(sy)
+            elif s in eval_set:
+                if mask_val:
+                    eval_x.append(sx)
+                    eval_y.append(sy)
+                    val = (
+                        color_by[s]
+                        if (color_by is not None and s in color_by)
+                        else self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                    )
+                    eval_vals.append(val)
+                else:
+                    missing_eval_x.append(sx)
+                    missing_eval_y.append(sy)
+            elif not eval_set:
+                sq_x.append(sx)
+                sq_y.append(sy)
+
+        if mesh is not None and obs_vals:
+            obs_colors: Any = mesh.cmap(mesh.norm(np.array(obs_vals)))
+            obs_label = "obs − NWP" if color_by is not None else "observed"
+        else:
+            obs_colors = "white"
+            obs_label = "observed"
+
+        if mesh is not None and eval_vals:
+            eval_colors: Any = mesh.cmap(mesh.norm(np.array(eval_vals)))
+            eval_label = "eval obs − NWP" if color_by is not None else "eval observed"
+        else:
+            eval_colors = "white"
+            eval_label = "eval observed"
+
+        if obs_x:
+            ax.scatter(
+                obs_x, obs_y, marker="o", c=obs_colors,
+                edgecolors="black", s=10, zorder=5, label=obs_label,
+            )
+        if missing_obs_x:
+            ax.scatter(
+                missing_obs_x, missing_obs_y, marker="o",
+                facecolors="white", edgecolors="grey", s=10, zorder=5, label="missing",
+            )
+        if eval_x:
+            ax.scatter(
+                eval_x, eval_y, marker="s", c=eval_colors,
+                edgecolors="black", s=14, zorder=5, label=eval_label,
+            )
+        if missing_eval_x:
+            ax.scatter(
+                missing_eval_x, missing_eval_y, marker="s",
+                facecolors="white", edgecolors="grey", s=14, zorder=5, label="eval missing",
+            )
+        if sq_x:
+            ax.scatter(
+                sq_x, sq_y, marker="s", facecolors="white",
+                edgecolors="black", s=10, zorder=5, label="not observed",
+            )
+
     def plot_timeseries(
         self,
         ax: Any,
