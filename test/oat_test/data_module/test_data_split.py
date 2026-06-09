@@ -135,7 +135,7 @@ def test_no_temporal_split_uses_all_times():
     assert len(test_ds) == 100
 
 
-def test_temporal_split_excludes_test_days_from_train_val():
+def test_temporal_split_excludes_test_days_from_train_val() -> None:
     """
     200 hourly steps; last 5 days = 120 hours.
     train/val get 80 steps, test gets 120.
