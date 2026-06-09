@@ -533,12 +533,17 @@ def test_plot_spatial_snapshot_eval_with_missing_obs():
 # --- plot_spatial_difference tests ---
 
 
+def _shape_aware_samples(time_idx, query_coords, predictor=None):
+    """Side-effect for _run_inference that returns the correct N_q shape."""
+    n_q = query_coords.shape[0]
+    return torch.randn(n_q, 10, 2)
+
+
 def test_plot_spatial_difference_returns_quadmesh():
     plotter = _spatial_plotter()
     other = _make_predictor(N_q=25, n_samples=10)
     fig, ax = plt.subplots()
-    fixed_samples = torch.randn(25, 10, 2)
-    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+    with patch.object(plotter, "_run_inference", side_effect=_shape_aware_samples):
         mesh = plotter.plot_spatial_difference(
             other,
             ax=ax,
@@ -558,7 +563,7 @@ def test_plot_spatial_difference_axis_limits():
     fig, ax = plt.subplots()
     center = (8.0, 47.0)
     extent = 0.4
-    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+    with patch.object(plotter, "_run_inference", side_effect=_shape_aware_samples):
         plotter.plot_spatial_difference(
             other,
             ax=ax,
@@ -601,7 +606,7 @@ def test_plot_spatial_difference_stations_shown():
     plotter = _spatial_plotter()
     other = _make_predictor(N_q=25, n_samples=10)
     fig, ax = plt.subplots()
-    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+    with patch.object(plotter, "_run_inference", side_effect=_shape_aware_samples):
         plotter.plot_spatial_difference(
             other,
             ax=ax,
@@ -618,16 +623,14 @@ def test_plot_spatial_difference_stations_shown():
 
 
 def test_plot_spatial_difference_calls_both_predictors():
-    """_run_inference is called twice: once for self, once with other predictor."""
+    """_run_inference is called twice for the grid (self and other predictor)."""
     plotter = _spatial_plotter()
     other = _make_predictor(N_q=25, n_samples=10)
     fig, ax = plt.subplots()
 
-    samples_a = torch.ones(25, 10, 2)
-    samples_b = torch.zeros(25, 10, 2)
-
     def _side_effect(time_idx, query_coords, predictor=None):
-        return samples_b if predictor is not None else samples_a
+        n_q = query_coords.shape[0]
+        return torch.zeros(n_q, 10, 2) if predictor is not None else torch.ones(n_q, 10, 2)
 
     with patch.object(plotter, "_run_inference", side_effect=_side_effect) as mock_inf:
         plotter.plot_spatial_difference(
@@ -638,8 +641,10 @@ def test_plot_spatial_difference_calls_both_predictors():
             center=(8.0, 47.0),
             extent=0.4,
             resolution=0.2,
+            show_stations=False,  # isolate grid calls from station call
         )
 
+    # Without stations: exactly 2 calls (grid for self, grid for other)
     assert mock_inf.call_count == 2
     # Second call must have passed the other predictor
     second_call_kwargs = mock_inf.call_args_list[1].kwargs

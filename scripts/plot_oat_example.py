@@ -10,9 +10,6 @@ Plot mode (all optional args have sensible defaults):
         --center 2683141 1248175 --hours 24 --extent 50000 --resolution 1000 \\
         --var temperature
 """
-
-from __future__ import annotations  
-
 import argparse
 import logging
 import sys
@@ -263,13 +260,17 @@ def main() -> None:
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+    fig, axes = plt.subplots(1, 5, figsize=(30, 5))
     ckpt_tag = Path(args.checkpoint).parent.name
     fig.suptitle(f"OAT — {var} — {ckpt_tag}")
 
     if args.station is not None:
         plotter.plot_timeseries_at_station(
-            ax=axes[0], station_idx=args.station, var=var, time_indices=time_indices
+            ax=axes[0],
+            station_idx=args.station,
+            var=var,
+            time_indices=time_indices,
+            predictors={"NWP": nwp_predictor},
         )
         axes[0].set_title(
             f"Timeseries — {station_label} (E={center[0]:.0f}, N={center[1]:.0f})"
@@ -305,7 +306,11 @@ def main() -> None:
 
     else:
         plotter.plot_timeseries(
-            ax=axes[0], center=center, var=var, time_indices=time_indices
+            ax=axes[0],
+            center=center,
+            var=var,
+            time_indices=time_indices,
+            predictors={"NWP": nwp_predictor},
         )
         axes[0].set_title(f"Timeseries (E={center[0]:.0f}, N={center[1]:.0f})")
         axes[0].set_xlabel("Time")
@@ -354,6 +359,30 @@ def main() -> None:
     axes[3].set_title(f"NWP interp.  ({snap_time_iso})")
     axes[3].set_xlabel("Easting (m)")
 
+    if args.station is not None:
+        mesh_diff = plotter.plot_spatial_difference_at_station(
+            nwp_predictor,
+            ax=axes[4],
+            var=var,
+            time_idx=snap_idx,
+            station_idx=args.station,
+            extent=extent,
+            resolution=resolution,
+        )
+    else:
+        mesh_diff = plotter.plot_spatial_difference(
+            nwp_predictor,
+            ax=axes[4],
+            var=var,
+            time_idx=snap_idx,
+            center=center,
+            extent=extent,
+            resolution=resolution,
+        )
+    plt.colorbar(mesh_diff, ax=axes[4], label=f"Δ{var}")
+    axes[4].set_title(f"OAT − NWP  ({snap_time_iso})")
+    axes[4].set_xlabel("Easting (m)")
+
     fig.tight_layout()
     out_path = OUT_DIR / f"{ckpt_tag}_{var}_{snap_time_iso}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -361,4 +390,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    print("Running OATPlotter diagnostic...")
     main()

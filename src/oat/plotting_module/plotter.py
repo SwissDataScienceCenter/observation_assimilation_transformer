@@ -70,6 +70,7 @@ class OATPlotter:
             Samples tensor of shape [N_q, n_samples, n_vars] (unnormalized).
         """
         p = predictor if predictor is not None else self.predictor
+        p = p.to(self.device)
 
         raw = self.dataset[time_idx]
 
@@ -100,10 +101,13 @@ class OATPlotter:
         time_indices: list[int],
         quantile_lo: float = 0.05,
         quantile_hi: float = 0.95,
+        predictors: dict[str, BasePredictor] | None = None,
     ) -> None:
         """Plot predicted distribution over time at an arbitrary location.
 
-        Draws a mean line and a shaded uncertainty band onto *ax*.
+        Draws a mean line and a shaded uncertainty band onto *ax*.  If
+        *predictors* is given, each named predictor is additionally plotted as
+        a point prediction (median) line without an uncertainty band.
 
         Args:
             ax: Matplotlib Axes to draw onto.
@@ -112,6 +116,8 @@ class OATPlotter:
             time_indices: Dataset time indices to predict at.
             quantile_lo: Lower quantile for the uncertainty band.
             quantile_hi: Upper quantile for the uncertainty band.
+            predictors: Optional dict mapping display name → predictor.  Each
+                entry is plotted as a single median line (no band).
         """
         var_idx = self.predictor.var_to_indx[var]
         query_coords = torch.tensor([center], dtype=torch.float32)  # [1, 2]
@@ -122,7 +128,6 @@ class OATPlotter:
             samples = self._run_inference(t_idx, query_coords)  # [1, n_samples, n_vars]
             var_samples = samples[0, :, var_idx]  # [n_samples]
             medians.append(var_samples.median().item())
-            std = var_samples.std().item()
             lo_vals.append(var_samples.quantile(quantile_lo).item())
             hi_vals.append(var_samples.quantile(quantile_hi).item())
 
@@ -137,6 +142,15 @@ class OATPlotter:
             label=f"[{quantile_lo:.0%}, {quantile_hi:.0%}]",
         )
 
+        if predictors:
+            for name, pred in predictors.items():
+                pred_medians = []
+                for t_idx in time_indices:
+                    samples = self._run_inference(t_idx, query_coords, predictor=pred)
+                    var_samples = samples[0, :, var_idx]
+                    pred_medians.append(var_samples.median().item())
+                ax.plot(times, pred_medians, label=name)
+
     def plot_timeseries_at_station(
         self,
         ax: Any,
@@ -145,6 +159,7 @@ class OATPlotter:
         time_indices: list[int],
         quantile_lo: float = 0.05,
         quantile_hi: float = 0.95,
+        predictors: dict[str, BasePredictor] | None = None,
     ) -> None:
         """Plot predicted timeseries at a station location, with observed values.
 
@@ -159,6 +174,8 @@ class OATPlotter:
             time_indices: Dataset time indices to predict at.
             quantile_lo: Lower quantile for the uncertainty band.
             quantile_hi: Upper quantile for the uncertainty band.
+            predictors: Optional dict mapping display name → predictor.  Each
+                entry is plotted as a single median line (no band).
         """
         coords = self.dataset.station_coords[station_idx]
         center = (coords[0].item(), coords[1].item())
@@ -169,6 +186,7 @@ class OATPlotter:
             time_indices,
             quantile_lo=quantile_lo,
             quantile_hi=quantile_hi,
+            predictors=predictors,
         )
 
         var_idx = self.predictor.var_to_indx[var]
@@ -393,6 +411,8 @@ class OATPlotter:
             extent: Half-extent of the grid in coordinate units (default 5.0).
             resolution: Grid spacing in coordinate units (default 0.1).
             show_stations: If True, overlay dataset stations as scatter markers.
+                Observed station markers are color-coded by (obs − NWP predicted
+                mean), using the same diverging colormap as the background field.
 
         Returns:
             The QuadMesh returned by ``ax.pcolormesh``.
@@ -427,9 +447,11 @@ class OATPlotter:
             obs_set = set(self.obs_indices)
             eval_set = set(self.eval_indices)
             n_st = self.dataset.station_coords.shape[0]
-            obs_x, obs_y = [], []
+            obs_x, obs_y, obs_vals, obs_coords = [], [], [], []
+            eval_x, eval_y, eval_vals, eval_coords = [], [], [], []
             missing_obs_x, missing_obs_y = [], []
-            sq_x, sq_y = [], []
+            eval_missing_x, eval_missing_y = [], []
+            unobs_x, unobs_y = [], []
 
             for s in range(n_st):
                 sx = self.dataset.station_coords[s, 0].item()
@@ -439,29 +461,62 @@ class OATPlotter:
                     if mask_val:
                         obs_x.append(sx)
                         obs_y.append(sy)
+                        obs_vals.append(
+                            self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                        )
+                        obs_coords.append([sx, sy])
                     elif eval_set:
                         missing_obs_x.append(sx)
                         missing_obs_y.append(sy)
                     else:
-                        sq_x.append(sx)
-                        sq_y.append(sy)
+                        unobs_x.append(sx)
+                        unobs_y.append(sy)
                 elif s in eval_set:
-                    sq_x.append(sx)
-                    sq_y.append(sy)
+                    if mask_val:
+                        eval_x.append(sx)
+                        eval_y.append(sy)
+                        eval_vals.append(
+                            self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                        )
+                        eval_coords.append([sx, sy])
+                    else:
+                        eval_missing_x.append(sx)
+                        eval_missing_y.append(sy)
                 elif not eval_set:
-                    sq_x.append(sx)
-                    sq_y.append(sy)
+                    unobs_x.append(sx)
+                    unobs_y.append(sy)
 
-            if obs_x:
-                ax.scatter(
-                    obs_x,
-                    obs_y,
-                    marker="o",
-                    facecolors="white",
-                    edgecolors="black",
-                    zorder=5,
-                    label="observed",
+            # Run NWP inference for all colorable stations (obs + eval) in one call.
+            all_colored_coords = obs_coords + eval_coords
+            if all_colored_coords:
+                station_query = torch.tensor(all_colored_coords, dtype=torch.float32)
+                nwp_at_stations = self._run_inference(
+                    time_idx, station_query, predictor=other
                 )
+                nwp_means = nwp_at_stations[:, :, var_idx].mean(dim=1).numpy()
+                all_diffs = np.array(obs_vals + eval_vals) - nwp_means
+                n_obs = len(obs_coords)
+                colors = mesh.cmap(mesh.norm(all_diffs))
+                if obs_x:
+                    ax.scatter(
+                        obs_x,
+                        obs_y,
+                        marker="o",
+                        c=colors[:n_obs],
+                        edgecolors="black",
+                        zorder=5,
+                        label="obs − NWP",
+                    )
+                if eval_x:
+                    ax.scatter(
+                        eval_x,
+                        eval_y,
+                        marker="s",
+                        c=colors[n_obs:],
+                        edgecolors="black",
+                        zorder=5,
+                        label="eval − NWP",
+                    )
             if missing_obs_x:
                 ax.scatter(
                     missing_obs_x,
@@ -472,16 +527,25 @@ class OATPlotter:
                     zorder=5,
                     label="missing",
                 )
-            sq_label = "eval" if eval_set else "not observed"
-            if sq_x:
+            if eval_missing_x:
                 ax.scatter(
-                    sq_x,
-                    sq_y,
+                    eval_missing_x,
+                    eval_missing_y,
                     marker="s",
                     facecolors="white",
                     edgecolors="black",
                     zorder=5,
-                    label=sq_label,
+                    label="eval missing",
+                )
+            if unobs_x:
+                ax.scatter(
+                    unobs_x,
+                    unobs_y,
+                    marker="s",
+                    facecolors="white",
+                    edgecolors="black",
+                    zorder=5,
+                    label="not observed",
                 )
             ax.legend()
             ax.scatter(
