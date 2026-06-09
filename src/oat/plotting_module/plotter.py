@@ -177,28 +177,58 @@ class OATPlotter:
 
         if obs_x:
             ax.scatter(
-                obs_x, obs_y, marker="o", c=obs_colors,
-                edgecolors="black", s=10, zorder=5, label=obs_label,
+                obs_x,
+                obs_y,
+                marker="o",
+                c=obs_colors,
+                edgecolors="black",
+                s=10,
+                zorder=5,
+                label=obs_label,
             )
         if missing_obs_x:
             ax.scatter(
-                missing_obs_x, missing_obs_y, marker="o",
-                facecolors="white", edgecolors="grey", s=10, zorder=5, label="missing",
+                missing_obs_x,
+                missing_obs_y,
+                marker="o",
+                facecolors="white",
+                edgecolors="grey",
+                s=10,
+                zorder=5,
+                label="missing",
             )
         if eval_x:
             ax.scatter(
-                eval_x, eval_y, marker="s", c=eval_colors,
-                edgecolors="black", s=14, zorder=5, label=eval_label,
+                eval_x,
+                eval_y,
+                marker="s",
+                c=eval_colors,
+                edgecolors="black",
+                s=14,
+                zorder=5,
+                label=eval_label,
             )
         if missing_eval_x:
             ax.scatter(
-                missing_eval_x, missing_eval_y, marker="s",
-                facecolors="white", edgecolors="grey", s=14, zorder=5, label="eval missing",
+                missing_eval_x,
+                missing_eval_y,
+                marker="s",
+                facecolors="white",
+                edgecolors="grey",
+                s=14,
+                zorder=5,
+                label="eval missing",
             )
         if sq_x:
             ax.scatter(
-                sq_x, sq_y, marker="s", facecolors="white",
-                edgecolors="black", s=10, zorder=5, label="not observed",
+                sq_x,
+                sq_y,
+                marker="s",
+                facecolors="white",
+                edgecolors="black",
+                s=10,
+                zorder=5,
+                label="not observed",
             )
 
     def plot_timeseries(
