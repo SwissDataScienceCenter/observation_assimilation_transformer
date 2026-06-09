@@ -111,7 +111,7 @@ def test_station_indices_params_override_fractions() -> None:
     assert test_ds.num_query_stations == 5
 
 
-def test_station_indices_returned_in_result():
+def test_station_indices_returned_in_result() -> None:
     ds = MockDataset(num_stations=20, num_times=50)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2, seed=0)
     train_idx, val_idx, test_idx = result["station_indices"]
