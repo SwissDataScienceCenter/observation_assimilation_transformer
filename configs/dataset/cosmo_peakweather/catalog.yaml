@@ -50,8 +50,12 @@ nwp_vars:
     description: "10m meridional wind component from COSMO NWP model"
     unit: "m/s"
 
-  VMAX_10M:
-    description: "10m maximum wind gust from COSMO NWP model"
+  CLCT:
+    description: "Total cloud cover from COSMO NWP model"
+    unit: "%"
+
+  wind_speed:
+    description: "Derived 10m horizontal wind speed magnitude"
     unit: "m/s"
 
   TOT_PREC_1H:

@@ -302,14 +302,18 @@ class OATPredictor(BasePredictor):
         # thee are arguments only required if you need to return the loss
         model_fwd_kwargs["target_obs"] = target_obs
         model_fwd_kwargs["target_mask_obs"] = target_mask_obs
-        out, loss = self.model.forward_with_loss(**model_fwd_kwargs)
+        out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
 
-        return out, loss, target_obs, target_mask_obs
+        return out, per_var_losses, loss, target_obs, target_mask_obs
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, target_obs, target_mask_obs= self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self._log_per_var_losses(per_var_losses=per_var_losses,
+                                 prefix="train", 
+                                 on_step=True, 
+                                 on_epoch=True)
 
         with torch.no_grad():
 
@@ -339,8 +343,11 @@ class OATPredictor(BasePredictor):
 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self._log_per_var_losses(per_var_losses=per_var_losses,
+                                 prefix="val", 
+                                 on_step=False, on_epoch=True)
             
         with torch.no_grad():
             y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
@@ -366,9 +373,12 @@ class OATPredictor(BasePredictor):
 
     def test_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
+        y_hat, per_var_losses, loss, target_obs, target_mask_obs = self(batch, return_loss_and_targets=True)
 
         self.log("test_loss", loss)
+        self._log_per_var_losses(per_var_losses=per_var_losses,
+                                 prefix="test", 
+                                 on_step=False, on_epoch=True)
         
         with torch.no_grad():
             
@@ -408,6 +418,16 @@ class OATPredictor(BasePredictor):
         else:
             raise ValueError(f"Invalid value for return_as: {return_as}. Expected 'samples' or 'distribution'.")
     
+    def _log_per_var_losses(self, per_var_losses: dict, prefix: str, on_step: bool, on_epoch: bool) -> None:
+        """
+        Given a dictionary mapping var_name->loss, logs this as separate metrics.
+        This is useful to decide whether a different scaling must be applied to each variable in the 
+        loss computation.
+        """
+        for var_name, loss_val in per_var_losses.items():
+            self.log(f'{prefix}_loss_{var_name}', loss_val,
+                     prog_bar=False, on_step=on_step, on_epoch=on_epoch)
+
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 
                                         mask: torch.Tensor,

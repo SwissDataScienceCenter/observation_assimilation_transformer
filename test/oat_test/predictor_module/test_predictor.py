@@ -21,6 +21,9 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     
     input_transform, output_transform = transform_fixture
     
+    if compute_loss:
+        model_cfg_fixture.pre_oat_loss_weight = 0.2
+
     pred = OATPredictor(oat_model_cfg=model_cfg_fixture,
                         input_transform=input_transform,
                         output_transform=output_transform,
@@ -31,7 +34,19 @@ def test_simple_predictor_forward(batch_fixture, transform_fixture, compute_loss
     if not compute_loss:
         out = pred(batch_fixture,return_loss_and_targets=False)
     else:
-        out, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
+        out, per_var_losses, loss, target, target_mask = pred.forward(batch_fixture, return_loss_and_targets=True)
+        
+        assert isinstance(loss, torch.Tensor)
+        assert loss.shape == ()
+
+        sum = 0.0
+        for per_var_loss in per_var_losses.values():
+            assert isinstance(per_var_loss, torch.Tensor)
+            assert per_var_loss.shape == ()
+            
+            sum += per_var_loss
+            
+        assert torch.isclose(sum, loss)
 
 
 @pytest.mark.parametrize("compile", [True, False], ids=["compile", "no_compile"])
