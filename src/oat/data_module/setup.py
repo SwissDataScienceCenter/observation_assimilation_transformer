@@ -58,6 +58,10 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     else:
         logger.info("Station indices already configured.")
 
+    # NOTE: to compute the statistics, only "observation_data" is used.
+    # for this reason, we temporarily ignore the split_fraction and set it to 1.0
+    # so we use 100% of the stations as "conditioning" stations to compute 
+    # the statistics. We then set it back.
     old_split_fraction = train_dataset.split_fraction
     train_dataset.split_fraction = 1.0
     logger.info("Temporarily set train datasets' split fraction to 1.0.")
