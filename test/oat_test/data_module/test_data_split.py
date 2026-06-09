@@ -98,7 +98,7 @@ def test_station_fraction_params_respected() -> None:
     assert test_ds.num_query_stations == 4
 
 
-def test_station_indices_params_override_fractions():
+def test_station_indices_params_override_fractions() -> None:
     """Explicit station indices are used instead of computing from fractions."""
     ds = MockDataset(num_stations=20, num_times=50)
     result = create_splits(
