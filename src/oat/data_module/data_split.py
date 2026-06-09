@@ -341,7 +341,7 @@ class EvalDataset(Dataset[Dict[str, Any]]):
         return {"eval": self.eval_stations.tolist(), "observed": self.observed_stations.tolist()}
 
     @property
-    def station_info(self) -> dict[str, Any]:
+    def station_info(self) -> dict[str, pd.DataFrame]:
         return {
             "eval": self.dataset.obs_ds.stations_table.loc[self.eval_stations],
             "observed": self.dataset.obs_ds.stations_table.loc[self.observed_stations],
