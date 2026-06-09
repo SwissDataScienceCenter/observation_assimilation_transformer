@@ -116,93 +116,27 @@ def _print_info(ckpt_path: str, predictor, dataset) -> None:
     print(f"Stations   : {dataset.station_coords.shape[0]}")
 
 
-def _overlay_stations(
-    ax,
-    dataset,
-    time_idx: int,
-    var_idx: int,
-    obs_indices: list[int],
-    eval_indices: list[int],
-    mesh=None,
-    color_by: dict | None = None,
-) -> None:
-    """Overlay station markers on *ax*.
-
-    When *mesh* is provided, observed station markers are colour-coded using
-    *mesh*'s colormap and normalisation.  Pass *color_by* (station_idx → value)
-    to override per-station values (e.g. obs − NWP differences); otherwise the
-    raw observation values from *dataset* are used.
-    """
-    obs_set = set(obs_indices)
-    eval_set = set(eval_indices)
-    n_st = dataset.station_coords.shape[0]
-    obs_x, obs_y, obs_vals = [], [], []
-    missing_obs_x, missing_obs_y = [], []
-    sq_x, sq_y = [], []
-
-    for s in range(n_st):
-        sx = dataset.station_coords[s, 0].item()
-        sy = dataset.station_coords[s, 1].item()
-        mask_val = dataset.obs_mask_tensor[time_idx, s, var_idx].item()
-        if s in obs_set:
-            if mask_val:
-                obs_x.append(sx)
-                obs_y.append(sy)
-                val = (
-                    color_by[s]
-                    if (color_by is not None and s in color_by)
-                    else dataset.obs_tensor[time_idx, s, var_idx].item()
-                )
-                obs_vals.append(val)
-            elif eval_set:
-                missing_obs_x.append(sx)
-                missing_obs_y.append(sy)
-            else:
-                sq_x.append(sx)
-                sq_y.append(sy)
-        elif s in eval_set:
-            sq_x.append(sx)
-            sq_y.append(sy)
-        elif not eval_set:
-            sq_x.append(sx)
-            sq_y.append(sy)
-
-    if mesh is not None and obs_vals:
-        obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))
-        obs_label = "obs − NWP" if color_by is not None else "observed"
-    else:
-        obs_colors = "white"
-        obs_label = "observed"
-
-    if obs_x:
-        ax.scatter(obs_x, obs_y, marker="o", c=obs_colors, edgecolors="black",
-                   s=10, zorder=5, label=obs_label)
-    if missing_obs_x:
-        ax.scatter(missing_obs_x, missing_obs_y, marker="o", facecolors="white",
-                   edgecolors="grey", s=10, zorder=5, label="missing")
-    sq_label = "eval" if eval_set else "not observed"
-    if sq_x:
-        ax.scatter(sq_x, sq_y, marker="s", facecolors="white", edgecolors="black",
-                   s=10, zorder=5, label=sq_label)
-
-
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
 
-    info_mode = all(
-        v is None for v in [args.time, args.var, args.resolution, args.out, args.split]
-    ) and args.n_samples == 50
+    info_mode = (
+        all(
+            v is None
+            for v in [args.time, args.var, args.resolution, args.out, args.split]
+        )
+        and args.n_samples == 50
+    )
 
     predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint)
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
-    dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(
-        cfg, logger
-    )
+    dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
@@ -223,7 +157,6 @@ def main() -> None:
         )
 
     var: str = args.var if args.var is not None else next(iter(predictor.var_to_indx))
-    var_idx = predictor.var_to_indx[var]
 
     if args.time is not None:
         snap_idx = _resolve_time_idx(dataset, args.time)
@@ -246,17 +179,31 @@ def main() -> None:
     topo_dx = (topo_ext["max"][0].item() - topo_ext["min"][0].item()) / (W - 1)
     topo_dy = (topo_ext["max"][1].item() - topo_ext["min"][1].item()) / (H - 1)
     col0 = max(0, int((ext["min"][0].item() - topo_ext["min"][0].item()) / topo_dx))
-    col1 = min(W - 1, int((ext["max"][0].item() - topo_ext["min"][0].item()) / topo_dx) + 1)
+    col1 = min(
+        W - 1, int((ext["max"][0].item() - topo_ext["min"][0].item()) / topo_dx) + 1
+    )
     row0 = max(0, int((ext["min"][1].item() - topo_ext["min"][1].item()) / topo_dy))
-    row1 = min(H - 1, int((ext["max"][1].item() - topo_ext["min"][1].item()) / topo_dy) + 1)
+    row1 = min(
+        H - 1, int((ext["max"][1].item() - topo_ext["min"][1].item()) / topo_dy) + 1
+    )
     stride = 10
-    sub = dataset.topo_field[1:, row0:row1:stride, col0:col1:stride]  # (C-1, n_rows, n_cols)
+    sub = dataset.topo_field[
+        1:, row0:row1:stride, col0:col1:stride
+    ]  # (C-1, n_rows, n_cols)
     row_valid = torch.isfinite(sub).all(dim=0).all(dim=1)
     valid_r = row_valid.nonzero(as_tuple=True)[0]
     extra = stride * topo_dy + patch_margin
     if len(valid_r):
-        topo_y_min = topo_ext["min"][1].item() + (row0 + valid_r[0].item() * stride) * topo_dy + extra
-        topo_y_max = topo_ext["min"][1].item() + (row0 + valid_r[-1].item() * stride) * topo_dy - extra
+        topo_y_min = (
+            topo_ext["min"][1].item()
+            + (row0 + valid_r[0].item() * stride) * topo_dy
+            + extra
+        )
+        topo_y_max = (
+            topo_ext["min"][1].item()
+            + (row0 + valid_r[-1].item() * stride) * topo_dy
+            - extra
+        )
     else:
         topo_y_min, topo_y_max = ext["min"][1].item(), ext["max"][1].item()
     topo_x_min = topo_ext["min"][0].item() + patch_margin
@@ -275,17 +222,18 @@ def main() -> None:
     y_max = min(st_y_max + margin_y, topo_y_max)
 
     domain_width = x_max - x_min
-    resolution: float = args.resolution if args.resolution is not None else domain_width / 100.0
+    resolution: float = (
+        args.resolution if args.resolution is not None else domain_width / 100.0
+    )
     xs = np.arange(x_min, x_max + 1e-9, resolution)
     ys = np.arange(y_min, y_max + 1e-9, resolution)
-    x_grid, y_grid = np.meshgrid(xs, ys)
-    query_coords = torch.tensor(
-        np.stack([x_grid.ravel(), y_grid.ravel()], axis=1), dtype=torch.float32
-    )
 
     logger.info(
         "Domain grid: %dx%d (%d query points) at resolution %.4g",
-        len(xs), len(ys), len(xs) * len(ys), resolution,
+        len(xs),
+        len(ys),
+        len(xs) * len(ys),
+        resolution,
     )
     logger.info("Plotting %s at %s", var, snap_time_iso)
 
@@ -305,90 +253,25 @@ def main() -> None:
         output_var_names=dataset.config.obs_vars,
         input_transform=baseline_pre_transform,
     ).eval()
-    nwp_plotter = OATPlotter(
-        predictor=nwp_predictor,
-        dataset=dataset,
-        obs_station_indices=obs_station_indices,
-        eval_indices=eval_indices,
-        n_samples=1,
-        device="cpu",
+
+    ckpt_tag = Path(args.checkpoint).parent.name
+    fig = plotter.plot_domain_overview(
+        other=nwp_predictor,
+        var=var,
+        time_idx=snap_idx,
+        xs=xs,
+        ys=ys,
+        title=f"OAT domain overview — {var} — {snap_time_iso} — {ckpt_tag}",
     )
 
-    logger.info("Running NWP inference...")
-    samples_nwp = nwp_plotter._run_inference(snap_idx, query_coords, predictor=nwp_predictor)
-    nwp_mean = samples_nwp[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
-
-    logger.info("Running OAT inference...")
-    samples_oat = plotter._run_inference(snap_idx, query_coords)
-    oat_mean = samples_oat[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
-    oat_std = samples_oat[:, :, var_idx].std(dim=1).numpy().reshape(y_grid.shape)
-
-    diff = oat_mean - nwp_mean
-    vmax_diff = float(np.abs(diff).max()) or 1.0
-
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_tag = Path(args.checkpoint).parent.name
-    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    fig.suptitle(f"OAT domain overview — {var} — {snap_time_iso} — {ckpt_tag}")
-
-    obs_indices_list = plotter.obs_indices
-    eval_indices_list = plotter.eval_indices
-
-    # Compute NWP values at observed station locations for the diff-panel markers.
-    if obs_indices_list:
-        st_tensor = dataset.station_coords[obs_indices_list]
-        nwp_at_st = nwp_plotter._run_inference(snap_idx, st_tensor, predictor=nwp_predictor)
-        nwp_st_means = nwp_at_st[:, :, var_idx].mean(dim=1).numpy()
-        color_by_diff: dict[int, float] = {
-            s: dataset.obs_tensor[snap_idx, s, var_idx].item() - nwp_st_means[i]
-            for i, s in enumerate(obs_indices_list)
-            if dataset.obs_mask_tensor[snap_idx, s, var_idx].item()
-        }
-    else:
-        color_by_diff = {}
-
-    # Panel 1: NWP interpolation
-    mesh_nwp = axes[0].pcolormesh(xs, ys, nwp_mean, shading="auto")
-    plt.colorbar(mesh_nwp, ax=axes[0], label=var)
-    axes[0].set_title(f"NWP interp.  ({snap_time_iso})")
-    axes[0].set_xlabel("X")
-    axes[0].set_ylabel("Y")
-    _overlay_stations(axes[0], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
-                      mesh=mesh_nwp)
-
-    # Panel 2: OAT mean
-    mesh_mean = axes[1].pcolormesh(xs, ys, oat_mean, shading="auto",
-                                    vmin=mesh_nwp.norm.vmin, vmax=mesh_nwp.norm.vmax,
-                                    cmap=mesh_nwp.cmap)
-    plt.colorbar(mesh_mean, ax=axes[1], label=var)
-    axes[1].set_title("OAT mean")
-    axes[1].set_xlabel("X")
-    _overlay_stations(axes[1], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
-                      mesh=mesh_mean)
-
-    # Panel 3: OAT std
-    mesh_std = axes[2].pcolormesh(xs, ys, oat_std, shading="auto")
-    plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
-    axes[2].set_title("OAT predictive std")
-    axes[2].set_xlabel("X")
-    _overlay_stations(axes[2], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list)
-
-    # Panel 4: OAT − NWP diff (background) with obs − NWP on station markers
-    mesh_diff = axes[3].pcolormesh(xs, ys, diff, cmap="RdBu_r",
-                                    vmin=-vmax_diff, vmax=vmax_diff, shading="auto")
-    plt.colorbar(mesh_diff, ax=axes[3], label=f"Δ{var}")
-    axes[3].set_title("OAT − NWP  |  markers: obs − NWP")
-    axes[3].set_xlabel("X")
-    _overlay_stations(axes[3], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
-                      mesh=mesh_diff, color_by=color_by_diff)
-
-    fig.tight_layout()
     out_path = (
         Path(args.out)
         if args.out is not None
         else OUT_DIR / f"{ckpt_tag}_domain_{var}_{snap_time_iso}.png"
     )
     fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
     logger.info("Saved → %s", out_path)
 
 
