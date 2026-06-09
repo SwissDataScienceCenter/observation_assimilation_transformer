@@ -16,7 +16,7 @@ class GeometryAwareMHA(nn.Module):
         dropout: float = 0.0,
         d_geo_bias: Optional[int] = None,
         geo_bias_hidden_dim: int = 64,
-        activation_geo_bias: str = "ReLU",
+        activation_geo_bias: str = "GELU",
         sparse_attn: bool = False,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,

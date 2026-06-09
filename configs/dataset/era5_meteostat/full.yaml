@@ -1,0 +1,19 @@
+defaults:
+  - era5_meteostat/settings@_here_
+  - era5_meteostat/catalog@catalog
+  - _self_
+
+nwp_vars:
+  - 2t
+  - 10u
+  - 10v
+
+obs_vars:
+  - temp
+  - prcp
+  - wspd
+
+obs_variable_to_distribution:
+  temp: "normal"
+  prcp: "zero_inflated_lognormal"
+  wspd: "lognormal"

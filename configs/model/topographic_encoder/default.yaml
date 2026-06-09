@@ -5,5 +5,5 @@ initial_hw:
   - 32
   - 32
 kernel_sizes: 3
-act_fn: ReLU
+act_fn: GELU
 use_batchnorm: true
