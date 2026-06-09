@@ -82,6 +82,13 @@ def _parse_args() -> argparse.Namespace:
             "test stations as squares."
         ),
     )
+    p.add_argument(
+        "--margin",
+        type=float,
+        default=0.05,
+        metavar="F",
+        help="Fractional margin around station bounding box (default: 0.05 = 5%%).",
+    )
     return p.parse_args()
 
 
@@ -207,38 +214,45 @@ def main() -> None:
         )
     snap_time_iso = dataset.times[snap_idx].strftime("%Y-%m-%dT%H")
 
-    # Build domain grid restricted to where all topo channels are valid.
+    # Topo validity scan: find the region where all topo channels are finite.
     # DEM has no NaN; TPI/derivative channels (1+) have NaN at the southern topo
-    # boundary (~rows 0-1600 = ~80 km). Clip y by scanning row validity within the
-    # NWP x-column range. x only needs the patch half-size inset from the topo edge.
+    # boundary (~rows 0-1600 = ~80 km). Scan row validity within the NWP x-column
+    # range; x only needs the patch half-size inset from the topo edge.
     ext = dataset.nwp_extent
     topo_ext = dataset.topo_extent
     patch_margin = dataset.topo_grid.abs().max().item()
     H, W = dataset.topo_field.shape[1:]
     topo_dx = (topo_ext["max"][0].item() - topo_ext["min"][0].item()) / (W - 1)
     topo_dy = (topo_ext["max"][1].item() - topo_ext["min"][1].item()) / (H - 1)
-    # Map NWP extent to topo row/col indices
     col0 = max(0, int((ext["min"][0].item() - topo_ext["min"][0].item()) / topo_dx))
     col1 = min(W - 1, int((ext["max"][0].item() - topo_ext["min"][0].item()) / topo_dx) + 1)
     row0 = max(0, int((ext["min"][1].item() - topo_ext["min"][1].item()) / topo_dy))
     row1 = min(H - 1, int((ext["max"][1].item() - topo_ext["min"][1].item()) / topo_dy) + 1)
-    # Scan non-DEM channels at stride 10 for speed
     stride = 10
     sub = dataset.topo_field[1:, row0:row1:stride, col0:col1:stride]  # (C-1, n_rows, n_cols)
-    row_valid = torch.isfinite(sub).all(dim=0).all(dim=1)  # True where ALL cols are finite
+    row_valid = torch.isfinite(sub).all(dim=0).all(dim=1)
     valid_r = row_valid.nonzero(as_tuple=True)[0]
-    # Extra margin: stride uncertainty + patch half-size
     extra = stride * topo_dy + patch_margin
     if len(valid_r):
-        y_min = max(ext["min"][1].item(),
-                    topo_ext["min"][1].item() + (row0 + valid_r[0].item() * stride) * topo_dy + extra)
-        y_max = min(ext["max"][1].item(),
-                    topo_ext["min"][1].item() + (row0 + valid_r[-1].item() * stride) * topo_dy - extra)
+        topo_y_min = topo_ext["min"][1].item() + (row0 + valid_r[0].item() * stride) * topo_dy + extra
+        topo_y_max = topo_ext["min"][1].item() + (row0 + valid_r[-1].item() * stride) * topo_dy - extra
     else:
-        y_min, y_max = ext["min"][1].item(), ext["max"][1].item()
-    # x: inset by patch half-size from topo boundary only
-    x_min = max(ext["min"][0].item(), topo_ext["min"][0].item() + patch_margin)
-    x_max = min(ext["max"][0].item(), topo_ext["max"][0].item() - patch_margin)
+        topo_y_min, topo_y_max = ext["min"][1].item(), ext["max"][1].item()
+    topo_x_min = topo_ext["min"][0].item() + patch_margin
+    topo_x_max = topo_ext["max"][0].item() - patch_margin
+
+    # Build query grid around station bounding box + fractional margin,
+    # clamped to the valid topo region computed above.
+    st_coords = dataset.station_coords.numpy()  # (N, 2)
+    st_x_min, st_y_min = float(st_coords[:, 0].min()), float(st_coords[:, 1].min())
+    st_x_max, st_y_max = float(st_coords[:, 0].max()), float(st_coords[:, 1].max())
+    margin_x = (st_x_max - st_x_min) * args.margin
+    margin_y = (st_y_max - st_y_min) * args.margin
+    x_min = max(st_x_min - margin_x, topo_x_min)
+    x_max = min(st_x_max + margin_x, topo_x_max)
+    y_min = max(st_y_min - margin_y, topo_y_min)
+    y_max = min(st_y_max + margin_y, topo_y_max)
+
     domain_width = x_max - x_min
     resolution: float = args.resolution if args.resolution is not None else domain_width / 100.0
     xs = np.arange(x_min, x_max + 1e-9, resolution)
