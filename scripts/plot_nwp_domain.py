@@ -123,7 +123,16 @@ def _overlay_stations(
     var_idx: int,
     obs_indices: list[int],
     eval_indices: list[int],
+    mesh=None,
+    color_by: dict | None = None,
 ) -> None:
+    """Overlay station markers on *ax*.
+
+    When *mesh* is provided, observed station markers are colour-coded using
+    *mesh*'s colormap and normalisation.  Pass *color_by* (station_idx → value)
+    to override per-station values (e.g. obs − NWP differences); otherwise the
+    raw observation values from *dataset* are used.
+    """
     obs_set = set(obs_indices)
     eval_set = set(eval_indices)
     n_st = dataset.station_coords.shape[0]
@@ -139,7 +148,12 @@ def _overlay_stations(
             if mask_val:
                 obs_x.append(sx)
                 obs_y.append(sy)
-                obs_vals.append(dataset.obs_tensor[time_idx, s, var_idx].item())
+                val = (
+                    color_by[s]
+                    if (color_by is not None and s in color_by)
+                    else dataset.obs_tensor[time_idx, s, var_idx].item()
+                )
+                obs_vals.append(val)
             elif eval_set:
                 missing_obs_x.append(sx)
                 missing_obs_y.append(sy)
@@ -153,9 +167,16 @@ def _overlay_stations(
             sq_x.append(sx)
             sq_y.append(sy)
 
+    if mesh is not None and obs_vals:
+        obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))
+        obs_label = "obs − NWP" if color_by is not None else "observed"
+    else:
+        obs_colors = "white"
+        obs_label = "observed"
+
     if obs_x:
-        ax.scatter(obs_x, obs_y, marker="o", c="white", edgecolors="black",
-                   s=10, zorder=5, label="observed")
+        ax.scatter(obs_x, obs_y, marker="o", c=obs_colors, edgecolors="black",
+                   s=10, zorder=5, label=obs_label)
     if missing_obs_x:
         ax.scatter(missing_obs_x, missing_obs_y, marker="o", facecolors="white",
                    edgecolors="grey", s=10, zorder=5, label="missing")
@@ -313,13 +334,27 @@ def main() -> None:
     obs_indices_list = plotter.obs_indices
     eval_indices_list = plotter.eval_indices
 
+    # Compute NWP values at observed station locations for the diff-panel markers.
+    if obs_indices_list:
+        st_tensor = dataset.station_coords[obs_indices_list]
+        nwp_at_st = nwp_plotter._run_inference(snap_idx, st_tensor, predictor=nwp_predictor)
+        nwp_st_means = nwp_at_st[:, :, var_idx].mean(dim=1).numpy()
+        color_by_diff: dict[int, float] = {
+            s: dataset.obs_tensor[snap_idx, s, var_idx].item() - nwp_st_means[i]
+            for i, s in enumerate(obs_indices_list)
+            if dataset.obs_mask_tensor[snap_idx, s, var_idx].item()
+        }
+    else:
+        color_by_diff = {}
+
     # Panel 1: NWP interpolation
     mesh_nwp = axes[0].pcolormesh(xs, ys, nwp_mean, shading="auto")
     plt.colorbar(mesh_nwp, ax=axes[0], label=var)
     axes[0].set_title(f"NWP interp.  ({snap_time_iso})")
     axes[0].set_xlabel("X")
     axes[0].set_ylabel("Y")
-    _overlay_stations(axes[0], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list)
+    _overlay_stations(axes[0], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
+                      mesh=mesh_nwp)
 
     # Panel 2: OAT mean
     mesh_mean = axes[1].pcolormesh(xs, ys, oat_mean, shading="auto",
@@ -328,7 +363,8 @@ def main() -> None:
     plt.colorbar(mesh_mean, ax=axes[1], label=var)
     axes[1].set_title("OAT mean")
     axes[1].set_xlabel("X")
-    _overlay_stations(axes[1], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list)
+    _overlay_stations(axes[1], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
+                      mesh=mesh_mean)
 
     # Panel 3: OAT std
     mesh_std = axes[2].pcolormesh(xs, ys, oat_std, shading="auto")
@@ -337,13 +373,14 @@ def main() -> None:
     axes[2].set_xlabel("X")
     _overlay_stations(axes[2], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list)
 
-    # Panel 4: OAT − NWP diff
+    # Panel 4: OAT − NWP diff (background) with obs − NWP on station markers
     mesh_diff = axes[3].pcolormesh(xs, ys, diff, cmap="RdBu_r",
                                     vmin=-vmax_diff, vmax=vmax_diff, shading="auto")
     plt.colorbar(mesh_diff, ax=axes[3], label=f"Δ{var}")
-    axes[3].set_title("OAT − NWP")
+    axes[3].set_title("OAT − NWP  |  markers: obs − NWP")
     axes[3].set_xlabel("X")
-    _overlay_stations(axes[3], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list)
+    _overlay_stations(axes[3], dataset, snap_idx, var_idx, obs_indices_list, eval_indices_list,
+                      mesh=mesh_diff, color_by=color_by_diff)
 
     fig.tight_layout()
     out_path = (
