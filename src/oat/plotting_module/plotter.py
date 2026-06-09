@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -733,3 +734,123 @@ class OATPlotter:
             resolution=resolution,
             show_stations=show_stations,
         )
+
+    def plot_domain_overview(
+        self,
+        other: BasePredictor,
+        var: str,
+        time_idx: int,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        title: str = "",
+    ) -> Any:
+        """Produce a 4-panel domain diagnostic figure.
+
+        Panels: (1) NWP interpolation mean, (2) OAT predicted mean,
+        (3) OAT predictive std, (4) OAT − NWP difference with obs − NWP
+        station colouring.
+
+        Args:
+            other: NWP baseline predictor (subtracted from self in panel 4).
+            var: Variable name (must be in predictor.var_to_indx).
+            time_idx: Dataset time index to predict at.
+            xs: 1-D array of x coordinates for the query grid.
+            ys: 1-D array of y coordinates for the query grid.
+            title: Optional figure suptitle.
+
+        Returns:
+            The matplotlib Figure.  The caller is responsible for saving/closing.
+        """
+        var_idx = self.predictor.var_to_indx[var]
+        x_grid, y_grid = np.meshgrid(xs, ys)
+        query_coords = torch.tensor(
+            np.stack([x_grid.ravel(), y_grid.ravel()], axis=1),
+            dtype=torch.float32,
+        )
+
+        samples_nwp = self._run_inference(time_idx, query_coords, predictor=other)
+        nwp_mean = samples_nwp[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
+
+        samples_oat = self._run_inference(time_idx, query_coords)
+        oat_mean = samples_oat[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
+        oat_std = samples_oat[:, :, var_idx].std(dim=1).numpy().reshape(y_grid.shape)
+
+        diff = oat_mean - nwp_mean
+        vmax_diff = float(np.abs(diff).max()) or 1.0
+
+        # Compute obs − NWP differences for coloured station markers in panel 4.
+        obs_set = set(self.obs_indices)
+        eval_set = set(self.eval_indices)
+        colored_indices = [
+            s
+            for s in range(self.dataset.station_coords.shape[0])
+            if (s in obs_set or s in eval_set)
+            and self.dataset.obs_mask_tensor[time_idx, s, var_idx].item()
+        ]
+        color_by_diff: dict[int, float] = {}
+        if colored_indices:
+            st_coords = torch.tensor(
+                [
+                    [
+                        self.dataset.station_coords[s, 0].item(),
+                        self.dataset.station_coords[s, 1].item(),
+                    ]
+                    for s in colored_indices
+                ],
+                dtype=torch.float32,
+            )
+            nwp_at_st = self._run_inference(time_idx, st_coords, predictor=other)
+            nwp_means = nwp_at_st[:, :, var_idx].mean(dim=1).numpy()
+            for i, s in enumerate(colored_indices):
+                obs_val = self.dataset.obs_tensor[time_idx, s, var_idx].item()
+                color_by_diff[s] = obs_val - nwp_means[i]
+
+        fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+        if title:
+            fig.suptitle(title)
+
+        mesh_nwp = axes[0].pcolormesh(xs, ys, nwp_mean, shading="auto")
+        axes[0].set_title("NWP interp.")
+        axes[0].set_xlabel("X")
+        axes[0].set_ylabel("Y")
+        self._overlay_stations(axes[0], time_idx, var_idx, mesh=mesh_nwp)
+        plt.colorbar(mesh_nwp, ax=axes[0], label=var)
+
+        mesh_mean = axes[1].pcolormesh(
+            xs,
+            ys,
+            oat_mean,
+            shading="auto",
+            vmin=mesh_nwp.norm.vmin,
+            vmax=mesh_nwp.norm.vmax,
+            cmap=mesh_nwp.cmap,
+        )
+        axes[1].set_title("OAT mean")
+        axes[1].set_xlabel("X")
+        self._overlay_stations(axes[1], time_idx, var_idx, mesh=mesh_mean)
+        plt.colorbar(mesh_mean, ax=axes[1], label=var)
+
+        mesh_std = axes[2].pcolormesh(xs, ys, oat_std, shading="auto")
+        axes[2].set_title("OAT predictive std")
+        axes[2].set_xlabel("X")
+        self._overlay_stations(axes[2], time_idx, var_idx)
+        plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
+
+        mesh_diff = axes[3].pcolormesh(
+            xs,
+            ys,
+            diff,
+            cmap="RdBu_r",
+            vmin=-vmax_diff,
+            vmax=vmax_diff,
+            shading="auto",
+        )
+        axes[3].set_title("OAT − NWP  |  markers: obs − NWP")
+        axes[3].set_xlabel("X")
+        self._overlay_stations(
+            axes[3], time_idx, var_idx, mesh=mesh_diff, color_by=color_by_diff
+        )
+        plt.colorbar(mesh_diff, ax=axes[3], label=f"Δ{var}")
+
+        fig.tight_layout()
+        return fig

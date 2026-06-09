@@ -2,6 +2,7 @@ import math
 
 import matplotlib
 import matplotlib.collections
+import numpy as np
 import pandas as pd
 import pytest
 import torch
@@ -767,4 +768,93 @@ class TestOverlayStations:
         plotter._overlay_stations(ax, time_idx=0, var_idx=0, mesh=mesh, color_by={0: 1.0, 1: 2.0})
         obs_scatter = next(c for c in ax.collections if c.get_label() == "obs − NWP")
         assert obs_scatter is not None
+        plt.close(fig)
+
+
+# ── plot_domain_overview ───────────────────────────────────────────────────
+
+import matplotlib.figure
+
+
+class TestPlotDomainOverview:
+    def setup_method(self):
+        matplotlib.use("Agg")
+
+    def _make_plotter_and_other(self, n_samples=5, n_vars=2):
+        n_stations = 3
+        predictor = _make_predictor(N_q=4, n_samples=n_samples, n_vars=n_vars)
+        other = _make_baseline_predictor(N_q=4, n_samples=n_samples, n_vars=n_vars)
+        dataset = _make_dataset(n_stations=n_stations)
+        dataset.station_coords = torch.zeros(n_stations, 2)
+        dataset.obs_mask_tensor = torch.ones(4, n_stations, n_vars)
+        dataset.obs_tensor = torch.ones(4, n_stations, n_vars)
+        plotter = OATPlotter(
+            predictor, dataset,
+            obs_station_indices=[0, 1],
+            n_samples=n_samples,
+        )
+        return plotter, other
+
+    def test_returns_figure(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+        assert isinstance(fig, matplotlib.figure.Figure)
+        plt.close(fig)
+
+    def test_figure_has_four_axes(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+        assert len(fig.axes) >= 4
+        plt.close(fig)
+
+    def test_title_is_set_when_provided(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys, title="My Title")
+        assert fig._suptitle is not None
+        assert fig._suptitle.get_text() == "My Title"
+        plt.close(fig)
+
+    def test_no_suptitle_when_title_empty(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+        assert fig._suptitle is None or fig._suptitle.get_text() == ""
+        plt.close(fig)
+
+    def test_run_inference_called_at_least_twice(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+        assert mock_inf.call_count >= 2
+        plt.close("all")
+
+    def test_second_panel_shares_nwp_colormap(self):
+        plotter, other = self._make_plotter_and_other()
+        xs = np.linspace(0, 1, 2)
+        ys = np.linspace(0, 1, 2)
+        with patch.object(plotter, "_run_inference") as mock_inf:
+            mock_inf.return_value = torch.zeros(4, 5, 2)
+            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+        ax0, ax1 = fig.axes[0], fig.axes[1]
+        mesh0 = next(c for c in ax0.get_children() if hasattr(c, "get_clim"))
+        mesh1 = next(c for c in ax1.get_children() if hasattr(c, "get_clim"))
+        assert mesh0.get_clim() == mesh1.get_clim()
         plt.close(fig)
