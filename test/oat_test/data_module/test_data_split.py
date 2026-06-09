@@ -149,7 +149,7 @@ def test_temporal_split_excludes_test_days_from_train_val():
     assert len(test_ds) == 120
 
 
-def test_temporal_split_cutoff_is_last_n_days():
+def test_temporal_split_cutoff_is_last_n_days() -> None:
     """All test time steps must be strictly after (last_time - test_days)."""
     ds = MockDataset(num_stations=20, num_times=200)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2,
