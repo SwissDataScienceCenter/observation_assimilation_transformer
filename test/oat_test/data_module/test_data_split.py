@@ -62,13 +62,13 @@ def test_train_dataset_getitem_maps_through_time_indices():
 
 # ── EvalDataset with time_indices ────────────────────────────────────────────
 
-def test_eval_dataset_no_time_indices_uses_all_times():
+def test_eval_dataset_no_time_indices_uses_all_times() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     eval_ds = EvalDataset(ds, eval_indices=np.arange(5), observed_indices=np.arange(5, 15))
     assert len(eval_ds) == 100
 
 
-def test_eval_dataset_time_indices_restricts_length():
+def test_eval_dataset_time_indices_restricts_length() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     time_idx = np.arange(80, 100)  # 20 test time steps
     eval_ds = EvalDataset(ds, eval_indices=np.arange(5), observed_indices=np.arange(5, 15),
@@ -76,7 +76,7 @@ def test_eval_dataset_time_indices_restricts_length():
     assert len(eval_ds) == 20
 
 
-def test_eval_dataset_getitem_maps_through_time_indices():
+def test_eval_dataset_getitem_maps_through_time_indices() -> None:
     ds = MockDataset(num_times=100, num_stations=20)
     time_idx = np.array([50, 60, 70])
     eval_ds = EvalDataset(ds, eval_indices=np.arange(5), observed_indices=np.arange(5, 15),
