@@ -9,7 +9,7 @@
 # The --env flag selects the Python environment (poetry or uv).
 # All other arguments are forwarded as Hydra overrides to scripts.train_model.
 
-#SBATCH --job-name="europe"
+#SBATCH --job-name="oat_training"
 
 ### HARDWARE ###
 #SBATCH --partition=normal
