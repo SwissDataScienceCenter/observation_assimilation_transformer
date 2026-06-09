@@ -254,7 +254,7 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         return self.stations.tolist()
 
     @property
-    def station_info(self):
+    def station_info(self) -> pd.DataFrame:
         return self.dataset.obs_ds.stations_table.loc[self.stations]
 
     @property
