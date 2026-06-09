@@ -87,7 +87,7 @@ def test_eval_dataset_getitem_maps_through_time_indices() -> None:
 
 # ── create_splits — station rename ───────────────────────────────────────────
 
-def test_station_fraction_params_respected():
+def test_station_fraction_params_respected() -> None:
     """val/test_station_fraction correctly size station groups."""
     ds = MockDataset(num_stations=20, num_times=50)
     result = create_splits(ds, val_station_fraction=0.2, test_station_fraction=0.2, seed=0)
