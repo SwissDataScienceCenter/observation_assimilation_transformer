@@ -11,7 +11,7 @@ from oat.data_module.data_split import create_splits, TrainDataset, EvalDataset
 class MockDataset(Dataset):
     """Minimal dataset for unit-testing data_split logic without real data."""
 
-    def __init__(self, num_stations: int = 20, num_times: int = 100):
+    def __init__(self, num_stations: int = 20, num_times: int = 100) -> None:
         self.stations = np.array([f"S{i:03d}" for i in range(num_stations)])
         self.times = pd.date_range("2021-01-01", periods=num_times, freq="h", tz="UTC")
         self._num_times = num_times
