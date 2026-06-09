@@ -296,7 +296,7 @@ class LearnableGating(nn.Module):
                  out_channels: int, 
                  hidden_channels: int = 32,
                  n_layers: int = 2,
-                 activation: str = "ReLU"):
+                 activation: str = "GELU"):
         super().__init__()
         
         layers = []

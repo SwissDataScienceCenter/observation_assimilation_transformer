@@ -26,7 +26,7 @@ class CNNTopographyEncoder(TopographyEncoder):
                  initial_hw: tuple[int, int] | None = None,
                  target_hw: list[tuple[int, int]] | None = None,
                  channels: list[int] | None = None,
-                 act_fn: str = "ReLU",
+                 act_fn: str = "GELU",
                  act_fn_kwargs: dict[str, Any] | None = None,
                  use_batchnorm: bool = True
                  ):

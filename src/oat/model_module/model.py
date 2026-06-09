@@ -36,7 +36,7 @@ class GlobalEncoderConfig:
     kernel_size: int = 3
     num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
-    act_fn: str = 'ReLU'
+    act_fn: str = 'GELU'
 
 
 
@@ -48,7 +48,7 @@ class TopographicEncoderConfig:
     n_layers: int = 3
     initial_hw: Tuple[int, int] = (32, 32)
     kernel_sizes: int = 3
-    act_fn: str = 'ReLU'
+    act_fn: str = 'GELU'
     use_batchnorm: bool = True
 
 
@@ -92,7 +92,7 @@ class LearnableGatingConfig:
     out_channels: int  # data-dependent, must be set explicitly
     hidden_channels: int = 32
     n_layers: int = 2
-    activation: str = "ReLU"
+    activation: str = "GELU"
 
 
 @dataclass
@@ -109,7 +109,7 @@ class TransformerConfig:
     sparse_attn: bool = True
     decoder_self_attention: bool = False
     dim_geo_bias_feedforward: int = 16
-    activation_geo_bias: str = "ReLU"
+    activation_geo_bias: str = "GELU"
 
 
 @dataclass
