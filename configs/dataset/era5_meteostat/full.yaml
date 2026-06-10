@@ -5,8 +5,8 @@ defaults:
 
 nwp_vars:
   - 2t
-  - 10u
-  - 10v
+  - tp
+  - wind_speed
 
 obs_vars:
   - temp
