@@ -56,6 +56,8 @@ def create_splits(
     """
     # ── Temporal split ────────────────────────────────────────────────────────
     all_positions = np.arange(len(dataset))
+    if test_days > 0 and not hasattr(dataset, "times"):
+        raise AttributeError("test_days > 0 requires dataset.times (pandas DatetimeIndex).")
     if test_days > 0:
         cutoff = dataset.times[-1] - pd.Timedelta(days=test_days)
         train_val_mask = dataset.times <= cutoff
