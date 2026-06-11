@@ -285,7 +285,7 @@ class TrainDataset(Dataset[Dict[str, Any]]):
 
         Returns: (NestedTransform for batches, Transform for obs-only output).
         """
-        data_indices = None if dataloader is not None else self.train_indices
+        data_indices = None if dataloader is not None else self._time_indices
         return self.dataset.get_transform(
             num_data_points=num_data_points,
             dataloader=dataloader,
