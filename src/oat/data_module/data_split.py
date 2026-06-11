@@ -333,7 +333,8 @@ class EvalDataset(Dataset[Dict[str, Any]]):
         actual_idx = self._time_indices[idx] if self._time_indices is not None else idx
         data = self.dataset[actual_idx]
         observation_data = data["observation_data"]
-        eval_data, observed_data = {}, {}
+        eval_data: dict[str, Any] = {}
+        observed_data: dict[str, Any] = {}
         for key in observation_data:
             eval_data[key] = observation_data[key][self.eval_indices]
             observed_data[key] = observation_data[key][self.observed_indices]
