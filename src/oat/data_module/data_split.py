@@ -237,7 +237,8 @@ class TrainDataset(Dataset[Dict[str, Any]]):
         query_indices = permuted[split_point:]
 
         observation_data = data["observation_data"]
-        key_data, query_data = {}, {}
+        key_data: dict[str, Any] = {}
+        query_data: dict[str, Any] = {}
         for key in observation_data:
             key_data[key] = observation_data[key][key_indices]
             query_data[key] = observation_data[key][query_indices]
