@@ -17,4 +17,6 @@ def get_activation(name: str, **kwargs):
     cls = getattr(nn, name, None)
     if cls is None:
         raise ValueError(f"Activation {name} not found in torch.nn")
+    if name == "GELU":
+        kwargs.setdefault("approximate", "tanh")
     return cls(**kwargs)

@@ -93,15 +93,15 @@ def test_splits(observation_fraction: float) -> None:
     
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     
-    split_cfg = {'val_fraction': 0.2, 
-                 'test_fraction': 0.2, 
+    split_cfg = {'val_station_fraction': 0.2,
+                 'test_station_fraction': 0.2,
                  'train_split_fraction': observation_fraction}
 
     split_dict = create_splits(dataset, **split_cfg)
     train_dataset, val_dataset, test_dataset = split_dict['datasets']
-    
-    num_train_station = int(len(dataset.stations) * (1.0 - split_cfg['val_fraction'] - split_cfg['test_fraction']))
-    num_train_and_val_station = int(len(dataset.stations) * (1.0 - split_cfg['test_fraction']))
+
+    num_train_station = int(len(dataset.stations) * (1.0 - split_cfg['val_station_fraction'] - split_cfg['test_station_fraction']))
+    num_train_and_val_station = int(len(dataset.stations) * (1.0 - split_cfg['test_station_fraction']))
     
     
     if observation_fraction == 0.0:

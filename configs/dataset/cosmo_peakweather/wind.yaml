@@ -11,8 +11,12 @@ nwp_vars:
 
 obs_vars:
   - wind_speed
+  - wind_u
+  - wind_v
 
 obs_variable_to_distribution:
   wind_speed: "lognormal"
+  wind_u: "normal"
+  wind_v: "normal"
 
 station_type: meteo_station # with null, all stations are taken, among which there are rain gauges

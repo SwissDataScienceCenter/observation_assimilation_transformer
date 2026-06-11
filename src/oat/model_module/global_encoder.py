@@ -87,7 +87,7 @@ class MLPGlobalEncoder(InterpolationGlobalEncoder):
         for hidden_dim in hidden_dims:
             if input_dim is not None:
                 layers.append(torch.nn.Linear(input_dim, hidden_dim))
-                layers.append(get_activation(mlp_params.get('act_fn', 'ReLU')))
+                layers.append(get_activation(mlp_params.get('act_fn', 'GELU')))
             input_dim = hidden_dim
         layers.append(torch.nn.Linear(input_dim, output_dim))
         self.model = torch.nn.Sequential(*layers)
@@ -158,7 +158,7 @@ class ResNetCNNGlobalEncoder(InterpolationGlobalEncoder):
         out_channels = resnet_cnn_params['out_channels']
         num_blocks = resnet_cnn_params.get('num_blocks', 4)
         kernel_size = resnet_cnn_params.get('kernel_size', 3)
-        act_fn = resnet_cnn_params.get('act_fn', 'ReLU')
+        act_fn = resnet_cnn_params.get('act_fn', 'GELU')
         pad = kernel_size // 2
         layers: list[torch.nn.Module] = [
             torch.nn.Conv2d(in_channels, out_channels, kernel_size, padding=pad, bias=False),
