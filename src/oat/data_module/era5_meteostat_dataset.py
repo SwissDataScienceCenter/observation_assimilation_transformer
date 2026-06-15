@@ -267,7 +267,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         gy = torch.linspace(-(h // 2) * topo_res, (h // 2) * topo_res, h)
         gx = torch.linspace(-(w // 2) * topo_res, (w // 2) * topo_res, w)
         lat_off, lon_off = torch.meshgrid(gy, gx, indexing="ij")  # (h, w)
-        self.patch_grid = torch.stack([lon_off, lat_off], dim=-1)  # (h, w, 2)
+        self.topo_grid = torch.stack([lon_off, lat_off], dim=-1)  # (h, w, 2)
 
     def _load_observations(self) -> None:
         obs_arr, mask_arr = self.obs_ds.get_observations(
@@ -281,6 +281,11 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         local_indices = self.time_indices - self.time_indices[0]
         self.obs_tensor = torch.from_numpy(obs_arr[local_indices])
         self.obs_mask_tensor = torch.from_numpy(mask_arr[local_indices])
+
+        obs_vars = list(self.config.obs_vars)
+        for wind_var in ("wspd", "wpgt"):
+            if wind_var in obs_vars:
+                self.obs_tensor[..., obs_vars.index(wind_var)] /= 3.6
 
         meta = self.obs_ds.stations_table.loc[self.stations]
         self.station_coords = torch.tensor(
@@ -332,7 +337,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             "coords": self.station_coords,
             "geo": self.station_geo,
             "topo": self._extract_patches(
-                self.station_coords, self.topo_field, self.patch_grid, self.topo_extent
+                self.station_coords, self.topo_field, self.topo_grid, self.topo_extent
             ),
             "obs": self.obs_tensor[idx].to(dtype_map[self.config.dtype]).nan_to_num(nan=0.0),
             "mask_obs": self.obs_mask_tensor[idx].to(dtype_map[self.config.dtype]),
@@ -348,7 +353,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         return {
             "coords": query_coords,
             "topo": self._extract_patches(
-                query_coords, self.topo_field, self.patch_grid, self.topo_extent
+                query_coords, self.topo_field, self.topo_grid, self.topo_extent
             ),
             "geo": self._get_geo(query_coords),
         }
@@ -401,7 +406,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         num_data_points: int,
         dataloader: DataLoader[dict[str, torch.Tensor]] | None = None,
         type: str = "real",
-        data_indices: np.ndarray[Any, np.dtype[np.intp]] | None = None,
+        data_indices: np.ndarray[Any, np.dtype[np.int]] | None = None,
     ) -> tuple[transform.NestedTransform, transform.Transform]:
 
         def _collect_stats(
@@ -565,18 +570,20 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
     def get_baseline_pre_transform(
         self,
     ) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        nwp_vars_set = set(self.config.nwp_vars)
+        if "wind_speed" in nwp_vars_set:
+            _wind_deps: list[str] = ["wind_speed"]
+            _wind_fn: Callable[[dict[str, Any]], torch.Tensor] = lambda nwp: nwp["wind_speed"]
+        else:
+            _wind_deps = ["10u", "10v"]
+            _wind_fn = lambda nwp: torch.sqrt(nwp["10u"] ** 2 + nwp["10v"] ** 2)
+
         _mapping: dict[
             str, tuple[list[str], Callable[[dict[str, Any]], torch.Tensor]]
         ] = {
             "temp": (["2t"], lambda nwp: nwp["2t"] - 273.15),
-            "wspd": (
-                ["10u", "10v"],
-                lambda nwp: torch.sqrt(nwp["10u"] ** 2 + nwp["10v"] ** 2),
-            ),
-            "wpgt": (
-                ["10u", "10v"],
-                lambda nwp: torch.sqrt(nwp["10u"] ** 2 + nwp["10v"] ** 2),
-            ),
+            "wspd": (_wind_deps, _wind_fn),
+            "wpgt": (_wind_deps, _wind_fn),
             "prcp": (["tp"], lambda nwp: nwp["tp"] * 1000.0),
         }
         for obs_var in self.config.obs_vars:
@@ -596,6 +603,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             nwp_fields = sample["global_data"]["global_field"]
             nwp = {v: nwp_fields[..., i, :, :] for i, v in enumerate(nwp_vars)}
             new_field = torch.stack([_mapping[v][1](nwp) for v in obs_vars], dim=-3)
+
             return {
                 **sample,
                 "global_data": {**sample["global_data"], "global_field": new_field},
