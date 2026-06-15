@@ -21,6 +21,7 @@ def _make_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2):
     predictor.output_var_names = ["temp", "wspd"]
     predictor._normalize_batch.side_effect = lambda batch: batch
     predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
+    predictor.to.return_value = predictor
     return predictor
 
 
@@ -31,6 +32,7 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     predictor.output_var_names = ["temp", "wspd"]
     predictor._normalize_batch.side_effect = lambda batch: batch
     predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
+    predictor.to.return_value = predictor
     return predictor
 
 
@@ -256,7 +258,7 @@ def test_plot_timeseries_at_station_delegates_to_plot_timeseries():
             ax=ax, station_idx=2, var="temp", time_indices=[0, 1]
         )
     mock_ts.assert_called_once_with(
-        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.05, quantile_hi=0.95
+        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.05, quantile_hi=0.95, predictors=None
     )
     plt.close(fig)
 
