@@ -53,11 +53,8 @@ class OATPlotter:
         self.device = torch.device(device)
 
     def _get_var_plot_config(self, var: str) -> Any:
-        try:
-            raw = self.dataset.config.obs_plot_config
-        except AttributeError:
-            return {}
-        if not raw or var not in raw:
+        raw = self.dataset.config.obs_plot_config
+        if raw is None or var not in raw:
             return {}
         return raw[var]
 

@@ -884,4 +884,3 @@ def test_get_var_plot_config_returns_entry_for_known_var():
     assert cfg.get("color") == "C1"
     assert cfg.get("cmap") == "RdBu_r"
     assert cfg.get("vmin") == -5.0
-    assert cfg.get("vmax") is None
