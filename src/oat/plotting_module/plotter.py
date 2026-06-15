@@ -52,6 +52,15 @@ class OATPlotter:
         self.n_samples = n_samples
         self.device = torch.device(device)
 
+    def _get_var_plot_config(self, var: str) -> Any:
+        try:
+            raw = self.dataset.config.obs_plot_config
+        except AttributeError:
+            return {}
+        if not raw or var not in raw:
+            return {}
+        return raw[var]
+
     def _run_inference(
         self,
         time_idx: int,

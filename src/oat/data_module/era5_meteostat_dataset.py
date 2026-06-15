@@ -84,6 +84,7 @@ class ERA5MeteostatConfig:
     use_time_embedding: bool = True
     dtype: str = "float32"
     catalog: Any = None  # OmegaConf DictConfig with obs_vars bounds
+    obs_plot_config: Any = None
 
 
 class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):

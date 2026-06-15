@@ -34,7 +34,7 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     return predictor
 
 
-def _make_dataset(n_stations: int = 5, n_times: int = 4, n_vars: int = 2):
+def _make_dataset(n_stations: int = 5, n_times: int = 4, n_vars: int = 2, plot_config: dict | None = None):
     ds = MagicMock()
     ds.station_coords = torch.zeros(n_stations, 2)
     ds.obs_tensor = torch.zeros(n_times, n_stations, n_vars)
@@ -58,6 +58,9 @@ def _make_dataset(n_stations: int = 5, n_times: int = 4, n_vars: int = 2):
         "topo": torch.zeros(1, 1, 32, 32),
         "geo": torch.zeros(1, 3),
     }
+    config = MagicMock()
+    config.obs_plot_config = plot_config
+    ds.config = config
     return ds
 
 
@@ -858,3 +861,27 @@ class TestPlotDomainOverview:
         mesh1 = next(c for c in ax1.get_children() if hasattr(c, "get_clim"))
         assert mesh0.get_clim() == mesh1.get_clim()
         plt.close(fig)
+
+
+# ── _get_var_plot_config ───────────────────────────────────────────────────
+
+def test_get_var_plot_config_returns_empty_when_no_config():
+    plotter = OATPlotter(_make_predictor(), _make_dataset(plot_config=None))
+    assert plotter._get_var_plot_config("temperature") == {}
+
+
+def test_get_var_plot_config_returns_empty_for_unknown_var():
+    plotter = OATPlotter(_make_predictor(), _make_dataset(plot_config={"precip": {"cmap": "Blues"}}))
+    assert plotter._get_var_plot_config("temperature") == {}
+
+
+def test_get_var_plot_config_returns_entry_for_known_var():
+    plotter = OATPlotter(
+        _make_predictor(),
+        _make_dataset(plot_config={"temperature": {"color": "C1", "cmap": "RdBu_r", "vmin": -5.0}}),
+    )
+    cfg = plotter._get_var_plot_config("temperature")
+    assert cfg.get("color") == "C1"
+    assert cfg.get("cmap") == "RdBu_r"
+    assert cfg.get("vmin") == -5.0
+    assert cfg.get("vmax") is None

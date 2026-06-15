@@ -113,6 +113,7 @@ class CosmoPeakWeatherConfig:
     
     # Data type
     dtype: str = "float32"
+    obs_plot_config: Any = None
 
 
 class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
