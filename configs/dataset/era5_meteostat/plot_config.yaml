@@ -1,0 +1,12 @@
+obs_plot_config:
+  temp:
+    color: "C1"
+    cmap: "RdBu_r"
+  prcp:
+    color: "C0"
+    cmap: "Blues"
+    vmin: 0.0
+  wspd:
+    color: "C2"
+    cmap: "YlOrRd"
+    vmin: 0.0

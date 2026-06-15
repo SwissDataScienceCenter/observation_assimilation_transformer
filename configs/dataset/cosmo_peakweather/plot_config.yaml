@@ -1,0 +1,18 @@
+obs_plot_config:
+  temperature:
+    color: "C1"
+    cmap: "RdBu_r"
+  precipitation:
+    color: "C0"
+    cmap: "Blues"
+    vmin: 0.0
+  wind_speed:
+    color: "C2"
+    cmap: "YlOrRd"
+    vmin: 0.0
+  wind_u:
+    color: "C3"
+    cmap: "RdBu_r"
+  wind_v:
+    color: "C4"
+    cmap: "RdBu_r"

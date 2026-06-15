@@ -1,6 +1,7 @@
 defaults:
   - cosmo_peakweather/settings@_here_
   - cosmo_peakweather/catalog@catalog
+  - cosmo_peakweather/plot_config@_here_
   - _self_
 
 nwp_vars:
