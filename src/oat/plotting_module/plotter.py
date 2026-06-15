@@ -38,6 +38,7 @@ class OATPlotter:
         eval_indices: Sequence[int] | None = None,
         n_samples: int = 100,
         device: str = "cpu",
+        plot_config: Any = None,
     ) -> None:
         self.predictor = predictor
         self.dataset = dataset
@@ -51,9 +52,15 @@ class OATPlotter:
             self.eval_indices = list(eval_indices)
         self.n_samples = n_samples
         self.device = torch.device(device)
+        self._plot_config = plot_config
 
     def _get_var_plot_config(self, var: str) -> Any:
-        raw = self.dataset.config.obs_plot_config
+        raw = self._plot_config
+        if raw is None:
+            try:
+                raw = self.dataset.config.obs_plot_config
+            except AttributeError:
+                return {}
         if raw is None or var not in raw:
             return {}
         return raw[var]
