@@ -34,7 +34,12 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     return predictor
 
 
-def _make_dataset(n_stations: int = 5, n_times: int = 4, n_vars: int = 2, plot_config: dict | None = None):
+def _make_dataset(
+    n_stations: int = 5,
+    n_times: int = 4,
+    n_vars: int = 2,
+    plot_config: dict | None = None,
+):
     ds = MagicMock()
     ds.station_coords = torch.zeros(n_stations, 2)
     ds.obs_tensor = torch.zeros(n_times, n_stations, n_vars)
@@ -96,7 +101,9 @@ def test_run_inference_with_baseline_predictor():
     predictor = _make_baseline_predictor(N_q=N_q, n_samples=n_samples, n_vars=n_vars)
     dataset = _make_dataset()
 
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples
+    )
     samples = plotter._run_inference(time_idx=0, query_coords=torch.zeros(N_q, 2))
 
     assert samples.shape == (N_q, n_samples, n_vars)
@@ -634,7 +641,9 @@ def test_plot_spatial_difference_calls_both_predictors():
 
     def _side_effect(time_idx, query_coords, predictor=None):
         n_q = query_coords.shape[0]
-        return torch.zeros(n_q, 10, 2) if predictor is not None else torch.ones(n_q, 10, 2)
+        return (
+            torch.zeros(n_q, 10, 2) if predictor is not None else torch.ones(n_q, 10, 2)
+        )
 
     with patch.object(plotter, "_run_inference", side_effect=_side_effect) as mock_inf:
         plotter.plot_spatial_difference(
@@ -667,7 +676,9 @@ def test_plot_spatial_difference_at_station_delegates():
 
     fig, ax = plt.subplots()
     sentinel = object()
-    with patch.object(plotter, "plot_spatial_difference", return_value=sentinel) as mock_diff:
+    with patch.object(
+        plotter, "plot_spatial_difference", return_value=sentinel
+    ) as mock_diff:
         result = plotter.plot_spatial_difference_at_station(
             other,
             ax=ax,
@@ -693,6 +704,7 @@ def test_plot_spatial_difference_at_station_delegates():
 
 # ── _overlay_stations ──────────────────────────────────────────────────────
 
+
 class TestOverlayStations:
     def setup_method(self):
         matplotlib.use("Agg")
@@ -706,7 +718,8 @@ class TestOverlayStations:
         dataset.obs_mask_tensor = torch.ones(4, n_stations, 2)
         dataset.obs_tensor = torch.ones(4, n_stations, 2) * 2.0
         return OATPlotter(
-            predictor, dataset,
+            predictor,
+            dataset,
             obs_station_indices=obs_indices,
             eval_indices=eval_indices,
         )
@@ -768,7 +781,9 @@ class TestOverlayStations:
         plotter.dataset.obs_tensor[0, 0, 0] = 999.0
         fig, ax = plt.subplots()
         mesh = ax.pcolormesh([[0, 1], [2, 3]])
-        plotter._overlay_stations(ax, time_idx=0, var_idx=0, mesh=mesh, color_by={0: 1.0, 1: 2.0})
+        plotter._overlay_stations(
+            ax, time_idx=0, var_idx=0, mesh=mesh, color_by={0: 1.0, 1: 2.0}
+        )
         obs_scatter = next(c for c in ax.collections if c.get_label() == "obs − NWP")
         assert obs_scatter is not None
         plt.close(fig)
@@ -792,7 +807,8 @@ class TestPlotDomainOverview:
         dataset.obs_mask_tensor = torch.ones(4, n_stations, n_vars)
         dataset.obs_tensor = torch.ones(4, n_stations, n_vars)
         plotter = OATPlotter(
-            predictor, dataset,
+            predictor,
+            dataset,
             obs_station_indices=[0, 1],
             n_samples=n_samples,
         )
@@ -824,7 +840,9 @@ class TestPlotDomainOverview:
         ys = np.linspace(0, 1, 2)
         with patch.object(plotter, "_run_inference") as mock_inf:
             mock_inf.return_value = torch.zeros(4, 5, 2)
-            fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys, title="My Title")
+            fig = plotter.plot_domain_overview(
+                other, "temp", 0, xs, ys, title="My Title"
+            )
         assert fig._suptitle is not None
         assert fig._suptitle.get_text() == "My Title"
         plt.close(fig)
@@ -865,20 +883,25 @@ class TestPlotDomainOverview:
 
 # ── _get_var_plot_config ───────────────────────────────────────────────────
 
+
 def test_get_var_plot_config_returns_empty_when_no_config():
     plotter = OATPlotter(_make_predictor(), _make_dataset(plot_config=None))
     assert plotter._get_var_plot_config("temperature") == {}
 
 
 def test_get_var_plot_config_returns_empty_for_unknown_var():
-    plotter = OATPlotter(_make_predictor(), _make_dataset(plot_config={"precip": {"cmap": "Blues"}}))
+    plotter = OATPlotter(
+        _make_predictor(), _make_dataset(plot_config={"precip": {"cmap": "Blues"}})
+    )
     assert plotter._get_var_plot_config("temperature") == {}
 
 
 def test_get_var_plot_config_returns_entry_for_known_var():
     plotter = OATPlotter(
         _make_predictor(),
-        _make_dataset(plot_config={"temperature": {"color": "C1", "cmap": "RdBu_r", "vmin": -5.0}}),
+        _make_dataset(
+            plot_config={"temperature": {"color": "C1", "cmap": "RdBu_r", "vmin": -5.0}}
+        ),
     )
     cfg = plotter._get_var_plot_config("temperature")
     assert cfg.get("color") == "C1"
@@ -888,18 +911,24 @@ def test_get_var_plot_config_returns_entry_for_known_var():
 
 # ── plot_timeseries — color ────────────────────────────────────────────────
 
+
 def test_plot_timeseries_uses_configured_color():
     predictor = _make_predictor(N_q=1, n_samples=10)
-    dataset = _make_dataset(n_stations=5, n_times=4, plot_config={"temp": {"color": "C3"}})
+    dataset = _make_dataset(
+        n_stations=5, n_times=4, plot_config={"temp": {"color": "C3"}}
+    )
     plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
     fig, ax = plt.subplots()
     with patch.object(plotter, "_run_inference", return_value=torch.randn(1, 10, 2)):
-        plotter.plot_timeseries(ax=ax, center=(8.0, 47.0), var="temp", time_indices=[0, 1, 2, 3])
+        plotter.plot_timeseries(
+            ax=ax, center=(8.0, 47.0), var="temp", time_indices=[0, 1, 2, 3]
+        )
     assert ax.lines[0].get_color() == "C3"
     plt.close(fig)
 
 
 # ── plot_spatial_snapshot — cmap / vmin / vmax ─────────────────────────────
+
 
 def test_plot_spatial_snapshot_uses_configured_cmap():
     predictor = _make_predictor(N_q=25, n_samples=10)
@@ -908,7 +937,13 @@ def test_plot_spatial_snapshot_uses_configured_cmap():
     fig, ax = plt.subplots()
     with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
         mesh = plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="mean",
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(0.0, 0.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="mean",
         )
     assert mesh.cmap.name == "plasma"
     plt.close(fig)
@@ -921,7 +956,13 @@ def test_plot_spatial_snapshot_applies_vmin_in_mean_mode():
     fig, ax = plt.subplots()
     with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
         mesh = plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="mean",
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(0.0, 0.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="mean",
         )
     assert mesh.norm.vmin == 0.0
     plt.close(fig)
@@ -932,15 +973,24 @@ def test_plot_spatial_snapshot_std_ignores_vmin_from_config():
     dataset = _make_dataset(plot_config={"temp": {"vmin": 99.0}})
     plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
     fig, ax = plt.subplots()
-    with patch.object(plotter, "_run_inference", return_value=torch.abs(torch.randn(25, 10, 2))):
+    with patch.object(
+        plotter, "_run_inference", return_value=torch.abs(torch.randn(25, 10, 2))
+    ):
         mesh = plotter.plot_spatial_snapshot(
-            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="std",
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(0.0, 0.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="std",
         )
     assert mesh.norm.vmin != 99.0
     plt.close(fig)
 
 
 # ── plot_domain_overview — cmap / vmin ─────────────────────────────────────
+
 
 def test_plot_domain_overview_first_panel_uses_configured_cmap():
     predictor = _make_predictor(N_q=4, n_samples=5)
