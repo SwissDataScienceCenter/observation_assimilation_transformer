@@ -20,6 +20,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +35,136 @@ from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.checkpoint_utils import load_checkpoint
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
+
+# ---------------------------------------------------------------------------
+# Geo-overlay helpers (land masking + fine borders)
+# Results are cached in _GEO_CACHE so repeated calls (e.g. multiple plots in
+# the same session) do not re-download or re-compute Natural Earth data.
+# Coordinates are auto-detected: Swiss LV95 (EPSG:2056) when max|xs| > 1e5,
+# otherwise WGS84 lon/lat.
+# ---------------------------------------------------------------------------
+_GEO_CACHE: dict[str, Any] = {}
+
+
+def _iter_line_coords(geom: Any) -> list[np.ndarray]:
+    """Return (N, 2) coordinate arrays for all linear parts of a shapely geometry."""
+    gt = geom.geom_type
+    if gt in ("LineString", "LinearRing"):
+        return [np.array(geom.coords)]
+    if gt == "MultiLineString":
+        return [np.array(p.coords) for p in geom.geoms]
+    if gt == "Polygon":
+        return [np.array(geom.exterior.coords)] + [
+            np.array(r.coords) for r in geom.interiors
+        ]
+    if gt == "MultiPolygon":
+        out: list[np.ndarray] = []
+        for part in geom.geoms:
+            out.append(np.array(part.exterior.coords))
+            out.extend(np.array(r.coords) for r in part.interiors)
+        return out
+    if gt == "GeometryCollection":
+        out = []
+        for part in geom.geoms:
+            out.extend(_iter_line_coords(part))
+        return out
+    return []
+
+
+def _build_land_mask(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Return boolean mask (len(ys) × len(xs)), True where the grid point is on land.
+
+    Uses Natural Earth 10 m land polygons minus 10 m lake polygons.
+    """
+    import shapely
+    from cartopy.feature import NaturalEarthFeature
+    from pyproj import Transformer
+
+    x_grid, y_grid = np.meshgrid(xs, ys)
+    is_lv95 = float(np.abs(xs).max()) > 1e5
+
+    if is_lv95:
+        tf = Transformer.from_crs("EPSG:2056", "EPSG:4326", always_xy=True)
+        lons_flat, lats_flat = tf.transform(x_grid.ravel(), y_grid.ravel())
+        lons_flat, lats_flat = np.asarray(lons_flat), np.asarray(lats_flat)
+    else:
+        lons_flat, lats_flat = x_grid.ravel().copy(), y_grid.ravel().copy()
+
+    if "land_geom" not in _GEO_CACHE:
+        land_arr = np.array(
+            list(NaturalEarthFeature("physical", "land", "10m").geometries()),
+            dtype=object,
+        )
+        lakes_arr = np.array(
+            list(NaturalEarthFeature("physical", "lakes", "10m").geometries()),
+            dtype=object,
+        )
+        _GEO_CACHE["land_geom"] = shapely.difference(
+            shapely.union_all(land_arr),
+            shapely.union_all(lakes_arr),
+        )
+
+    clipped = shapely.clip_by_rect(
+        _GEO_CACHE["land_geom"],
+        float(lons_flat.min()) - 1.0,
+        float(lats_flat.min()) - 1.0,
+        float(lons_flat.max()) + 1.0,
+        float(lats_flat.max()) + 1.0,
+    )
+    shapely.prepare(clipped)
+    return shapely.contains_xy(clipped, lons_flat, lats_flat).reshape(x_grid.shape)
+
+
+def _add_borders(data_axes: list[Any], xs: np.ndarray, ys: np.ndarray) -> None:
+    """Overlay fine borders (coastlines, country lines, lake outlines) on *data_axes*.
+
+    Uses Natural Earth 10 m features. Results are cached after the first call.
+    """
+    import shapely
+    from cartopy.feature import NaturalEarthFeature
+    from pyproj import Transformer
+
+    is_lv95 = float(np.abs(xs).max()) > 1e5
+    x_grid, y_grid = np.meshgrid(xs, ys)
+
+    if is_lv95:
+        tf_to_wgs = Transformer.from_crs("EPSG:2056", "EPSG:4326", always_xy=True)
+        lons_flat, lats_flat = tf_to_wgs.transform(x_grid.ravel(), y_grid.ravel())
+        lons_flat, lats_flat = np.asarray(lons_flat), np.asarray(lats_flat)
+        tf_to_proj: Any = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True)
+    else:
+        lons_flat, lats_flat = x_grid.ravel(), y_grid.ravel()
+        tf_to_proj = None
+
+    lon_min = float(lons_flat.min()) - 0.5
+    lon_max = float(lons_flat.max()) + 0.5
+    lat_min = float(lats_flat.min()) - 0.5
+    lat_max = float(lats_flat.max()) + 0.5
+
+    cache_key = f"borders_{lon_min:.2f}_{lat_min:.2f}_{lon_max:.2f}_{lat_max:.2f}"
+    if cache_key not in _GEO_CACHE:
+        feat_defs = [
+            ("physical", "coastline"),
+            ("cultural", "admin_0_boundary_lines_land"),
+            ("physical", "lakes"),
+        ]
+        segments: list[tuple[np.ndarray, np.ndarray]] = []
+        for category, name in feat_defs:
+            for geom in NaturalEarthFeature(category, name, "10m").geometries():
+                clipped = shapely.clip_by_rect(geom, lon_min, lat_min, lon_max, lat_max)
+                if clipped.is_empty:
+                    continue
+                for coords in _iter_line_coords(clipped):
+                    if tf_to_proj is not None:
+                        xb, yb = tf_to_proj.transform(coords[:, 0], coords[:, 1])
+                    else:
+                        xb, yb = coords[:, 0], coords[:, 1]
+                    segments.append((np.asarray(xb), np.asarray(yb)))
+        _GEO_CACHE[cache_key] = segments
+
+    for ax in data_axes:
+        for xb, yb in _GEO_CACHE[cache_key]:
+            ax.plot(xb, yb, color="black", linewidth=0.4, zorder=3)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -89,6 +220,12 @@ def _parse_args() -> argparse.Namespace:
         metavar="F",
         help="Fractional margin around station bounding box (default: 0.05 = 5%%).",
     )
+    p.add_argument(
+        "--no-stations",
+        action="store_true",
+        default=False,
+        help="Suppress all station markers from the plot.",
+    )
     return p.parse_args()
 
 
@@ -132,7 +269,7 @@ def main() -> None:
         and args.n_samples == 50
     )
 
-    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint)
+    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
@@ -262,7 +399,33 @@ def main() -> None:
         xs=xs,
         ys=ys,
         title=f"OAT domain overview — {var} — {snap_time_iso} — {ckpt_tag}",
+        show_stations=not args.no_stations,
     )
+
+    # Land-only masking and fine borders
+    try:
+        from matplotlib.colors import ListedColormap
+
+        land_mask = _build_land_mask(xs, ys)
+        ocean_overlay = np.where(land_mask, np.nan, 1.0)
+        data_axes = fig.axes[:4]
+        for ax in data_axes:
+            ax.pcolormesh(
+                xs,
+                ys,
+                ocean_overlay,
+                cmap=ListedColormap(["#c8e6f5"]),
+                vmin=0.5,
+                vmax=1.5,
+                shading="auto",
+                zorder=2,
+            )
+        _add_borders(data_axes, xs, ys)
+        for ax in data_axes:
+            ax.set_xlim(xs[0], xs[-1])
+            ax.set_ylim(ys[0], ys[-1])
+    except Exception as exc:
+        logger.warning("Geo overlays skipped: %s", exc)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = (
