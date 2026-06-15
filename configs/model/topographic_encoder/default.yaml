@@ -1,9 +1,9 @@
 # in_channels must be set from data
 out_channels: 16
-n_layers: 3
+n_layers: 2
 initial_hw:
-  - 32
-  - 32
-kernel_sizes: 3
+  - 1
+  - 1
+kernel_sizes: 1
 act_fn: GELU
 use_batchnorm: true

@@ -35,8 +35,8 @@ end_date: null    # Format: 'YYYY-MM-DD'
 
 # Topographic patch settings
 patch_size: 
-  - 32
-  - 32
+  - 1
+  - 1
 
 # Time embedding
 use_time_embedding: true

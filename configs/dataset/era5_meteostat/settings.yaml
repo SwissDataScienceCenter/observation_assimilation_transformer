@@ -30,8 +30,8 @@ nwp_lat_res: 0.25
 nwp_lon_res: 0.25
 
 patch_size:
-  - 32
-  - 32
+  - 1
+  - 1
 
 use_time_embedding: true
 dtype: float32
