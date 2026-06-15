@@ -37,7 +37,7 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     logger.info(f"Dataset size: {len(dataset)} samples")
     splits = create_splits(dataset, **cfg.split, logger=logger)
     train_dataset, val_dataset, test_dataset = splits["datasets"]
-    train_indices, val_indices, test_indices = splits["station_indices"]
+    train_station_indices, val_station_indices, test_station_indices = splits["station_indices"]
 
     logger.info(f"Train size: {len(train_dataset)} samples")
     logger.info(f"Validation size: {len(val_dataset)} samples")
@@ -46,15 +46,15 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     if all(
         x is None
         for x in (
-            cfg.split.train_indices,
-            cfg.split.val_indices,
-            cfg.split.test_indices,
+            cfg.split.train_station_indices,
+            cfg.split.val_station_indices,
+            cfg.split.test_station_indices,
         )
     ):
         logger.info("Adding station indices to the configuration.")
-        cfg.split.train_indices = train_indices
-        cfg.split.val_indices = val_indices
-        cfg.split.test_indices = test_indices
+        cfg.split.train_station_indices = train_station_indices
+        cfg.split.val_station_indices = val_station_indices
+        cfg.split.test_station_indices = test_station_indices
     else:
         logger.info("Station indices already configured.")
 

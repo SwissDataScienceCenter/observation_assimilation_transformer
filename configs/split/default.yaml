@@ -1,7 +1,8 @@
-  val_fraction: 0.2
-  test_fraction: 0.2
+  val_station_fraction: 0.2
+  test_station_fraction: 0.2
   train_split_fraction: 0.8
+  test_days: 365
 
-  train_indices: null
-  val_indices: null
-  test_indices: null
+  train_station_indices: null
+  val_station_indices: null
+  test_station_indices: null
