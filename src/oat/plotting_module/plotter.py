@@ -743,6 +743,7 @@ class OATPlotter:
         xs: np.ndarray,
         ys: np.ndarray,
         title: str = "",
+        show_stations: bool = True,
     ) -> Any:
         """Produce a 4-panel domain diagnostic figure.
 
@@ -813,7 +814,8 @@ class OATPlotter:
         axes[0].set_title("NWP interp.")
         axes[0].set_xlabel("X")
         axes[0].set_ylabel("Y")
-        self._overlay_stations(axes[0], time_idx, var_idx, mesh=mesh_nwp)
+        if show_stations:
+            self._overlay_stations(axes[0], time_idx, var_idx, mesh=mesh_nwp)
         plt.colorbar(mesh_nwp, ax=axes[0], label=var)
 
         mesh_mean = axes[1].pcolormesh(
@@ -827,13 +829,15 @@ class OATPlotter:
         )
         axes[1].set_title("OAT mean")
         axes[1].set_xlabel("X")
-        self._overlay_stations(axes[1], time_idx, var_idx, mesh=mesh_mean)
+        if show_stations:
+            self._overlay_stations(axes[1], time_idx, var_idx, mesh=mesh_mean)
         plt.colorbar(mesh_mean, ax=axes[1], label=var)
 
         mesh_std = axes[2].pcolormesh(xs, ys, oat_std, shading="auto")
         axes[2].set_title("OAT predictive std")
         axes[2].set_xlabel("X")
-        self._overlay_stations(axes[2], time_idx, var_idx)
+        if show_stations:
+            self._overlay_stations(axes[2], time_idx, var_idx)
         plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
 
         mesh_diff = axes[3].pcolormesh(
@@ -847,9 +851,10 @@ class OATPlotter:
         )
         axes[3].set_title("OAT − NWP  |  markers: obs − NWP")
         axes[3].set_xlabel("X")
-        self._overlay_stations(
-            axes[3], time_idx, var_idx, mesh=mesh_diff, color_by=color_by_diff
-        )
+        if show_stations:
+            self._overlay_stations(
+                axes[3], time_idx, var_idx, mesh=mesh_diff, color_by=color_by_diff
+            )
         plt.colorbar(mesh_diff, ax=axes[3], label=f"Δ{var}")
 
         fig.tight_layout()
