@@ -884,3 +884,91 @@ def test_get_var_plot_config_returns_entry_for_known_var():
     assert cfg.get("color") == "C1"
     assert cfg.get("cmap") == "RdBu_r"
     assert cfg.get("vmin") == -5.0
+
+
+# ── plot_timeseries — color ────────────────────────────────────────────────
+
+def test_plot_timeseries_uses_configured_color():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4, plot_config={"temp": {"color": "C3"}})
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(1, 10, 2)):
+        plotter.plot_timeseries(ax=ax, center=(8.0, 47.0), var="temp", time_indices=[0, 1, 2, 3])
+    assert ax.lines[0].get_color() == "C3"
+    plt.close(fig)
+
+
+# ── plot_spatial_snapshot — cmap / vmin / vmax ─────────────────────────────
+
+def test_plot_spatial_snapshot_uses_configured_cmap():
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(plot_config={"temp": {"cmap": "plasma"}})
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="mean",
+        )
+    assert mesh.cmap.name == "plasma"
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_applies_vmin_in_mean_mode():
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(plot_config={"temp": {"vmin": 0.0}})
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.randn(25, 10, 2)):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="mean",
+        )
+    assert mesh.norm.vmin == 0.0
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_std_ignores_vmin_from_config():
+    predictor = _make_predictor(N_q=25, n_samples=10)
+    dataset = _make_dataset(plot_config={"temp": {"vmin": 99.0}})
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "_run_inference", return_value=torch.abs(torch.randn(25, 10, 2))):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax, var="temp", time_idx=0, center=(0.0, 0.0), extent=0.4, resolution=0.2, plot_type="std",
+        )
+    assert mesh.norm.vmin != 99.0
+    plt.close(fig)
+
+
+# ── plot_domain_overview — cmap / vmin ─────────────────────────────────────
+
+def test_plot_domain_overview_first_panel_uses_configured_cmap():
+    predictor = _make_predictor(N_q=4, n_samples=5)
+    other = _make_baseline_predictor(N_q=4, n_samples=5)
+    dataset = _make_dataset(n_stations=3, plot_config={"temp": {"cmap": "plasma"}})
+    dataset.obs_mask_tensor = torch.ones(4, 3, 2)
+    dataset.obs_tensor = torch.ones(4, 3, 2)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], n_samples=5)
+    xs = np.linspace(0, 1, 2)
+    ys = np.linspace(0, 1, 2)
+    with patch.object(plotter, "_run_inference", return_value=torch.zeros(4, 5, 2)):
+        fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+    mesh = next(c for c in fig.axes[0].get_children() if hasattr(c, "get_clim"))
+    assert mesh.cmap.name == "plasma"
+    plt.close(fig)
+
+
+def test_plot_domain_overview_first_panel_applies_configured_vmin():
+    predictor = _make_predictor(N_q=4, n_samples=5)
+    other = _make_baseline_predictor(N_q=4, n_samples=5)
+    dataset = _make_dataset(n_stations=3, plot_config={"temp": {"vmin": 0.0}})
+    dataset.obs_mask_tensor = torch.ones(4, 3, 2)
+    dataset.obs_tensor = torch.ones(4, 3, 2)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], n_samples=5)
+    xs = np.linspace(0, 1, 2)
+    ys = np.linspace(0, 1, 2)
+    with patch.object(plotter, "_run_inference", return_value=torch.ones(4, 5, 2)):
+        fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
+    mesh = next(c for c in fig.axes[0].get_children() if hasattr(c, "get_clim"))
+    assert mesh.norm.vmin == 0.0
+    plt.close(fig)

@@ -265,6 +265,7 @@ class OATPlotter:
                 entry is plotted as a single median line (no band).
         """
         var_idx = self.predictor.var_to_indx[var]
+        var_cfg = self._get_var_plot_config(var)
         query_coords = torch.tensor([center], dtype=torch.float32)  # [1, 2]
 
         medians, lo_vals, hi_vals = [], [], []
@@ -278,7 +279,7 @@ class OATPlotter:
 
         times = [self.dataset.times[i] for i in time_indices]
 
-        ax.plot(times, medians, label="median")
+        ax.plot(times, medians, label="median", color=var_cfg.get("color", "C0"))
         ax.fill_between(
             times,
             lo_vals,
@@ -386,6 +387,7 @@ class OATPlotter:
             raise ValueError(f"plot_type must be 'mean' or 'std', got {plot_type!r}.")
 
         var_idx = self.predictor.var_to_indx[var]
+        var_cfg = self._get_var_plot_config(var)
 
         xs = np.arange(center[0] - extent, center[0] + extent + 1e-9, resolution)
         ys = np.arange(center[1] - extent, center[1] + extent + 1e-9, resolution)
@@ -406,7 +408,10 @@ class OATPlotter:
 
         field = field.reshape(y_grid.shape)
 
-        mesh = ax.pcolormesh(xs, ys, field, shading="auto")
+        cmap = var_cfg.get("cmap", "viridis") if plot_type == "mean" else None
+        vmin = var_cfg.get("vmin") if plot_type == "mean" else None
+        vmax = var_cfg.get("vmax") if plot_type == "mean" else None
+        mesh = ax.pcolormesh(xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto")
 
         ax.set_xlim(center[0] - extent, center[0] + extent)
         ax.set_ylim(center[1] - extent, center[1] + extent)
@@ -769,6 +774,7 @@ class OATPlotter:
             The matplotlib Figure.  The caller is responsible for saving/closing.
         """
         var_idx = self.predictor.var_to_indx[var]
+        var_cfg = self._get_var_plot_config(var)
         x_grid, y_grid = np.meshgrid(xs, ys)
         query_coords = torch.tensor(
             np.stack([x_grid.ravel(), y_grid.ravel()], axis=1),
@@ -816,7 +822,13 @@ class OATPlotter:
         if title:
             fig.suptitle(title)
 
-        mesh_nwp = axes[0].pcolormesh(xs, ys, nwp_mean, shading="auto")
+        mesh_nwp = axes[0].pcolormesh(
+            xs, ys, nwp_mean,
+            cmap=var_cfg.get("cmap", "viridis"),
+            vmin=var_cfg.get("vmin"),
+            vmax=var_cfg.get("vmax"),
+            shading="auto",
+        )
         axes[0].set_title("NWP interp.")
         axes[0].set_xlabel("X")
         axes[0].set_ylabel("Y")
