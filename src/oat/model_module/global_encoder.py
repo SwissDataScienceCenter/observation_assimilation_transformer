@@ -1,6 +1,5 @@
 import torch
 from typing import Any, Dict
-from monai.networks import nets
 from oat.data_module.wind_dataset import pos_transform
 from oat.model_module.activations import get_activation
 from torch.nn import functional as F
@@ -106,8 +105,8 @@ class UNetGlobalEncoder(InterpolationGlobalEncoder):
             unet_params: Parameters for UNet model. See [monai](https://monai.readthedocs.io/en/stable/networks.html#unet) documentation for details.
             field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
+        from monai.networks import nets
         super().__init__(field_extent=field_extent, interpolation_params=unet_params.get('interpolation_params', None), **kwargs)
-        
         self.model = nets.UNet(
             **unet_params
         )
@@ -183,8 +182,8 @@ class SwinUNETRGlobalEncoder(InterpolationGlobalEncoder):
             swin_unetr_params: Parameters for SwinUNETR model. See [monai](https://monai.readthedocs.io/en/stable/networks.html#swinunetr) documentation for details.
             field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
+        from monai.networks import nets
         super().__init__(field_extent=field_extent, interpolation_params=swin_unetr_params.get('interpolation_params', None), **kwargs)
-        
         self.model = nets.SwinUNETR(
             **swin_unetr_params
         )
