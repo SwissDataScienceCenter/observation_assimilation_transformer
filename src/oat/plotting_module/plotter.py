@@ -493,7 +493,7 @@ class OATPlotter:
                 )
             ax.legend()
             ax.scatter(
-                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
+                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
             )
 
         return mesh
@@ -706,7 +706,7 @@ class OATPlotter:
                 )
             ax.legend()
             ax.scatter(
-                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
+                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
             )
 
         return mesh
@@ -758,6 +758,7 @@ class OATPlotter:
         time_indices: list[int],
         eval_station_indices: list[int],
         reference: BasePredictor | None = None,
+        batch_size: int = 32,
     ) -> dict[str, torch.Tensor]:
         """Compute CRPS and MAE (and optionally CRPSS) over eval stations.
 
@@ -765,54 +766,81 @@ class OATPlotter:
             time_indices: Dataset time indices to evaluate over.
             eval_station_indices: Station indices to treat as query targets.
             reference: Optional baseline predictor for CRPS Skill Score.
+            batch_size: Number of timesteps processed per forward pass to bound
+                peak memory (default 32).
 
         Returns:
             Dict with keys "crps", "mae", "crps_global", "mae_global", and
             optionally "crpss", "crpss_global" when *reference* is given.
             Shapes: per-station tensors are [n_eval_stations, n_vars]; globals are scalars.
         """
+        import logging
+        from itertools import batched
+
         from oat.predictor_module.functional_metrics import mc_crps, point_mae
+
+        logger = logging.getLogger(__name__)
 
         eval_coords = torch.stack(
             [self.dataset.station_coords[s] for s in eval_station_indices]
         )  # [S, 2]
 
-        all_samples: list[torch.Tensor] = []
-        all_obs: list[torch.Tensor] = []
-        all_masks: list[torch.Tensor] = []
-        all_ref_samples: list[torch.Tensor] = []
+        S = len(eval_station_indices)
+        V = self.dataset.obs_tensor.shape[-1]
+        crps_sum = torch.zeros(S, V)
+        mae_sum = torch.zeros(S, V)
+        mask_count = torch.zeros(S, V)
+        ref_crps_sum = torch.zeros(S, V) if reference is not None else None
 
-        for t_idx in time_indices:
-            all_samples.append(self._run_inference(t_idx, eval_coords))  # [S, n_samples, V]
-            all_obs.append(
-                torch.stack([self.dataset.obs_tensor[t_idx, s] for s in eval_station_indices])
-            )  # [S, V]
-            all_masks.append(
-                torch.stack([self.dataset.obs_mask_tensor[t_idx, s] for s in eval_station_indices])
-            )  # [S, V]
+        processed = 0
+        total = len(time_indices)
+        for chunk in batched(time_indices, batch_size):
+            chunk_list = list(chunk)
+            y_hat_b = torch.stack(
+                [self._run_inference(t, eval_coords) for t in chunk_list]
+            )  # [B, S, n_samples, V]
+            y_obs_b = torch.stack(
+                [torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
+                 for t in chunk_list]
+            )  # [B, S, V]
+            mask_b = torch.stack(
+                [torch.stack([self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices])
+                 for t in chunk_list]
+            ).float()  # [B, S, V]
+
+            count_b = mask_b.sum(dim=0)  # [S, V]
+            crps_sum += mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            mae_sum += point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            mask_count += count_b
+
             if reference is not None:
-                all_ref_samples.append(self._run_inference(t_idx, eval_coords, predictor=reference))
+                y_hat_ref_b = torch.stack(
+                    [self._run_inference(t, eval_coords, predictor=reference)
+                     for t in chunk_list]
+                )
+                ref_crps_sum += mc_crps(y_obs_b, y_hat_ref_b, mask_b, aggregation="station") * count_b  # type: ignore[operator]
 
-        y_hat = torch.stack(all_samples)       # [T, S, n_samples, V]
-        y_target = torch.stack(all_obs)        # [T, S, V]
-        mask = torch.stack(all_masks).float()  # [T, S, V]
+            processed += len(chunk_list)
+            logger.info("processed %d/%d timesteps", processed, total)
 
-        crps_per_station = mc_crps(y_target, y_hat, mask, aggregation="station")   # [S, V]
-        mae_per_station = point_mae(y_target, y_hat, mask, aggregation="station")  # [S, V]
+        denom = mask_count.clamp(min=1e-8)
+        crps_per_station = crps_sum / denom   # [S, V]
+        mae_per_station = mae_sum / denom     # [S, V]
+        crps_global = crps_sum.sum() / mask_count.sum().clamp(min=1e-8)
+        mae_global = mae_sum.sum() / mask_count.sum().clamp(min=1e-8)
 
         result: dict[str, torch.Tensor] = {
             "crps": crps_per_station,
             "mae": mae_per_station,
-            "crps_global": mc_crps(y_target, y_hat, mask, aggregation="all"),
-            "mae_global": point_mae(y_target, y_hat, mask, aggregation="all"),
+            "crps_global": crps_global,
+            "mae_global": mae_global,
         }
 
         if reference is not None:
-            y_hat_ref = torch.stack(all_ref_samples)
-            crps_ref = mc_crps(y_target, y_hat_ref, mask, aggregation="station")
-            crps_ref_global = mc_crps(y_target, y_hat_ref, mask, aggregation="all")
-            result["crpss"] = 1.0 - crps_per_station / crps_ref.clamp(min=1e-8)
-            result["crpss_global"] = 1.0 - result["crps_global"] / crps_ref_global.clamp(min=1e-8)
+            ref_crps_per_station = ref_crps_sum / denom  # type: ignore[operator]
+            ref_crps_global = ref_crps_sum.sum() / mask_count.sum().clamp(min=1e-8)  # type: ignore[union-attr]
+            result["crpss"] = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
+            result["crpss_global"] = 1.0 - crps_global / ref_crps_global.clamp(min=1e-8)
 
         return result
 
