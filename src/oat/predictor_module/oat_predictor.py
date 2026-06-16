@@ -406,14 +406,14 @@ class OATPredictor(BasePredictor):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal ['samples', 'distribution'] = 'samples') -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-
-        y_hat = self(batch, return_loss_and_targets=False)
-
         if return_as == 'samples':
+            with torch.no_grad():
+                y_hat = self(batch, return_loss_and_targets=False, n_samples=n_samples)
             return self.output_transform.inverse(y_hat['samples'])
         elif return_as == 'distribution':
+            y_hat = self(batch, return_loss_and_targets=False)
             y_hat.pop('samples')
             y_hat.pop('pre_oat_output', None)
             logger.warning("The returned distributions are still parameterized in the transformed space. Ensure to apply the appropriate inverse transform to the distribution parameters before using them.")

@@ -102,8 +102,7 @@ class OATPlotter:
             "query_data": _add_batch(query_data),
         }
 
-        batch = p._normalize_batch(batch)
-        samples = p.predict_samples(batch, self.n_samples)
+        samples = p.predict_step(batch, batch_idx=0, n_samples=self.n_samples)
         # samples: [1, N_q, n_samples, n_vars]
         return samples[0]  # [N_q, n_samples, n_vars]
 
@@ -493,7 +492,7 @@ class OATPlotter:
                 )
             ax.legend()
             ax.scatter(
-                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
+                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
             )
 
         return mesh
@@ -706,7 +705,7 @@ class OATPlotter:
                 )
             ax.legend()
             ax.scatter(
-                center[0], center[1], marker="X", c="red", s=100, zorder=4, label="POI"
+                center[0], center[1], marker="X", c="red", s=100, zorder=6, label="POI"
             )
 
         return mesh
