@@ -753,6 +753,69 @@ class OATPlotter:
             show_stations=show_stations,
         )
 
+    def compute_station_metrics(
+        self,
+        time_indices: list[int],
+        eval_station_indices: list[int],
+        reference: BasePredictor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Compute CRPS and MAE (and optionally CRPSS) over eval stations.
+
+        Args:
+            time_indices: Dataset time indices to evaluate over.
+            eval_station_indices: Station indices to treat as query targets.
+            reference: Optional baseline predictor for CRPS Skill Score.
+
+        Returns:
+            Dict with keys "crps", "mae", "crps_global", "mae_global", and
+            optionally "crpss", "crpss_global" when *reference* is given.
+            Shapes: per-station tensors are [n_eval_stations, n_vars]; globals are scalars.
+        """
+        from oat.predictor_module.functional_metrics import mc_crps, point_mae
+
+        eval_coords = torch.stack(
+            [self.dataset.station_coords[s] for s in eval_station_indices]
+        )  # [S, 2]
+
+        all_samples: list[torch.Tensor] = []
+        all_obs: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
+        all_ref_samples: list[torch.Tensor] = []
+
+        for t_idx in time_indices:
+            all_samples.append(self._run_inference(t_idx, eval_coords))  # [S, n_samples, V]
+            all_obs.append(
+                torch.stack([self.dataset.obs_tensor[t_idx, s] for s in eval_station_indices])
+            )  # [S, V]
+            all_masks.append(
+                torch.stack([self.dataset.obs_mask_tensor[t_idx, s] for s in eval_station_indices])
+            )  # [S, V]
+            if reference is not None:
+                all_ref_samples.append(self._run_inference(t_idx, eval_coords, predictor=reference))
+
+        y_hat = torch.stack(all_samples)       # [T, S, n_samples, V]
+        y_target = torch.stack(all_obs)        # [T, S, V]
+        mask = torch.stack(all_masks).float()  # [T, S, V]
+
+        crps_per_station = mc_crps(y_target, y_hat, mask, aggregation="station")   # [S, V]
+        mae_per_station = point_mae(y_target, y_hat, mask, aggregation="station")  # [S, V]
+
+        result: dict[str, torch.Tensor] = {
+            "crps": crps_per_station,
+            "mae": mae_per_station,
+            "crps_global": mc_crps(y_target, y_hat, mask, aggregation="all"),
+            "mae_global": point_mae(y_target, y_hat, mask, aggregation="all"),
+        }
+
+        if reference is not None:
+            y_hat_ref = torch.stack(all_ref_samples)
+            crps_ref = mc_crps(y_target, y_hat_ref, mask, aggregation="station")
+            crps_ref_global = mc_crps(y_target, y_hat_ref, mask, aggregation="all")
+            result["crpss"] = 1.0 - crps_per_station / crps_ref.clamp(min=1e-8)
+            result["crpss_global"] = 1.0 - result["crps_global"] / crps_ref_global.clamp(min=1e-8)
+
+        return result
+
     def plot_domain_overview(
         self,
         other: BasePredictor,

@@ -1010,6 +1010,49 @@ def test_plot_domain_overview_first_panel_uses_configured_cmap():
     plt.close(fig)
 
 
+def test_compute_station_metrics_returns_expected_keys():
+    n_eval = 2
+    n_samples = 10
+    n_vars = 2
+    predictor = _make_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
+    dataset = _make_dataset(n_stations=5, n_times=4, n_vars=n_vars)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+
+    fixed_samples = torch.ones(n_eval, n_samples, n_vars)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        result = plotter.compute_station_metrics(
+            time_indices=[0, 1, 2, 3],
+            eval_station_indices=[3, 4],
+        )
+    assert set(result.keys()) == {"crps", "mae", "crps_global", "mae_global"}
+    assert result["crps"].shape == (n_eval, n_vars)
+    assert result["mae"].shape == (n_eval, n_vars)
+    assert result["crps_global"].ndim == 0
+    assert result["mae_global"].ndim == 0
+
+
+def test_compute_station_metrics_with_reference_includes_skill():
+    n_eval = 2
+    n_samples = 10
+    n_vars = 2
+    predictor = _make_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
+    dataset = _make_dataset(n_stations=5, n_times=4, n_vars=n_vars)
+    baseline = _make_baseline_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+
+    fixed_samples = torch.ones(n_eval, n_samples, n_vars)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        result = plotter.compute_station_metrics(
+            time_indices=[0, 1],
+            eval_station_indices=[3, 4],
+            reference=baseline,
+        )
+    assert "crpss" in result
+    assert "crpss_global" in result
+    assert result["crpss"].shape == (n_eval, n_vars)
+    assert result["crpss_global"].ndim == 0
+
+
 def test_plot_domain_overview_first_panel_applies_configured_vmin():
     predictor = _make_predictor(N_q=4, n_samples=5)
     other = _make_baseline_predictor(N_q=4, n_samples=5)
