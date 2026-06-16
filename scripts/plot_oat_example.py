@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 from typing import Any
@@ -32,6 +33,7 @@ from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.checkpoint_utils import load_checkpoint
+from scripts.geo_overlays import _add_borders
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 _PROJECT_ROOT = Path(__file__).parents[1]
@@ -422,6 +424,17 @@ def main() -> None:
     axes[4].set_xlabel("X")
 
     fig.tight_layout()
+
+    try:
+        xs = np.arange(center[0] - extent, center[0] + extent + 1e-9, resolution)
+        ys = np.arange(center[1] - extent, center[1] + extent + 1e-9, resolution)
+        _add_borders(list(axes[1:]), xs, ys)
+        for ax in axes[1:]:
+            ax.set_xlim(xs[0], xs[-1])
+            ax.set_ylim(ys[0], ys[-1])
+    except Exception as exc:
+        logger.warning("Geo overlays skipped: %s", exc)
+
     out_path = OUT_DIR / f"{ckpt_tag}_{var}_{snap_time_iso}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     logger.info("Saved → %s", out_path)
