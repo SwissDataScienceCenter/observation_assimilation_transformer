@@ -27,9 +27,6 @@ from scripts.checkpoint_utils import load_checkpoint
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 
-_BERN_LV95 = (2_683_141.0, 1_248_175.0)
-
-
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="OATPlotter diagnostic: info mode when only checkpoint is given."
@@ -42,8 +39,8 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         metavar=("E", "N"),
         default=None,
-        help="Centre position in Swiss LV95 metres (easting northing). "
-        f"Default: Bern {_BERN_LV95}",
+        help="Centre position in the dataset coordinate frame (x y). "
+        "Default: midpoint of the NWP domain extent.",
     )
     loc_group.add_argument(
         "--station",
@@ -205,7 +202,14 @@ def main() -> None:
             "Station %d (%s): E=%.0f N=%.0f", args.station, station_label, *center
         )
     else:
-        center = tuple(args.center) if args.center is not None else _BERN_LV95
+        if args.center is not None:
+            center: tuple[float, float] = (args.center[0], args.center[1])
+        else:
+            ext = dataset.nwp_extent
+            center = (
+                (ext["min"][0].item() + ext["max"][0].item()) / 2.0,
+                (ext["min"][1].item() + ext["max"][1].item()) / 2.0,
+            )
     hours: int = args.hours if args.hours is not None else 24
     extent: float = args.extent if args.extent is not None else 50_000.0
     resolution: float = args.resolution if args.resolution is not None else 1_000.0
