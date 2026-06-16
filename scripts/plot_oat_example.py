@@ -8,7 +8,11 @@ Info mode (no plotting — prints time range, spatial extent, variables):
 Plot mode (all optional args have sensible defaults):
     python -m scripts.plot_oat_example <checkpoint> --time 2020-06-15:06 \\
         --center 2683141 1248175 --hours 24 --extent 50000 --resolution 1000 \\
-        --var temperature
+        --var temperature  (LV95 example)
+
+    python -m scripts.plot_oat_example <checkpoint> --time 2020-06-15:06 \\
+        --center 8.5 47.4 --hours 24 --extent 0.5 --resolution 0.01 \\
+        --var temperature  (lon/lat example)
 """
 import argparse
 import logging
@@ -84,13 +88,13 @@ def _parse_args() -> argparse.Namespace:
         "--extent",
         type=float,
         default=None,
-        help="Half-extent of spatial plot in metres (default: 50000)",
+        help="Half-extent of spatial plot in coordinate units (default: 50000 for LV95, 0.5 for lon/lat).",
     )
     p.add_argument(
         "--resolution",
         type=float,
         default=None,
-        help="Spatial grid resolution in metres (default: 1000)",
+        help="Spatial grid resolution in coordinate units (default: 1000 for LV95, 0.01 for lon/lat).",
     )
     p.add_argument(
         "--var",
@@ -136,8 +140,8 @@ def _resolve_time_idx(dataset, time_str: str) -> int:
 
 def _print_info(ckpt_path: str, predictor, dataset) -> None:
     ext = dataset.nwp_extent
-    e_min, n_min = ext["min"][0].item(), ext["min"][1].item()
-    e_max, n_max = ext["max"][0].item(), ext["max"][1].item()
+    x_min, y_min = ext["min"][0].item(), ext["min"][1].item()
+    x_max, y_max = ext["max"][0].item(), ext["max"][1].item()
     vars_str = ", ".join(predictor.var_to_indx.keys())
     print(f"Checkpoint : {ckpt_path}")
     print(f"Variables  : {vars_str}")
@@ -145,7 +149,7 @@ def _print_info(ckpt_path: str, predictor, dataset) -> None:
         f"Time range : {dataset.times[0]}  →  {dataset.times[-1]}"
         f"  ({len(dataset)} timesteps)"
     )
-    print(f"NWP extent : E {e_min:.0f}–{e_max:.0f} m  N {n_min:.0f}–{n_max:.0f} m")
+    print(f"NWP extent : X {x_min:.4g}–{x_max:.4g}  Y {y_min:.4g}–{y_max:.4g}")
     n_stations = dataset.station_coords.shape[0]
     print(f"Stations   : {n_stations}  (use --station <idx> to select one)")
     names = (
@@ -154,8 +158,8 @@ def _print_info(ckpt_path: str, predictor, dataset) -> None:
         else [str(i) for i in range(n_stations)]
     )
     for i, (name, coords) in enumerate(zip(names, dataset.station_coords)):
-        e, n = coords[0].item(), coords[1].item()
-        print(f"  [{i:>4d}] {name:<12s}  E={e:.0f}  N={n:.0f}")
+        x, y = coords[0].item(), coords[1].item()
+        print(f"  [{i:>4d}] {name:<12s}  X={x:.4g}  Y={y:.4g}")
 
 
 def main() -> None:
@@ -222,7 +226,7 @@ def main() -> None:
             else str(args.station)
         )
         logger.info(
-            "Station %d (%s): E=%.0f N=%.0f", args.station, station_label, *center
+            "Station %d (%s): X=%.4g Y=%.4g", args.station, station_label, *center
         )
     else:
         if args.center is not None:
@@ -234,8 +238,9 @@ def main() -> None:
                 (ext["min"][1].item() + ext["max"][1].item()) / 2.0,
             )
     hours: int = args.hours if args.hours is not None else 24
-    extent: float = args.extent if args.extent is not None else 50_000.0
-    resolution: float = args.resolution if args.resolution is not None else 1_000.0
+    _is_lv95 = abs(dataset.nwp_extent["max"][0].item()) > 1e5
+    extent: float = args.extent if args.extent is not None else (50_000.0 if _is_lv95 else 0.5)
+    resolution: float = args.resolution if args.resolution is not None else (1_000.0 if _is_lv95 else 0.01)
 
     if args.time is not None:
         snap_idx = _resolve_time_idx(dataset, args.time)
@@ -298,7 +303,7 @@ def main() -> None:
             predictors={"NWP": nwp_predictor},
         )
         axes[0].set_title(
-            f"Timeseries — {station_label} (E={center[0]:.0f}, N={center[1]:.0f})"
+            f"Timeseries — {station_label} (X={center[0]:.4g}, Y={center[1]:.4g})"
         )
         axes[0].set_xlabel("Time")
         axes[0].set_ylabel(var)
@@ -317,8 +322,8 @@ def main() -> None:
         )
         plt.colorbar(mesh_mean, ax=axes[1], label=var)
         axes[1].set_title(f"Mean  ({snap_time_iso})")
-        axes[1].set_xlabel("Easting (m)")
-        axes[1].set_ylabel("Northing (m)")
+        axes[1].set_xlabel("X")
+        axes[1].set_ylabel("Y")
 
         mesh_std = plotter.plot_spatial_snapshot_at_station(
             ax=axes[2],
@@ -339,7 +344,7 @@ def main() -> None:
             time_indices=time_indices,
             predictors={"NWP": nwp_predictor},
         )
-        axes[0].set_title(f"Timeseries (E={center[0]:.0f}, N={center[1]:.0f})")
+        axes[0].set_title(f"Timeseries (X={center[0]:.4g}, Y={center[1]:.4g})")
         axes[0].set_xlabel("Time")
         axes[0].set_ylabel(var)
         axes[0].legend()
@@ -357,8 +362,8 @@ def main() -> None:
         )
         plt.colorbar(mesh_mean, ax=axes[1], label=var)
         axes[1].set_title(f"Mean  ({snap_time_iso})")
-        axes[1].set_xlabel("Easting (m)")
-        axes[1].set_ylabel("Northing (m)")
+        axes[1].set_xlabel("X")
+        axes[1].set_ylabel("Y")
 
         mesh_std = plotter.plot_spatial_snapshot(
             ax=axes[2],
@@ -372,7 +377,7 @@ def main() -> None:
         )
     plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
     axes[2].set_title("Predictive std")
-    axes[2].set_xlabel("Easting (m)")
+    axes[2].set_xlabel("X")
 
     if args.station is not None:
         mesh_nwp = nwp_plotter.plot_spatial_snapshot_at_station(
@@ -388,7 +393,7 @@ def main() -> None:
         )
     plt.colorbar(mesh_nwp, ax=axes[3], label=var)
     axes[3].set_title(f"NWP interp.  ({snap_time_iso})")
-    axes[3].set_xlabel("Easting (m)")
+    axes[3].set_xlabel("X")
 
     if args.station is not None:
         mesh_diff = plotter.plot_spatial_difference_at_station(
@@ -414,7 +419,7 @@ def main() -> None:
         )
     plt.colorbar(mesh_diff, ax=axes[4], label=f"Δ{var}")
     axes[4].set_title(f"OAT − NWP  ({snap_time_iso})")
-    axes[4].set_xlabel("Easting (m)")
+    axes[4].set_xlabel("X")
 
     fig.tight_layout()
     out_path = OUT_DIR / f"{ckpt_tag}_{var}_{snap_time_iso}.png"
