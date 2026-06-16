@@ -232,13 +232,8 @@ class OATPredictor(BasePredictor):
         return self.input_transform(batch)
 
     def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
-        original_n_samples = self.model.num_samples
-        self.model.num_samples = n_samples
-        try:
-            with torch.no_grad():
-                y_hat = self(batch, return_loss_and_targets=False)
-        finally:
-            self.model.num_samples = original_n_samples
+        with torch.no_grad():
+            y_hat = self(batch, return_loss_and_targets=False, n_samples=n_samples)
         return self.output_transform.inverse(y_hat["samples"])
 
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -255,7 +250,7 @@ class OATPredictor(BasePredictor):
         """
         return self.output_transform.inverse(y_hat['samples']), self.output_transform.inverse(y_true)
 
-    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False, n_samples: Optional[int] = None) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass for the OATPredictor.
         It expects the input data to be normalized. The user should prefer using
@@ -294,17 +289,25 @@ class OATPredictor(BasePredictor):
             model_fwd_kwargs["observation_data"] = batch['observation_data']
             model_fwd_kwargs["return_pre_oat_output"] =True
 
-        if not return_loss_and_targets:
-            out = self.model.forward(**model_fwd_kwargs)
-            return out
+        original_n_samples = None
+        if n_samples is not None:
+            original_n_samples = self.model.num_samples
+            self.model.num_samples = n_samples
+        try:
+            if not return_loss_and_targets:
+                out = self.model.forward(**model_fwd_kwargs)
+                return out
 
-        assert query_locations is None, "Can not compute loss for unlabelled queries."
-        # thee are arguments only required if you need to return the loss
-        model_fwd_kwargs["target_obs"] = target_obs
-        model_fwd_kwargs["target_mask_obs"] = target_mask_obs
-        out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
+            assert query_locations is None, "Can not compute loss for unlabelled queries."
+            # thee are arguments only required if you need to return the loss
+            model_fwd_kwargs["target_obs"] = target_obs
+            model_fwd_kwargs["target_mask_obs"] = target_mask_obs
+            out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
 
-        return out, per_var_losses, loss, target_obs, target_mask_obs
+            return out, per_var_losses, loss, target_obs, target_mask_obs
+        finally:
+            if original_n_samples is not None:
+                self.model.num_samples = original_n_samples
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
