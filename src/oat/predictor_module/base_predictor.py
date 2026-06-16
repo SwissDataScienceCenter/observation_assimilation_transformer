@@ -17,7 +17,3 @@ class BasePredictor(pl.LightningModule, ABC):
     @abstractmethod
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         ...
-
-    @abstractmethod
-    def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
-        ...

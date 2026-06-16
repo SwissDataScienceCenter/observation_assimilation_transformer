@@ -10,9 +10,6 @@ class _ConcretePredictor(BasePredictor):
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         return batch
 
-    def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
-        return torch.zeros(1, 1, n_samples, len(self.output_var_names))
-
 
 def test_base_predictor_var_mappings():
     pred = _ConcretePredictor(output_var_names=["temp", "wind"])
