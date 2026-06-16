@@ -160,7 +160,7 @@ def main() -> None:
         ]
     )
 
-    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint)
+    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
@@ -240,16 +240,12 @@ def main() -> None:
     )
 
     nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-    print(f"Observable variables: {dataset.config.obs_vars}")
-
     baseline_pre_transform = dataset.get_baseline_pre_transform()
     nwp_predictor = NWPInterpolatorPredictor(
         config=nwp_config,
         output_var_names=dataset.config.obs_vars,
         input_transform=baseline_pre_transform,
     ).eval()
-    print("Var_idx:", nwp_predictor.var_to_indx)
-    print("OAT predictor var_idx:", predictor.var_to_indx)
     nwp_plotter = OATPlotter(
         predictor=nwp_predictor,
         dataset=dataset,
