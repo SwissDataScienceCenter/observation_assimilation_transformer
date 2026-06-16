@@ -1053,6 +1053,40 @@ def test_compute_station_metrics_with_reference_includes_skill():
     assert result["crpss_global"].ndim == 0
 
 
+def test_compute_station_metrics_incremental_matches_batch():
+    """Batched accumulation must equal single-pass result to floating-point tolerance."""
+    T, S_eval, n_samples, V = 6, 3, 4, 2
+    torch.manual_seed(0)
+    predictor = _make_predictor(N_q=S_eval, n_samples=n_samples, n_vars=V)
+    dataset = _make_dataset(n_stations=5, n_times=T, n_vars=V)
+    dataset.obs_tensor = torch.randn(T, 5, V)
+    dataset.obs_mask_tensor = torch.ones(T, 5, V)
+    eval_station_indices = [2, 3, 4]
+
+    samples_by_t = [torch.randn(S_eval, n_samples, V) for _ in range(T)]
+
+    def _mock_inference(time_idx, query_coords, predictor=None):
+        return samples_by_t[time_idx]
+
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples)
+
+    with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
+        one_shot = plotter.compute_station_metrics(
+            time_indices=list(range(T)),
+            eval_station_indices=eval_station_indices,
+            batch_size=T,
+        )
+    with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
+        incremental = plotter.compute_station_metrics(
+            time_indices=list(range(T)),
+            eval_station_indices=eval_station_indices,
+            batch_size=2,
+        )
+
+    for key in ("crps", "mae", "crps_global", "mae_global"):
+        torch.testing.assert_close(one_shot[key], incremental[key], atol=1e-5, rtol=0)
+
+
 def test_plot_domain_overview_first_panel_applies_configured_vmin():
     predictor = _make_predictor(N_q=4, n_samples=5)
     other = _make_baseline_predictor(N_q=4, n_samples=5)
