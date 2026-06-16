@@ -119,6 +119,12 @@ def _parse_args() -> argparse.Namespace:
             "test stations as squares."
         ),
     )
+    p.add_argument(
+        "--no-stations",
+        action="store_true",
+        default=False,
+        help="Suppress all station markers from spatial plots.",
+    )
     return p.parse_args()
 
 
@@ -172,7 +178,7 @@ def main() -> None:
             args.var,
             args.split,
         ]
-    )
+    ) and not args.no_stations
 
     predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
     cfg.dataset.data_points_for_stats = 0
@@ -307,6 +313,7 @@ def main() -> None:
             extent=extent,
             resolution=resolution,
             plot_type="mean",
+            show_stations=not args.no_stations,
         )
         plt.colorbar(mesh_mean, ax=axes[1], label=var)
         axes[1].set_title(f"Mean  ({snap_time_iso})")
@@ -321,6 +328,7 @@ def main() -> None:
             extent=extent,
             resolution=resolution,
             plot_type="std",
+            show_stations=not args.no_stations,
         )
 
     else:
@@ -345,6 +353,7 @@ def main() -> None:
             extent=extent,
             resolution=resolution,
             plot_type="mean",
+            show_stations=not args.no_stations,
         )
         plt.colorbar(mesh_mean, ax=axes[1], label=var)
         axes[1].set_title(f"Mean  ({snap_time_iso})")
@@ -359,6 +368,7 @@ def main() -> None:
             extent=extent,
             resolution=resolution,
             plot_type="std",
+            show_stations=not args.no_stations,
         )
     plt.colorbar(mesh_std, ax=axes[2], label=f"{var} std")
     axes[2].set_title("Predictive std")
@@ -368,11 +378,13 @@ def main() -> None:
         mesh_nwp = nwp_plotter.plot_spatial_snapshot_at_station(
             ax=axes[3], var=var, time_idx=snap_idx, station_idx=args.station,
             extent=extent, resolution=resolution, plot_type="mean",
+            show_stations=not args.no_stations,
         )
     else:
         mesh_nwp = nwp_plotter.plot_spatial_snapshot(
             ax=axes[3], var=var, time_idx=snap_idx, center=center,
             extent=extent, resolution=resolution, plot_type="mean",
+            show_stations=not args.no_stations,
         )
     plt.colorbar(mesh_nwp, ax=axes[3], label=var)
     axes[3].set_title(f"NWP interp.  ({snap_time_iso})")
@@ -387,6 +399,7 @@ def main() -> None:
             station_idx=args.station,
             extent=extent,
             resolution=resolution,
+            show_stations=not args.no_stations,
         )
     else:
         mesh_diff = plotter.plot_spatial_difference(
@@ -397,6 +410,7 @@ def main() -> None:
             center=center,
             extent=extent,
             resolution=resolution,
+            show_stations=not args.no_stations,
         )
     plt.colorbar(mesh_diff, ax=axes[4], label=f"Δ{var}")
     axes[4].set_title(f"OAT − NWP  ({snap_time_iso})")
