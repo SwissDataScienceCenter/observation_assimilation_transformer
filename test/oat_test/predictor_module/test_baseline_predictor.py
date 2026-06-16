@@ -102,24 +102,37 @@ def test_normalize_batch_is_identity(nwp_config: NWPInterpolatorConfig) -> None:
     assert result is batch
 
 
-def test_predict_samples_shape(nwp_config: NWPInterpolatorConfig) -> None:
+def test_predict_step_samples_shape(nwp_config: NWPInterpolatorConfig) -> None:
     B, C, S_query, n_samples = 2, 3, 6, 10
     obs_vars = [f"var_{i}" for i in range(C)]
     predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
     batch = make_batch(B, C, S_query, include_obs=False)
-
-    samples = predictor.predict_samples(batch, n_samples)
-
+    samples = predictor.predict_step(batch, batch_idx=0, n_samples=n_samples)
     assert samples.shape == (B, S_query, n_samples, C)
 
 
-def test_predict_samples_deterministic(nwp_config: NWPInterpolatorConfig) -> None:
+def test_predict_step_samples_deterministic(nwp_config: NWPInterpolatorConfig) -> None:
     """All n_samples slices are identical since NWP interpolation is deterministic."""
     B, C, S_query, n_samples = 1, 2, 4, 5
     obs_vars = [f"var_{i}" for i in range(C)]
     predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
     batch = make_batch(B, C, S_query, include_obs=False)
-
-    samples = predictor.predict_samples(batch, n_samples)  # [B, S, n_samples, C]
-
+    samples = predictor.predict_step(batch, batch_idx=0, n_samples=n_samples)
     assert torch.allclose(samples[:, :, 0, :], samples[:, :, 1, :])
+
+
+def test_predict_step_default_n_samples(nwp_config: NWPInterpolatorConfig) -> None:
+    """With no n_samples, returns shape [B, S, 1, C]."""
+    B, C, S_query = 1, 2, 4
+    obs_vars = [f"var_{i}" for i in range(C)]
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
+    batch = make_batch(B, C, S_query, include_obs=False)
+    samples = predictor.predict_step(batch, batch_idx=0)
+    assert samples.shape == (B, S_query, 1, C)
+
+
+def test_predict_step_invalid_return_as(nwp_config: NWPInterpolatorConfig) -> None:
+    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
+    batch = make_batch(1, 1, 2, include_obs=False)
+    with pytest.raises(ValueError):
+        predictor.predict_step(batch, batch_idx=0, return_as="distribution")

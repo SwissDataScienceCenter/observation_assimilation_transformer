@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Any, List, Optional, Tuple
+from typing import Callable, Dict, Any, List, Optional, Tuple, Literal
 
 import torch
 
@@ -55,21 +55,33 @@ class NWPInterpolatorPredictor(BasePredictor):
                                   prefix="test")
         return y_pred
     
-    def predict_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def predict_step(
+        self,
+        batch: Dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        return_as: Literal["samples", "distribution"] = "samples",
+        n_samples: Optional[int] = None,
+    ) -> torch.Tensor:
         batch = self.input_transform(batch) if self.input_transform is not None else batch
-        y_pred, _, _ = self(batch)
-        return y_pred
+        if return_as == "samples":
+            with torch.no_grad():
+                y_pred, _, _ = self(batch)  # [B, N_q, n_vars]
+            n = n_samples if n_samples is not None else 1
+            return y_pred.unsqueeze(-2).expand(-1, -1, n, -1)  # [B, N_q, n_samples, n_vars]
+        elif return_as == "distribution":
+            raise ValueError(
+                "NWPInterpolatorPredictor is deterministic; "
+                "'distribution' return_as is not supported."
+            )
+        else:
+            raise ValueError(
+                f"Invalid value for return_as: {return_as!r}. "
+                "Expected 'samples' or 'distribution'."
+            )
 
     def _normalize_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         return batch
-
-    def predict_samples(self, batch: Dict[str, Any], n_samples: int) -> torch.Tensor:
-        """NWP interpolation is deterministic; all n_samples slices are identical."""
-        if self.input_transform is not None:
-            batch = self.input_transform(batch)
-        with torch.no_grad():
-            out, _, _ = self(batch)  # [B, N_q, n_vars]
-        return out.unsqueeze(2).expand(-1, -1, n_samples, -1)
 
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor,
                                         y_true: torch.Tensor,
