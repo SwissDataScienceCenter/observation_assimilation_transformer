@@ -588,7 +588,7 @@ class OATPlotter:
 
         diff = (
             samples_a[:, :, var_idx].mean(dim=1) - samples_b[:, :, var_idx].mean(dim=1)
-        ).numpy()
+        ).detach().cpu().numpy()
         field = diff.reshape(y_grid.shape)
 
         vmax = float(np.abs(field).max()) or 1.0
