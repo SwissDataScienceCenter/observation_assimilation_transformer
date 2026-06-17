@@ -20,7 +20,7 @@ def _make_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2):
     predictor.var_to_indx = {"temp": 0, "wspd": 1}
     predictor.output_var_names = ["temp", "wspd"]
     predictor._normalize_batch.side_effect = lambda batch: batch
-    predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
+    predictor.predict_step.return_value = torch.zeros(1, N_q, n_samples, n_vars)
     predictor.to.return_value = predictor
     return predictor
 
@@ -31,7 +31,7 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     predictor.var_to_indx = {"temp": 0, "wspd": 1}
     predictor.output_var_names = ["temp", "wspd"]
     predictor._normalize_batch.side_effect = lambda batch: batch
-    predictor.predict_samples.return_value = torch.zeros(1, N_q, n_samples, n_vars)
+    predictor.predict_step.return_value = torch.zeros(1, N_q, n_samples, n_vars)
     predictor.to.return_value = predictor
     return predictor
 
@@ -109,9 +109,8 @@ def test_run_inference_with_baseline_predictor():
     samples = plotter._run_inference(time_idx=0, query_coords=torch.zeros(N_q, 2))
 
     assert samples.shape == (N_q, n_samples, n_vars)
-    predictor._normalize_batch.assert_called_once()
-    predictor.predict_samples.assert_called_once()
-    assert predictor.predict_samples.call_args[0][1] == n_samples
+    predictor.predict_step.assert_called_once()
+    assert predictor.predict_step.call_args[1]["n_samples"] == n_samples
 
 
 def test_plot_timeseries_draws_line_and_band():
