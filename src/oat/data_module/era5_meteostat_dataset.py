@@ -407,7 +407,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         num_data_points: int,
         dataloader: DataLoader[dict[str, torch.Tensor]] | None = None,
         type: str = "real",
-        data_indices: np.ndarray[Any, np.dtype[np.int]] | None = None,
+        data_indices: np.ndarray[Any, np.dtype[np.intp]] | None = None,
     ) -> tuple[transform.NestedTransform, transform.Transform]:
 
         def _collect_stats(
