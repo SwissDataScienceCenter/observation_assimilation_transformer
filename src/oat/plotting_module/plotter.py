@@ -408,9 +408,9 @@ class OATPlotter:
         var_samples = samples[:, :, var_idx]  # [N_q, n_samples]
 
         if plot_type == "mean":
-            field = var_samples.mean(dim=1).numpy()
+            field = var_samples.mean(dim=1).detach().cpu().numpy()
         else:
-            field = var_samples.std(dim=1).numpy()
+            field = var_samples.std(dim=1).detach().cpu().numpy()
 
         field = field.reshape(y_grid.shape)
 
