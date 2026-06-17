@@ -33,7 +33,7 @@ from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.checkpoint_utils import load_checkpoint
-from scripts.geo_overlays import _add_borders
+from oat.plotting_module.geo_overlays import _add_borders
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 _PROJECT_ROOT = Path(__file__).parents[1]

@@ -53,7 +53,7 @@ def _load_plot_config(dataset: Any) -> Any:
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 
-from scripts.geo_overlays import _GEO_CACHE, _add_borders  # noqa: E402
+from oat.plotting_module.geo_overlays import _GEO_CACHE, _add_borders  # noqa: E402
 
 
 def _build_land_mask(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
