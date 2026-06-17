@@ -28,7 +28,7 @@ from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.oat_predictor import OATPredictor
-from scripts.checkpoint_utils import load_checkpoint
+from oat.predictor_module.checkpoint_utils import load_checkpoint
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
 
