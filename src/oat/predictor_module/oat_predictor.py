@@ -566,8 +566,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
 
 def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
                     estimated_total_step: int,
-                    var_names: str,
-                    transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
+                    var_names: list[str],
+                    transforms: tuple[Transform, Transform], cfg: DictConfig) -> OATPredictor:
 
     # optimizer
     module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
