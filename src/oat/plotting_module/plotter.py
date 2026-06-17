@@ -786,10 +786,12 @@ class OATPlotter:
 
         S = len(eval_station_indices)
         V = self.dataset.obs_tensor.shape[-1]
-        crps_sum = torch.zeros(S, V)
-        mae_sum = torch.zeros(S, V)
-        mask_count = torch.zeros(S, V)
-        ref_crps_sum = torch.zeros(S, V) if reference is not None else None
+        crps_sum = torch.zeros(S, V, device=self.device)
+        mae_sum = torch.zeros(S, V, device=self.device)
+        mask_count = torch.zeros(S, V, device=self.device)
+        ref_crps_sum = (
+            torch.zeros(S, V, device=self.device) if reference is not None else None
+        )
 
         processed = 0
         total = len(time_indices)
