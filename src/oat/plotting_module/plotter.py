@@ -879,11 +879,17 @@ class OATPlotter:
         )
 
         samples_nwp = self._run_inference(time_idx, query_coords, predictor=other)
-        nwp_mean = samples_nwp[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
+        nwp_mean = (
+            samples_nwp[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+        )
 
         samples_oat = self._run_inference(time_idx, query_coords)
-        oat_mean = samples_oat[:, :, var_idx].mean(dim=1).numpy().reshape(y_grid.shape)
-        oat_std = samples_oat[:, :, var_idx].std(dim=1).numpy().reshape(y_grid.shape)
+        oat_mean = (
+            samples_oat[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+        )
+        oat_std = (
+            samples_oat[:, :, var_idx].std(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+        )
 
         diff = oat_mean - nwp_mean
         vmax_diff = float(np.abs(diff).max()) or 1.0
