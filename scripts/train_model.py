@@ -1,9 +1,9 @@
 import os
 from datetime import datetime
 import warnings
-import importlib
 
 from oat.model_module import model
+from oat.model_module.model import get_model_cls
 from oat.data_module.setup import setup_data_and_transform
 from oat.data_module.transform import Transform
 from oat.predictor_module import OATPredictor
@@ -327,11 +327,6 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
     logger.info(f"Saved batch fixture object to {out_file}")
 
 
-
-def get_model_cls(cfg: DictConfig) -> Any:
-    model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
-    model_module = importlib.import_module(model_module_str)
-    return getattr(model_module, model_cls_str)
 
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
