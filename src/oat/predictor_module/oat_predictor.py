@@ -231,11 +231,6 @@ class OATPredictor(BasePredictor):
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return self.input_transform(batch)
 
-    def predict_samples(self, batch: dict[str, Any], n_samples: int) -> torch.Tensor:
-        with torch.no_grad():
-            y_hat = self(batch, return_loss_and_targets=False, n_samples=n_samples)
-        return self.output_transform.inverse(y_hat["samples"])
-
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Given the model's prediction and normalized targets, de-normalizes the predicted samples

@@ -369,7 +369,7 @@ def test_validate_output_head_support_selected_all_distributions_cases(
             pred.validate_output_head_supports(train_dataset)
 
 
-def test_predict_samples_shape(batch_fixture, transform_fixture, model_cfg_fixture):
+def test_predict_step_samples_shape(batch_fixture, transform_fixture, model_cfg_fixture):
     input_transform, output_transform = transform_fixture
     pred = OATPredictor(
         oat_model_cfg=model_cfg_fixture,
@@ -377,12 +377,11 @@ def test_predict_samples_shape(batch_fixture, transform_fixture, model_cfg_fixtu
         output_transform=output_transform,
         output_var_names=list(model_cfg_fixture.output_head.variable_to_distribution.keys()),
     )
-    n_vars = len(pred.output_var_names)
     n_samples = 5
     B = batch_fixture["query_data"]["coords"].shape[0]
     N_q = batch_fixture["query_data"]["coords"].shape[1]
+    n_vars = len(pred.output_var_names)
 
-    normalized = pred._normalize_batch(batch_fixture)
-    samples = pred.predict_samples(normalized, n_samples)
+    samples = pred.predict_step(batch_fixture, batch_idx=0, n_samples=n_samples)
 
     assert samples.shape == (B, N_q, n_samples, n_vars)
