@@ -801,13 +801,19 @@ class OATPlotter:
                 [self._run_inference(t, eval_coords) for t in chunk_list]
             )  # [B, S, n_samples, V]
             y_obs_b = torch.stack(
-                [torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
-                 for t in chunk_list]
-            )  # [B, S, V]
+                [
+                    torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
+                    for t in chunk_list
+                ]
+            ).to(self.device)  # [B, S, V]
             mask_b = torch.stack(
-                [torch.stack([self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices])
-                 for t in chunk_list]
-            ).float()  # [B, S, V]
+                [
+                    torch.stack(
+                        [self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices]
+                    )
+                    for t in chunk_list
+                ]
+            ).float().to(self.device)  # [B, S, V]
 
             count_b = mask_b.sum(dim=0)  # [S, V]
             crps_sum += mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
