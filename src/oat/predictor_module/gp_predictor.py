@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
+from importlib import import_module
 
 import pytorch_lightning as pl
 import torch
 from torch.optim.optimizer import Optimizer
+from omegaconf import DictConfig
 
 from oat.data_module.transform import Transform
-from oat.model_module.gp_baseline import GPBaseline
+from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
@@ -189,3 +191,63 @@ class GPPredictor(pl.LightningModule):
                 },
             }
         return optimizer
+
+
+def setup_gp_predictor(
+    cfg: DictConfig,
+    field_extent: Dict,
+    obs_vars: List[str],
+    transforms: Tuple[Transform, Transform],
+) -> "GPPredictor":
+    data_cfg = cfg.dataset
+    model_cfg = cfg.model
+
+    gp_topography_kwargs = None
+    if bool(model_cfg.get("use_topography", False)):
+        gp_topography_kwargs = {
+            **dict(model_cfg.topographic_encoder),
+            "in_channels": len(data_cfg.topo_vars),
+        }
+
+    gp_config = GPBaselineConfig(
+        obs_vars=obs_vars,
+        nwp_vars=list(data_cfg.nwp_vars),
+        field_extent=field_extent,
+        use_nwp=bool(model_cfg.use_nwp),
+        use_time_emb=bool(model_cfg.use_time_emb),
+        use_topography=bool(model_cfg.get("use_topography", False)),
+        topography_encoder_kwargs=gp_topography_kwargs,
+        mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
+        kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
+        kernel_embed_dim=int(model_cfg.kernel_embed_dim),
+        mean_groups=model_cfg.get("mean_groups"),
+        stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
+        non_stationary_cov_groups=model_cfg.get("non_stationary_cov_groups"),
+        noise_variance=float(model_cfg.noise_variance),
+        eps=float(model_cfg.get("eps", 1e-3)),
+        loss_fn=str(model_cfg.loss_fn),
+        num_samples=int(model_cfg.num_samples),
+    )
+    gp_model = GPBaseline(gp_config)
+
+    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
+    optim_cls = getattr(import_module(module_path), class_name)
+
+    sched_cls = None
+    sched_params: dict = {}
+    if cfg.predictor.kwargs.get("scheduler_class") is not None:
+        module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
+        sched_cls = getattr(import_module(module_path), class_name)
+        sched_params = dict(cfg.predictor.kwargs.get("scheduler_params", {}))
+
+    return GPPredictor(
+        gp_model=gp_model,
+        input_transform=transforms[0],
+        output_transform=transforms[1],
+        output_var_names=obs_vars,
+        lr=float(cfg.predictor.lr),
+        optimizer_class=optim_cls,
+        optimizer_params=dict(cfg.predictor.kwargs.get("optimizer_params", {})),
+        scheduler_class=sched_cls,
+        scheduler_params=sched_params,
+    )

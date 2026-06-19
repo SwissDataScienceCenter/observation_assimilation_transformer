@@ -3,16 +3,22 @@ from oat.data_module.cosmo_peakweather_dataset import (
     CosmoPeakWeatherDataset,
     DERIVED_FEATURES,
     _build_obs_variable_support,
+    _OBS_NWP_MAPPING,
 )
 from oat.data_module.support import VariableSupport
 from oat.data_module.transform import NestedTransform, Transform
 from oat.data_module.data_split import create_splits
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 import os
-import torch
+
+
+def _dataset_stub(obs_vars: list[str], nwp_vars: list[str]):
+    """Minimal stand-in with only the attrs that get_baseline_pre_transform reads."""
+    return SimpleNamespace(config=SimpleNamespace(obs_vars=obs_vars, nwp_vars=nwp_vars))
 
 @pytest.mark.skipif(
     os.getenv("CI") == "true",
@@ -250,6 +256,70 @@ def test_obs_nwp_alignment_with_date_filter() -> None:
     OmegaConf.update(cfg, "dataset.end_date", "2021-06-30")
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
+
+
+def test_baseline_pre_transform_temperature_unit_conversion() -> None:
+    stub = _dataset_stub(['temperature'], ['T_2M'])
+    fn = CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+    nwp_field = torch.full((1, 4, 4), 273.15 + 10.0)  # 10 °C in Kelvin
+    sample = {'global_data': {'global_field': nwp_field}}
+    out = fn(sample)
+
+    expected = torch.full((1, 4, 4), 10.0)
+    torch.testing.assert_close(out['global_data']['global_field'], expected)
+
+
+def test_baseline_pre_transform_precipitation_scaling() -> None:
+    stub = _dataset_stub(['precipitation'], ['TOT_PREC_1H'])
+    fn = CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+    nwp_field = torch.full((1, 4, 4), 0.5)
+    sample = {'global_data': {'global_field': nwp_field}}
+    out = fn(sample)
+
+    expected = torch.full((1, 4, 4), 300.0)  # 600 * 0.5
+    torch.testing.assert_close(out['global_data']['global_field'], expected)
+
+
+def test_baseline_pre_transform_wind_speed() -> None:
+    stub = _dataset_stub(['wind_speed'], ['U_10M', 'V_10M'])
+    fn = CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+    u = torch.full((1, 4, 4), 3.0)
+    v = torch.full((1, 4, 4), 4.0)
+    nwp_field = torch.cat([u, v], dim=0)  # (2, 4, 4)
+    sample = {'global_data': {'global_field': nwp_field}}
+    out = fn(sample)
+
+    expected = torch.full((1, 4, 4), 5.0)  # sqrt(9 + 16)
+    torch.testing.assert_close(out['global_data']['global_field'], expected)
+
+
+def test_baseline_pre_transform_raises_for_unsupported_obs_var() -> None:
+    stub = _dataset_stub(['not_a_real_var'], ['T_2M'])
+    with pytest.raises(ValueError, match="No NWP mapping defined for obs variable"):
+        CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+
+def test_baseline_pre_transform_raises_when_nwp_dep_missing() -> None:
+    stub = _dataset_stub(['precipitation'], ['T_2M'])  # TOT_PREC_1H absent
+    with pytest.raises(ValueError, match="TOT_PREC_1H"):
+        CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+
+
+def test_obs_nwp_mapping_contains_expected_keys() -> None:
+    assert set(_OBS_NWP_MAPPING) == {'temperature', 'wind_u', 'wind_v', 'wind_speed', 'precipitation'}
+
+
+def test_baseline_pre_transform_channel_order_follows_obs_vars() -> None:
+    stub = _dataset_stub(['temperature', 'precipitation'], ['T_2M', 'TOT_PREC_1H'])
+    fn = CosmoPeakWeatherDataset.get_baseline_pre_transform(stub)
+    nwp_field = torch.stack([torch.full((4, 4), 273.15 + 5.0), torch.full((4, 4), 0.1)], dim=0)
+    out = fn({'global_data': {'global_field': nwp_field}})
+    field = out['global_data']['global_field']
+    torch.testing.assert_close(field[0], torch.full((4, 4), 5.0))   # temperature channel
+    torch.testing.assert_close(field[1], torch.full((4, 4), 60.0))  # precipitation channel
 
 
 def test_build_obs_variable_support_raises_for_missing_variable() -> None:

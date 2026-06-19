@@ -1,10 +1,12 @@
 import os
 from datetime import datetime
 import warnings
-import importlib
 
 from oat.model_module import model
+from oat.model_module.model import get_model_cls
 from oat.data_module.setup import setup_data_and_transform
+from oat.predictor_module.oat_predictor import setup_oat_cfg, setup_oat_predictor
+from oat.predictor_module.gp_predictor import setup_gp_predictor
 from oat.data_module.transform import Transform
 from oat.predictor_module import OATPredictor
 from oat.predictor_module.schedulers import estimate_total_steps
@@ -31,215 +33,6 @@ from torch.utils.data import DataLoader
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
-    model_cfg = cfg.model
-    data_cfg = cfg.dataset
-    logger.info("Setting up model configs...")
-    global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
-    global_encoder_cfg = model.GlobalEncoderConfig(
-        **model_cfg.global_encoder,
-        in_channels=global_input_chans,
-        field_extent_max=field_extent['max'],
-        field_extent_min=field_extent['min']
-        )
-
-    topography_encoder_cfg = model.TopographicEncoderConfig(
-        **model_cfg.topographic_encoder,
-        in_channels=len(data_cfg.topo_vars)
-        )
-
-    time_cond_dim = 4 if data_cfg.use_time_embedding else 0
-    nwp_topo_fusion_cfg = model.NwpTopoFusionConfig(
-        **model_cfg.nwp_topo_fusion,
-        cond_dim=time_cond_dim,
-        out_channels=model_cfg.d_model)
-
-    if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
-        raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")
-    if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
-        raise ValueError("Variables in output head distribution config do not match observation variables")
-    if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
-        raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
-    logger.info(
-        f"Model will assume the following index to variable mapping: "
-        f"{ {idx: var for idx, var in enumerate(cfg.dataset.obs_vars)} }"
-        "\n And variable to distribution mapping: "
-        f"{ cfg.model.output_head.variable_to_distribution }"
-    )
-    output_head_cfg = model.OutputHeadConfig(
-        in_features=model_cfg.d_model,
-        **model_cfg.output_head)
-
-    if get_model_cls(cfg) == model.UninformedOAT:
-        logger.info("Initialized uninformed model cfg...")
-        return model.UninformedOATConfig(
-            global_encoder=global_encoder_cfg,
-            topographic_encoder=topography_encoder_cfg,
-            nwp_topo_fusion=nwp_topo_fusion_cfg,
-            output_head=output_head_cfg,
-            num_samples=model_cfg.num_samples
-        )
-
-    masking_cfg = model.MaskingConfig(**model_cfg.masking)
-
-    transformer_cfg = model.TransformerConfig(
-        d_geo_bias=len(data_cfg.geo_vars),
-        d_model=model_cfg.d_model,
-        **model_cfg.transformer)
-
-    n_obs_vars = len(data_cfg.obs_vars)
-    condition_on_mask = model_cfg.innovation_fusion.condition_on_mask
-    innovation_cond_dim = [time_cond_dim, n_obs_vars] if condition_on_mask else time_cond_dim
-    innovation_fusion_cfg = model.InnovationFusionConfig(
-        **model_cfg.innovation_fusion,
-        cond_dim=innovation_cond_dim,
-        out_channels=model_cfg.d_model)
-
-    if not model_cfg.get("learnable_gating", False):
-        logger.info("Learnable gating disabled.")
-        learnable_gating_cfg = None
-    else:
-        logger.info("Learnable gating enabled.")
-        learnable_gating_cfg = model.LearnableGatingConfig(
-            **model_cfg.learnable_gating,
-            in_channels=n_obs_vars,
-            out_channels=model_cfg.d_model)
-
-    oat_config = model.OATConfig(
-        global_encoder=global_encoder_cfg,
-        topographic_encoder=topography_encoder_cfg,
-        nwp_topo_fusion=nwp_topo_fusion_cfg,
-        innovation_fusion=innovation_fusion_cfg,
-        masking=masking_cfg,
-        transformer=transformer_cfg,
-        output_head=output_head_cfg,
-        learnable_gating=learnable_gating_cfg,
-        num_samples=model_cfg.num_samples,
-        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
-        mask_innovations=model_cfg.mask_innovations
-    )
-    logger.info("Initialized model cfg...")
-    return oat_config
-
-def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
-                    estimated_total_step: int,
-                    var_names: str,
-                    transforms: tuple[Transform], cfg: DictConfig) -> OATPredictor:
-
-    from importlib import import_module
-
-    # optimizer
-    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
-    module = import_module(module_path)
-    optim_cls = getattr(module, class_name)
-
-    # lr scheduler
-    module_path, class_name = cfg.predictor.kwargs.lr_scheduler_class.rsplit(".", 1)
-    module = import_module(module_path)
-    sched_cls = getattr(module, class_name)
-
-    # oat loss scheduler
-    oat_loss_scheduler_class = cfg.predictor.kwargs.get("oat_loss_scheduler_class", None)
-    if oat_loss_scheduler_class is not None:
-        module_path, class_name = cfg.predictor.kwargs.oat_loss_scheduler_class.rsplit(".", 1)
-        module = import_module(module_path)
-        oat_loss_sched_cls = getattr(module, class_name)
-        oat_loss_sched_params = cfg.predictor.kwargs.oat_loss_scheduler_params
-        if oat_loss_sched_params['total_steps'] is None:
-            oat_loss_sched_params['total_steps'] = estimated_total_step
-            
-            logger.info(f"Config did not specify total_steps for the OAT loss scheduler. It has been set to the (manual) estimated total training steps: {estimated_total_step}\
-                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
-        else:
-            logger.info(f"OAT loss scheduler total_steps from config: {oat_loss_sched_params['total_steps']} \
-                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
-            
-    else:
-        oat_loss_sched_cls = None
-        oat_loss_sched_params = None
-        
-    
-    predictor = OATPredictor(
-        oat_model_cfg=model_cfg,
-        input_transform=transforms[0],
-        output_transform=transforms[1],
-        output_var_names=var_names,
-        lr=cfg.predictor.lr,
-        optimizer_class=optim_cls,
-        optimizer_params=cfg.predictor.kwargs.optimizer_params,
-        lr_scheduler_class=sched_cls,
-        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
-        oat_loss_scheduler_class=oat_loss_sched_cls,
-        oat_loss_scheduler_params=oat_loss_sched_params
-    )
-
-    return predictor
-
-
-def setup_gp_predictor(
-    cfg: DictConfig,
-    field_extent: Dict,
-    obs_vars: List[str],
-    transforms: tuple[Transform, Transform],
-) -> "GPPredictor":
-    from importlib import import_module
-    from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
-    from oat.predictor_module.gp_predictor import GPPredictor
-
-    data_cfg = cfg.dataset
-    model_cfg = cfg.model
-
-    gp_topography_kwargs = None
-    if bool(model_cfg.get("use_topography", False)):
-        gp_topography_kwargs = {
-            **dict(model_cfg.topographic_encoder),
-            "in_channels": len(data_cfg.topo_vars),
-        }
-
-    gp_config = GPBaselineConfig(
-        obs_vars=obs_vars,
-        nwp_vars=list(data_cfg.nwp_vars),
-        field_extent=field_extent,
-        use_nwp=bool(model_cfg.use_nwp),
-        use_time_emb=bool(model_cfg.use_time_emb),
-        use_topography=bool(model_cfg.get("use_topography", False)),
-        topography_encoder_kwargs=gp_topography_kwargs,
-        mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
-        kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
-        kernel_embed_dim=int(model_cfg.kernel_embed_dim),
-        mean_groups=model_cfg.get("mean_groups"),
-        stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
-        non_stationary_cov_groups=model_cfg.get("non_stationary_cov_groups"),
-        noise_variance=float(model_cfg.noise_variance),
-        eps=float(model_cfg.get("eps", 1e-3)),
-        loss_fn=str(model_cfg.loss_fn),
-        num_samples=int(model_cfg.num_samples),
-    )
-    gp_model = GPBaseline(gp_config)
-
-    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
-    optim_cls = getattr(import_module(module_path), class_name)
-
-    sched_cls = None
-    sched_params: dict = {}
-    if cfg.predictor.kwargs.get("scheduler_class") is not None:
-        module_path, class_name = cfg.predictor.kwargs.scheduler_class.rsplit(".", 1)
-        sched_cls = getattr(import_module(module_path), class_name)
-        sched_params = dict(cfg.predictor.kwargs.get("scheduler_params", {}))
-
-    return GPPredictor(
-        gp_model=gp_model,
-        input_transform=transforms[0],
-        output_transform=transforms[1],
-        output_var_names=obs_vars,
-        lr=float(cfg.predictor.lr),
-        optimizer_class=optim_cls,
-        optimizer_params=dict(cfg.predictor.kwargs.get("optimizer_params", {})),
-        scheduler_class=sched_cls,
-        scheduler_params=sched_params,
-    )
 
 
 def setup_profiler(cfg: DictConfig) -> Profiler | None:
@@ -327,11 +120,6 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
     logger.info(f"Saved batch fixture object to {out_file}")
 
 
-
-def get_model_cls(cfg: DictConfig) -> Any:
-    model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
-    model_module = importlib.import_module(model_module_str)
-    return getattr(model_module, model_cls_str)
 
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:

@@ -20,7 +20,7 @@ def assert_prediction_matches_target(y_hat, y_target):
     assert y_hat.shape[-1] == y_target.shape[-1], "Feature size mismatch"
 
 @register_metric()
-def sample_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] = "all"):
+def sample_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable", "station"] = "all"):
     """
     Mean Absolute Error over all samples.
 
@@ -28,7 +28,7 @@ def sample_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable
         y_target: [batch, station, feature]
         y_hat: [batch, station, sample, feature]
         mask: [batch, station, feature] or None
-        aggregation: "all" -> single MAE, "variable" -> MAE per feature
+        aggregation: "all" -> scalar, "variable" -> [feature], "station" -> [station, feature]
     """
 
     assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
@@ -56,10 +56,15 @@ def sample_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable
 
         return torch.where(denom > 0, num / denom, torch.zeros_like(num))
 
+    elif aggregation == "station":
+        num = abs_errors.sum(dim=[0, 2])                                    # [station, feature]
+        denom = mask_exp.sum(dim=[0, 2]).clamp(min=1e-8) * y_hat.shape[-2]
+        return num / denom
+
     raise ValueError(f"Invalid aggregation: {aggregation}")
 
 @register_metric()
-def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"] = "all"):
+def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable", "station"] = "all"):
     """
     Mean Absolute Error using the median of samples.
 
@@ -67,9 +72,9 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
         y_target: [batch, station, feature]
         y_hat: [batch, station, sample, feature]
         mask: [batch, station, feature] or None
-        aggregation: "all" -> single MAE, "variable" -> MAE per feature
+        aggregation: "all" -> scalar, "variable" -> [feature], "station" -> [station, feature]
     """
-    
+
     # Ensure shapes match
     assert_prediction_matches_target(y_hat=y_hat, y_target=y_target)
 
@@ -94,11 +99,16 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
 
         return torch.where(denom > 0, num / denom, torch.zeros_like(num))
 
+    elif aggregation == "station":
+        num = abs_errors.sum(dim=0)                              # [station, feature]
+        denom = mask.float().sum(dim=0).clamp(min=1e-8)
+        return num / denom
+
     raise ValueError(f"Invalid aggregation: {aggregation}")
 
 @register_metric()
-def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Tensor] = None, 
-            aggregation: Literal["all", "variable"] = "all") -> torch.Tensor:
+def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Tensor] = None,
+            aggregation: Literal["all", "variable", "station"] = "all") -> torch.Tensor:
     """
     Computes the Monte Carlo estimation of CRPS. 
     If aggregation = "all", this function computes the average CRPS 
@@ -147,7 +157,9 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
         return score.sum(dim=(0,1)) / mask.sum(dim=(0,1))
     elif aggregation == "all":
         return score.sum() / mask.sum()
-    
+    elif aggregation == "station":
+        return score.sum(dim=0) / mask.sum(dim=0).clamp(min=1e-8)  # [station, feature]
+
     raise ValueError(f"Invalid aggregation: {aggregation}")
 
 

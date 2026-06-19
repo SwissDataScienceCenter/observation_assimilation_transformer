@@ -40,3 +40,4 @@ checkpoints/
 benchmarking/
 profiler_outputs/
 docs/
+.claude/

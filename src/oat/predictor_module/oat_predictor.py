@@ -1,4 +1,5 @@
-from typing import Any, Literal, Type, Optional, List
+from typing import Any, Dict, Literal, Type, Optional, List
+from importlib import import_module
 import logging
 
 import pytorch_lightning as pl
@@ -6,15 +7,20 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
+from omegaconf import DictConfig
 
+from oat.model_module import model
 from oat.model_module.model import (
-    OATConfig, 
-    OAT, 
+    OATConfig,
+    OAT,
     UninformedOATConfig,
-    UninformedOAT
+    UninformedOAT,
+    get_model_cls,
 )
+from oat.predictor_module.schedulers import estimate_total_steps
 from oat.data_module.transform import Transform
 from oat.data_module.support import VariableSupport
+from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import (
     sample_mae, 
     point_mae,
@@ -23,7 +29,7 @@ from oat.predictor_module.functional_metrics import (
 
 logger = logging.getLogger(__name__)
 
-class OATPredictor(pl.LightningModule):
+class OATPredictor(BasePredictor):
     
     """
     PyTorch Lightning module for training and evaluating an OAT-based model
@@ -98,7 +104,7 @@ class OATPredictor(pl.LightningModule):
                  oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
                  oat_loss_scheduler_params:  Optional[dict]  = None,
                  ):
-        super().__init__()
+        super().__init__(output_var_names=output_var_names)
 
         self.save_hyperparameters()
 
@@ -112,16 +118,12 @@ class OATPredictor(pl.LightningModule):
             self.model = OAT(oat_model_cfg)
         elif isinstance(oat_model_cfg, UninformedOATConfig):
             self.model = UninformedOAT(oat_model_cfg)
-        
+
         if not hasattr(self, "model"):
             raise ValueError(f"oat_model_cfg must be an instance of OATConfig or UninformedOATConfig. Given {type(oat_model_cfg)}")
 
         self.input_transform = input_transform
         self.output_transform = output_transform
-        
-        self.output_var_names = output_var_names
-        self.var_to_indx = {v: i for i,v in enumerate(self.output_var_names)}
-        self.indx_to_var = {i: v for i,v in enumerate(self.output_var_names)}
         
         # NOTE perhaps make this configurable?
         self.metrics_fn = {
@@ -248,7 +250,7 @@ class OATPredictor(pl.LightningModule):
         """
         return self.output_transform.inverse(y_hat['samples']), self.output_transform.inverse(y_true)
 
-    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor], query_locations: Optional[torch.Tensor] = None, return_loss_and_targets: bool = False, n_samples: Optional[int] = None) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass for the OATPredictor.
         It expects the input data to be normalized. The user should prefer using
@@ -287,17 +289,25 @@ class OATPredictor(pl.LightningModule):
             model_fwd_kwargs["observation_data"] = batch['observation_data']
             model_fwd_kwargs["return_pre_oat_output"] =True
 
-        if not return_loss_and_targets:
-            out = self.model.forward(**model_fwd_kwargs)
-            return out
+        original_n_samples = None
+        if n_samples is not None:
+            original_n_samples = self.model.num_samples
+            self.model.num_samples = n_samples
+        try:
+            if not return_loss_and_targets:
+                out = self.model.forward(**model_fwd_kwargs)
+                return out
 
-        assert query_locations is None, "Can not compute loss for unlabelled queries."
-        # thee are arguments only required if you need to return the loss
-        model_fwd_kwargs["target_obs"] = target_obs
-        model_fwd_kwargs["target_mask_obs"] = target_mask_obs
-        out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
+            assert query_locations is None, "Can not compute loss for unlabelled queries."
+            # thee are arguments only required if you need to return the loss
+            model_fwd_kwargs["target_obs"] = target_obs
+            model_fwd_kwargs["target_mask_obs"] = target_mask_obs
+            out, per_var_losses, loss = self.model.forward_with_loss(**model_fwd_kwargs)
 
-        return out, per_var_losses, loss, target_obs, target_mask_obs
+            return out, per_var_losses, loss, target_obs, target_mask_obs
+        finally:
+            if original_n_samples is not None:
+                self.model.num_samples = original_n_samples
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
@@ -396,14 +406,14 @@ class OATPredictor(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal ['samples', 'distribution'] = 'samples') -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-
-        y_hat = self(batch, return_loss_and_targets=False)
-
         if return_as == 'samples':
+            with torch.no_grad():
+                y_hat = self(batch, return_loss_and_targets=False, n_samples=n_samples)
             return self.output_transform.inverse(y_hat['samples'])
         elif return_as == 'distribution':
+            y_hat = self(batch, return_loss_and_targets=False)
             y_hat.pop('samples')
             y_hat.pop('pre_oat_output', None)
             logger.warning("The returned distributions are still parameterized in the transformed space. Ensure to apply the appropriate inverse transform to the distribution parameters before using them.")
@@ -461,3 +471,147 @@ class OATPredictor(pl.LightningModule):
                     "lr_scheduler": lr_scheduler_cfg
                 }
             return optimizer
+
+
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
+    model_cfg = cfg.model
+    data_cfg = cfg.dataset
+    logger.info("Setting up model configs...")
+    global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
+    global_encoder_cfg = model.GlobalEncoderConfig(
+        **model_cfg.global_encoder,
+        in_channels=global_input_chans,
+        field_extent_max=field_extent['max'],
+        field_extent_min=field_extent['min']
+        )
+
+    topography_encoder_cfg = model.TopographicEncoderConfig(
+        **model_cfg.topographic_encoder,
+        in_channels=len(data_cfg.topo_vars)
+        )
+
+    time_cond_dim = 4 if data_cfg.use_time_embedding else 0
+    nwp_topo_fusion_cfg = model.NwpTopoFusionConfig(
+        **model_cfg.nwp_topo_fusion,
+        cond_dim=time_cond_dim,
+        out_channels=model_cfg.d_model)
+
+    if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
+        raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")
+    if list(cfg.model.output_head.variable_to_distribution.keys()) != cfg.dataset.obs_vars:
+        raise ValueError("Variables in output head distribution config do not match observation variables")
+    if len(cfg.model.output_head.variable_to_distribution) != len(cfg.dataset.obs_vars):
+        raise ValueError("Number of variables in output head distribution config does not match number of observation variables")
+    logger.info(
+        f"Model will assume the following index to variable mapping: "
+        f"{ {idx: var for idx, var in enumerate(cfg.dataset.obs_vars)} }"
+        "\n And variable to distribution mapping: "
+        f"{ cfg.model.output_head.variable_to_distribution }"
+    )
+    output_head_cfg = model.OutputHeadConfig(
+        in_features=model_cfg.d_model,
+        **model_cfg.output_head)
+
+    if get_model_cls(cfg) == model.UninformedOAT:
+        logger.info("Initialized uninformed model cfg...")
+        return model.UninformedOATConfig(
+            global_encoder=global_encoder_cfg,
+            topographic_encoder=topography_encoder_cfg,
+            nwp_topo_fusion=nwp_topo_fusion_cfg,
+            output_head=output_head_cfg,
+            num_samples=model_cfg.num_samples
+        )
+
+    masking_cfg = model.MaskingConfig(**model_cfg.masking)
+
+    transformer_cfg = model.TransformerConfig(
+        d_geo_bias=len(data_cfg.geo_vars),
+        d_model=model_cfg.d_model,
+        **model_cfg.transformer)
+
+    n_obs_vars = len(data_cfg.obs_vars)
+    condition_on_mask = model_cfg.innovation_fusion.condition_on_mask
+    innovation_cond_dim = [time_cond_dim, n_obs_vars] if condition_on_mask else time_cond_dim
+    innovation_fusion_cfg = model.InnovationFusionConfig(
+        **model_cfg.innovation_fusion,
+        cond_dim=innovation_cond_dim,
+        out_channels=model_cfg.d_model)
+
+    if not model_cfg.get("learnable_gating", False):
+        logger.info("Learnable gating disabled.")
+        learnable_gating_cfg = None
+    else:
+        logger.info("Learnable gating enabled.")
+        learnable_gating_cfg = model.LearnableGatingConfig(
+            **model_cfg.learnable_gating,
+            in_channels=n_obs_vars,
+            out_channels=model_cfg.d_model)
+
+    oat_config = model.OATConfig(
+        global_encoder=global_encoder_cfg,
+        topographic_encoder=topography_encoder_cfg,
+        nwp_topo_fusion=nwp_topo_fusion_cfg,
+        innovation_fusion=innovation_fusion_cfg,
+        masking=masking_cfg,
+        transformer=transformer_cfg,
+        output_head=output_head_cfg,
+        learnable_gating=learnable_gating_cfg,
+        num_samples=model_cfg.num_samples,
+        pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
+        mask_innovations=model_cfg.mask_innovations
+    )
+    logger.info("Initialized model cfg...")
+    return oat_config
+
+
+def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
+                    estimated_total_step: int,
+                    var_names: list[str],
+                    transforms: tuple[Transform, Transform], cfg: DictConfig) -> OATPredictor:
+
+    # optimizer
+    module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
+    module = import_module(module_path)
+    optim_cls = getattr(module, class_name)
+
+    # lr scheduler
+    module_path, class_name = cfg.predictor.kwargs.lr_scheduler_class.rsplit(".", 1)
+    module = import_module(module_path)
+    sched_cls = getattr(module, class_name)
+
+    # oat loss scheduler
+    oat_loss_scheduler_class = cfg.predictor.kwargs.get("oat_loss_scheduler_class", None)
+    if oat_loss_scheduler_class is not None:
+        module_path, class_name = cfg.predictor.kwargs.oat_loss_scheduler_class.rsplit(".", 1)
+        module = import_module(module_path)
+        oat_loss_sched_cls = getattr(module, class_name)
+        oat_loss_sched_params = cfg.predictor.kwargs.oat_loss_scheduler_params
+        if oat_loss_sched_params['total_steps'] is None:
+            oat_loss_sched_params['total_steps'] = estimated_total_step
+
+            logger.info(f"Config did not specify total_steps for the OAT loss scheduler. It has been set to the (manual) estimated total training steps: {estimated_total_step}\
+                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
+        else:
+            logger.info(f"OAT loss scheduler total_steps from config: {oat_loss_sched_params['total_steps']} \
+                \nCheck later logs for a comparison with the steps estimated by the lightning trainer.")
+
+    else:
+        oat_loss_sched_cls = None
+        oat_loss_sched_params = None
+
+
+    predictor = OATPredictor(
+        oat_model_cfg=model_cfg,
+        input_transform=transforms[0],
+        output_transform=transforms[1],
+        output_var_names=var_names,
+        lr=cfg.predictor.lr,
+        optimizer_class=optim_cls,
+        optimizer_params=cfg.predictor.kwargs.optimizer_params,
+        lr_scheduler_class=sched_cls,
+        lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
+        oat_loss_scheduler_class=oat_loss_sched_cls,
+        oat_loss_scheduler_params=oat_loss_sched_params
+    )
+
+    return predictor

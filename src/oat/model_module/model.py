@@ -5,9 +5,11 @@ Following architecture from Neural Downscaling with Station Observation.
 """
 
 from typing import Dict, Tuple, Optional, Any, Sequence
+import importlib
 import torch
 from torch import nn
 from dataclasses import dataclass
+from omegaconf import DictConfig
 
 from oat.model_module import (
     global_encoder,
@@ -727,3 +729,9 @@ class OAT(UninformedOAT):
             g_tgt=query_data['geo']         # Geometric bias for queries
         )
         return updated_query_token, query_token
+
+
+def get_model_cls(cfg: DictConfig) -> Any:
+    model_module_str, model_cls_str = cfg.model.model_cls.rsplit(".", 1)
+    model_module = importlib.import_module(model_module_str)
+    return getattr(model_module, model_cls_str)
