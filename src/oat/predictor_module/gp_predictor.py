@@ -171,12 +171,13 @@ class GPPredictor(BasePredictor):
     ) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         if return_as == "samples":
-            y_hat = self.model.forward(
-                global_data=batch["global_data"],
-                observation_data=batch["observation_data"],
-                query_data=batch["query_data"],
-                num_samples=n_samples,
-            )
+            with torch.no_grad():
+                y_hat = self.model.forward(
+                    global_data=batch["global_data"],
+                    observation_data=batch["observation_data"],
+                    query_data=batch["query_data"],
+                    num_samples=n_samples,
+                )
             return self.output_transform.inverse(y_hat["samples"])
         raise NotImplementedError(
             "GPPredictor does not support return_as='distribution'"
