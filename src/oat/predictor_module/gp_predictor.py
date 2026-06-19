@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 from importlib import import_module
 
 import torch
@@ -162,15 +162,25 @@ class GPPredictor(BasePredictor):
         return loss
 
     def predict_step(
-        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+        self,
+        batch: dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        return_as: Literal["samples", "distribution"] = "samples",
+        n_samples: Optional[int] = None,
     ) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat = self.model.forward(
-            global_data=batch["global_data"],
-            observation_data=batch["observation_data"],
-            query_data=batch["query_data"],
+        if return_as == "samples":
+            y_hat = self.model.forward(
+                global_data=batch["global_data"],
+                observation_data=batch["observation_data"],
+                query_data=batch["query_data"],
+                num_samples=n_samples,
+            )
+            return self.output_transform.inverse(y_hat["samples"])
+        raise NotImplementedError(
+            "GPPredictor does not support return_as='distribution'"
         )
-        return self.output_transform.inverse(y_hat["samples"])
 
     def configure_optimizers(self) -> Optimizer | dict:
         optimizer = self.optimizer_class(self.model.parameters(), **self.optimizer_params)
