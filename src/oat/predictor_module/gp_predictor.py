@@ -3,17 +3,17 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Type
 from importlib import import_module
 
-import pytorch_lightning as pl
 import torch
 from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig
 
 from oat.data_module.transform import Transform
 from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
+from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
-class GPPredictor(pl.LightningModule):
+class GPPredictor(BasePredictor):
     def __init__(
         self,
         gp_model: GPBaseline,
@@ -26,15 +26,11 @@ class GPPredictor(pl.LightningModule):
         scheduler_class: Optional[Type] = None,
         scheduler_params: Optional[dict] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(output_var_names=output_var_names)
 
         self.model = gp_model
         self.input_transform = input_transform
         self.output_transform = output_transform
-
-        self.output_var_names = output_var_names
-        self.var_to_indx = {v: i for i, v in enumerate(output_var_names)}
-        self.indx_to_var = {i: v for i, v in enumerate(output_var_names)}
 
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
