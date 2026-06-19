@@ -137,7 +137,12 @@ def _parse_args() -> argparse.Namespace:
 def _resolve_time_idx(dataset, time_str: str) -> int:
     ts = pd.Timestamp(time_str.replace(":", " "), tz="UTC")
     idx = int(dataset.times.searchsorted(ts))
-    return min(idx, len(dataset) - 1)
+    if idx >= len(dataset) or dataset.times[idx] != ts:
+        raise ValueError(
+            f"Timestamp {ts} not found in dataset. "
+            f"Range: {dataset.times[0]} – {dataset.times[-1]}"
+        )
+    return idx
 
 
 def _print_info(ckpt_path: str, predictor, dataset) -> None:
