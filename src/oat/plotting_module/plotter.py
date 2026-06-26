@@ -988,3 +988,214 @@ class OATPlotter:
 
         fig.tight_layout()
         return fig
+
+    def compute_pit(
+        self,
+        time_indices: list[int],
+        eval_station_indices: list[int] | None = None,
+        log_every: int = 50,
+    ) -> dict[str, dict[str, list[float]]]:
+        """Compute PIT and zero-inflation diagnostics at eval stations.
+
+        Args:
+            time_indices: Dataset time indices to evaluate.
+            eval_station_indices: Station indices to query.  Defaults to
+                ``self.eval_indices``.
+            log_every: Log progress every this many timesteps.
+
+        Returns:
+            Dict mapping variable name → dict with keys:
+
+            - ``pit``: PIT values for all valid observations.
+            - ``gate_pred``: estimated P(X=0) from samples per valid (station, timestep).
+              Non-empty only for zero-inflated variables.
+            - ``is_zero``: 1.0/0.0 flag — was the observation exactly zero?
+              Non-empty only for zero-inflated variables.
+            - ``pit_nonzero``: conditional PIT using only non-zero samples, restricted
+              to non-zero observations.  Non-empty only for zero-inflated variables.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        indices = eval_station_indices if eval_station_indices is not None else self.eval_indices
+        if not indices:
+            logger.warning("No eval station indices — returning empty PIT dict.")
+            return {v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
+                    for v in self.predictor.var_to_indx}
+
+        try:
+            var_to_dist = self.predictor.model.output_head.variable_to_distribution
+        except AttributeError:
+            var_to_dist = {}
+        zi_vars = {v for v, d in var_to_dist.items() if d == "zero_inflated_lognormal"}
+
+        eval_coords = self.dataset.station_coords[indices, :2]  # [S, 2]
+        result: dict[str, dict[str, list[float]]] = {
+            v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
+            for v in self.predictor.var_to_indx
+        }
+
+        for i, time_idx in enumerate(time_indices):
+            if i % log_every == 0:
+                logger.info("PIT: timestep %d / %d", i, len(time_indices))
+
+            with torch.no_grad():
+                samples = self._run_inference(time_idx, eval_coords)  # [S, n_samples, n_vars]
+
+            obs = self.dataset.obs_tensor[time_idx][indices]        # [S, n_vars]
+            mask = self.dataset.obs_mask_tensor[time_idx][indices]  # [S, n_vars]
+            pit = (samples <= obs.unsqueeze(1)).float().mean(dim=1)  # [S, n_vars]
+
+            for var, var_idx in self.predictor.var_to_indx.items():
+                data = result[var]
+                samps_v = samples[:, :, var_idx]   # [S, n_samples]
+                obs_v = obs[:, var_idx]             # [S]
+                mask_v = mask[:, var_idx].bool()    # [S]
+
+                if not mask_v.any():
+                    continue
+                
+                # "pit" maps to a list of values continusly filled from all valid observations (mask==1) for this variable across all timesteps.
+                # from that, a histogram can be plotted.
+                data["pit"].extend(pit[mask_v, var_idx].cpu().tolist())
+
+                if var in zi_vars:
+                    data["gate_pred"].extend(
+                        (samps_v == 0).float().mean(dim=1)[mask_v].cpu().tolist()
+                    )
+                    data["is_zero"].extend((obs_v == 0).float()[mask_v].cpu().tolist())
+
+                    # Conditional PIT: fraction of non-zero samples ≤ obs, for non-zero obs only
+                    nonzero_obs = mask_v & (obs_v > 0)
+                    if nonzero_obs.any():
+                        samps_pos = samps_v > 0
+                        n_pos = samps_pos.float().sum(dim=1)
+                        n_pos_le = (samps_pos & (samps_v <= obs_v.unsqueeze(1))).float().sum(dim=1)
+                        valid_cond = nonzero_obs & (n_pos > 0)
+                        if valid_cond.any():
+                            data["pit_nonzero"].extend(
+                                (n_pos_le[valid_cond] / n_pos[valid_cond]).cpu().tolist()
+                            )
+
+        return result
+
+    def plot_pit(
+        self,
+        time_indices: list[int],
+        eval_station_indices: list[int] | None = None,
+        title: str = "",
+        n_bins: int = 20,
+    ) -> Any:
+        """Plot PIT calibration histograms, one panel (or panel pair) per variable.
+
+        All variables are placed in a single row.  Non-zero-inflated variables get
+        a single histogram panel.  Zero-inflated lognormal variables get two
+        side-by-side panels sharing a common variable title: a reliability diagram
+        for zero-probability (left) and a conditional PIT histogram for non-zero
+        observations (right).
+
+        Args:
+            time_indices: Dataset time indices to evaluate.
+            eval_station_indices: Station indices to query.  Defaults to
+                ``self.eval_indices``.
+            title: Figure suptitle.
+            n_bins: Number of histogram bins (default 20).
+
+        Returns:
+            The matplotlib Figure.  The caller is responsible for saving/closing.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        all_data = self.compute_pit(time_indices, eval_station_indices)
+
+        vars_list = list(self.predictor.var_to_indx.keys())
+        n_vars = len(vars_list)
+
+        try:
+            var_to_dist = self.predictor.model.output_head.variable_to_distribution
+        except AttributeError:
+            var_to_dist = {}
+        zi_vars = {v for v, d in var_to_dist.items() if d == "zero_inflated_lognormal"}
+
+        # ZI vars get double the column width (two sub-panels side by side)
+        width_ratios = [7 if v in zi_vars else 3.5 for v in vars_list]
+        total_width = sum(width_ratios)
+        fig = plt.figure(figsize=(total_width, 4))
+
+        if title:
+            fig.suptitle(title, y=1.05)
+
+        sfigs = fig.subfigures(1, n_vars, width_ratios=width_ratios, wspace=0.08)
+        if n_vars == 1:
+            sfigs = [sfigs]
+
+        for sfig, var in zip(sfigs, vars_list):
+            data = all_data[var]
+
+            if var in zi_vars:
+                sfig.suptitle(var, fontsize=11, fontweight="bold")
+                ax_rel, ax_pit = sfig.subplots(1, 2, gridspec_kw={"wspace": 0.35})
+                sfig.subplots_adjust(top=0.78)
+
+                # Left: reliability diagram for zero-probability
+                gate_pred = np.array(data["gate_pred"])
+                is_zero = np.array(data["is_zero"])
+                bin_edges = np.linspace(0, 1, 11)
+                mean_pred, mean_obs = [], []
+                for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+                    m = (gate_pred >= lo) & (gate_pred < hi)
+                    if m.sum() > 5:
+                        mean_pred.append(float(gate_pred[m].mean()))
+                        mean_obs.append(float(is_zero[m].mean()))
+                ax_rel.plot([0, 1], [0, 1], "--", color="0.3", lw=1.0, label="Perfect")
+                if mean_pred:
+                    ax_rel.plot(mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2,
+                                label="Model")
+                ax_rel.set_xlim(0, 1)
+                ax_rel.set_ylim(0, 1)
+                ax_rel.set_title("Zero probability", fontsize=9)
+                ax_rel.set_xlabel("Predicted P(zero)", fontsize=8)
+                ax_rel.set_ylabel("Observed freq. of zeros", fontsize=8)
+                ax_rel.legend(fontsize=7)
+
+                # Right: conditional PIT for non-zero observations
+                pits = np.array(data["pit_nonzero"])
+                n = len(pits)
+                if n > 0:
+                    ax_pit.hist(pits, bins=n_bins, density=True,
+                                color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
+                    ax_pit.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0,
+                                   label="Uniform")
+                    ax_pit.set_title(f"PIT | non-zero  (n={n:,})", fontsize=9)
+                    ax_pit.set_xlabel("PIT value", fontsize=8)
+                    ax_pit.set_ylabel("Density", fontsize=8)
+                    ax_pit.set_xlim(0, 1)
+                    ax_pit.legend(fontsize=7)
+                    logger.info("%s (non-zero): %d values | mean=%.3f std=%.3f",
+                                var, n, float(np.mean(pits)), float(np.std(pits)))
+                else:
+                    ax_pit.axis("off")
+
+            else:
+                sfig.suptitle(var, fontsize=11, fontweight="bold")
+                ax = sfig.subplots()
+                sfig.subplots_adjust(top=0.78)
+                pits = np.array(data["pit"])
+                n = len(pits)
+                if n == 0:
+                    ax.set_title("no data")
+                    ax.axis("off")
+                    continue
+                ax.hist(pits, bins=n_bins, density=True,
+                        color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
+                ax.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0, label="Uniform")
+                ax.set_title(f"PIT  (n={n:,})", fontsize=9)
+                ax.set_xlabel("PIT value")
+                ax.set_ylabel("Density")
+                ax.set_xlim(0, 1)
+                ax.legend(fontsize=8)
+                logger.info("%s: %d PIT values | mean=%.3f std=%.3f",
+                            var, n, float(np.mean(pits)), float(np.std(pits)))
+
+        return fig
