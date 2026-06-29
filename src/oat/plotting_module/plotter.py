@@ -1060,6 +1060,9 @@ class OATPlotter:
                 data["pit"].extend(pit[mask_v, var_idx].cpu().tolist())
 
                 if var in zi_vars:
+                    # gate_pred and is_zero accumulate one scalar per valid (station, timestep) pair.
+                    # gate_pred[i] = fraction of samples that were zero (≈ P(dry), an estimate of the gate); is_zero[i] = 1 if obs==0.
+                    # Binning gate_pred vs mean(is_zero) per bin gives the reliability diagram.
                     data["gate_pred"].extend(
                         (samps_v == 0).float().mean(dim=1)[mask_v].cpu().tolist()
                     )
