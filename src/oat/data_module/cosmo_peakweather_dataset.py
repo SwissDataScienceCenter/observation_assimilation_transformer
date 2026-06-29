@@ -665,7 +665,7 @@ class CosmoPeakWeatherDataset(Dataset[Dict[str, torch.Tensor]]):
                     gather_stats(pre_transformed_sample, stats_dict)
             return stats_dict
             
-        offset = 1e-6  # Small offset to avoid log(0)
+        offset = 1  # Small offset to avoid log(0)
         
         if type == 'real':
             # Example variables that may benefit from log-transform include non-negative,

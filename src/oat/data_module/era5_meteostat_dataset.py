@@ -466,7 +466,7 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
                     _gather(pre_t(self[int(idx)]), stats)
             return stats
 
-        offset = 1e-6
+        offset = 1
 
         if type == "real":
             log_indices = [

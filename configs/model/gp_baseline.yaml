@@ -7,8 +7,8 @@ use_nwp: true
 use_time_emb: true
 use_topography: true
 
-mean_hidden_dims: [32]
-kernel_hidden_dims: [32, 32]
+mean_hidden_dims: [64]
+kernel_hidden_dims: [64, 64]
 kernel_embed_dim: 4
 mean_groups: [nwp, time_emb, topo]
 stationary_cov_groups: [geo]
