@@ -5,7 +5,7 @@ defaults:
   - output_head: default
 
 model_cls: oat.model_module.model.UninformedOAT
-d_model: 16
+d_model: 64
 num_samples: 100
 transform_type: keep_support
 
