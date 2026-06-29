@@ -322,6 +322,7 @@ def main() -> None:
 
     fig.tight_layout(pad=1.5)
     fig.savefig(OUT_PATH, dpi=200, bbox_inches="tight")
+    fig.savefig(OUT_PATH.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {OUT_PATH}")
 

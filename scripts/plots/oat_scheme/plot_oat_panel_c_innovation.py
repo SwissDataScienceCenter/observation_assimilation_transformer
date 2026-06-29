@@ -163,6 +163,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(5.5, 4.5), facecolor="white")
     plot_panel_c_innovation(ax)
     fig.savefig(OUT_PATH, dpi=200, bbox_inches="tight")
+    fig.savefig(OUT_PATH.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {OUT_PATH}")
 

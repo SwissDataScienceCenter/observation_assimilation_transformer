@@ -512,6 +512,7 @@ def main() -> None:
     _plot_panel_a_with_data(ax, t2m_nwp, x_nwp, y_nwp)
     fig.tight_layout()
     fig.savefig(OUT_PATH, dpi=200, bbox_inches="tight")
+    fig.savefig(OUT_PATH.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {OUT_PATH}")
 
@@ -521,6 +522,7 @@ def main() -> None:
     plot_panel_a_zoom(ax, t2m_nwp, x_nwp, y_nwp)
     fig.tight_layout()
     fig.savefig(zoom_path, dpi=200, bbox_inches="tight")
+    fig.savefig(zoom_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {zoom_path}")
 
