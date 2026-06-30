@@ -189,10 +189,10 @@ class OOTGPredictor(BasePredictor):
                     # (1, Nq, dim_y) → squeeze batch → (Nq, dim_y) → unsqueeze sample dim
                     s = self._denormalize(dist.mean.squeeze(0)).unsqueeze(-2)  # (Nq, 1, dim_y)
                 else:
-                    # dist.sample((n,)) returns (n, 1, Nq, dim_y) or (n, Nq, dim_y)
+                    # dist.sample(Size([n])) → (n, 1, Nq, dim_y): dist batch shape is (1, Nq)
+                    # from the (1, Nq, params) decoder output; squeeze the singleton batch dim.
                     raw = dist.sample(torch.Size([n]))
-                    if raw.ndim == 4:
-                        raw = raw.squeeze(-3)       # (n, Nq, dim_y)
+                    raw = raw.squeeze(-3) if raw.ndim == 4 else raw  # → (n, Nq, dim_y)
                     # raw: (n, Nq, dim_y) → permute → (Nq, n, dim_y)
                     raw = raw.permute(1, 0, 2)
                     s = self._denormalize(raw)       # (Nq, n, dim_y)

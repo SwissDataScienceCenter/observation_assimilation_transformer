@@ -99,6 +99,15 @@ def test_normalize_batch_is_identity():
     assert pred._normalize_batch(batch) is batch
 
 
+def test_predict_step_empty_context():
+    pred = _make_tiny_predictor(dim_y=1)
+    batch = _make_oat_batch(B=1, N_obs=5, N_q=3, dim_y=1)
+    # Zero out all observation masks — no valid context stations
+    batch["observation_data"]["mask_obs"] = torch.zeros(1, 5, 1)
+    out = pred.predict_step(batch, 0)
+    assert out.shape == (1, 3, 1, 1), f"Expected (1,3,1,1), got {out.shape}"
+
+
 def test_output_var_names():
     v2d = {"temperature": "normal", "precipitation": "zero_inflated_lognormal"}
     pred = _make_tiny_predictor(dim_y=2, v2d=v2d)
