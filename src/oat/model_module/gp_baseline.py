@@ -82,6 +82,9 @@ class GPBaselineConfig:
     stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", ])
     non_stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", "nwp", "topo"])
 
+    d_model: int = 64
+    mean_n_hidden_layers: int = 1
+    kernel_n_hidden_layers: int = 2
     noise_variance: float = 1.0
     loss_fn: str = "crps"
     num_samples: int = 100
@@ -181,19 +184,20 @@ class GPBaseline(nn.Module):
         # Stationary kernel on specified groups
         rbf_kernel = ScaledRBFKernel(eps=config.eps, active_dims=stationary_covar_indices)
         
-        # Non-stationary kernel on specified groups
-        kernel_net = MLP(
-            dimensions=[
-                len(self.non_stationary_covar_indices),
-                *config.kernel_hidden_dims,
-                config.kernel_embed_dim,
-            ],
-            active_dims=non_stationary_covar_indices
-        )
-        non_stationary_kernel = NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps))
-        
-        # Combine stationary and non-stationary kernels
-        kernel_function = rbf_kernel * non_stationary_kernel
+        # Non-stationary kernel on specified groups (optional)
+        if non_stationary_covar_indices:
+            kernel_net = MLP(
+                dimensions=[
+                    len(self.non_stationary_covar_indices),
+                    *config.kernel_hidden_dims,
+                    config.kernel_embed_dim,
+                ],
+                active_dims=non_stationary_covar_indices
+            )
+            non_stationary_kernel = NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps))
+            kernel_function = rbf_kernel * non_stationary_kernel
+        else:
+            kernel_function = rbf_kernel
 
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
         with torch.no_grad():
@@ -209,6 +213,7 @@ class GPBaseline(nn.Module):
             likelihood=likelihood,
             mean_module=mean_function,
             covar_module=kernel_function,
+        
         )
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.gp.likelihood, self.gp)
 
