@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 
 import torch
-import torch.distributions as td
 
 _TNPDIR = Path(__file__).parents[4] / "deps" / "gridded-tnp"
 if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:

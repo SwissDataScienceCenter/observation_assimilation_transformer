@@ -74,6 +74,7 @@ def build_ootg_model(
         mhsa_layer=mhsa,
         window_sizes=list(window_sizes),
         shift_sizes=list(shift_sizes),
+        roll_dims=[-1],
     )
     transformer_enc = GriddedTransformerEncoder(
         num_layers=num_layers,
