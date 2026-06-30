@@ -1,5 +1,5 @@
 # in_channels must be set from data
-out_channels: 16
+# out_channels: derived from d_model // 2 at runtime
 n_layers: 2
 initial_hw:
   - 1

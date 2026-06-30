@@ -155,14 +155,14 @@ class OATConfig:
         time_dim = 4
         n_vars = 1
         return cls(
-            global_encoder=GlobalEncoderConfig(out_channels=32),
-            topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=time_dim, out_channels=d_model),
-            innovation_fusion=InnovationFusionConfig(cond_dim=time_dim, out_channels=d_model),
-            transformer=TransformerConfig(d_model=d_model),
+            global_encoder=GlobalEncoderConfig(out_channels=d_model // 2),
+            topographic_encoder=TopographicEncoderConfig(out_channels=d_model // 2),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=time_dim, hidden_channels=d_model, out_channels=d_model),
+            innovation_fusion=InnovationFusionConfig(cond_dim=time_dim, hidden_channels=d_model, out_channels=d_model),
+            transformer=TransformerConfig(d_model=d_model, dim_feedforward=2 * d_model),
             masking=MaskingConfig(),
             output_head=OutputHeadConfig(in_features=d_model),
-            learnable_gating=LearnableGatingConfig(in_channels=n_vars, out_channels=d_model),
+            learnable_gating=LearnableGatingConfig(in_channels=n_vars, hidden_channels=d_model // 2, out_channels=d_model),
             num_samples=100
         )
 
@@ -179,9 +179,9 @@ class UninformedOATConfig:
         """Create default configuration."""
         d_model = 64
         return cls(
-            global_encoder=GlobalEncoderConfig(out_channels=32),
-            topographic_encoder=TopographicEncoderConfig(out_channels=d_model),
-            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=4, out_channels=d_model),
+            global_encoder=GlobalEncoderConfig(out_channels=d_model // 2),
+            topographic_encoder=TopographicEncoderConfig(out_channels=d_model // 2),
+            nwp_topo_fusion=NwpTopoFusionConfig(cond_dim=4, hidden_channels=d_model, out_channels=d_model),
             output_head=OutputHeadConfig(in_features=d_model),
             num_samples=100
         )
