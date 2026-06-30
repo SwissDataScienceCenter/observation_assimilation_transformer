@@ -1084,121 +1084,64 @@ class OATPlotter:
 
     def plot_pit(
         self,
-        time_indices: list[int],
-        eval_station_indices: list[int] | None = None,
-        title: str = "",
+        ax: Any,
+        pit_values: list[float],
         n_bins: int = 20,
-    ) -> Any:
-        """Plot PIT calibration histograms, one panel (or panel pair) per variable.
-
-        All variables are placed in a single row.  Non-zero-inflated variables get
-        a single histogram panel.  Zero-inflated lognormal variables get two
-        side-by-side panels sharing a common variable title: a reliability diagram
-        for zero-probability (left) and a conditional PIT histogram for non-zero
-        observations (right).
+    ) -> None:
+        """Plot a PIT calibration histogram for a single variable onto ax.
 
         Args:
-            time_indices: Dataset time indices to evaluate.
-            eval_station_indices: Station indices to query.  Defaults to
-                ``self.eval_indices``.
-            title: Figure suptitle.
+            ax: Matplotlib Axes to draw onto.
+            pit_values: Precomputed PIT values (e.g. from ``compute_pit``).
+                Pass ``data[var]["pit"]`` for the unconditional PIT or
+                ``data[var]["pit_nonzero"]`` for the conditional non-zero PIT
+                of a zero-inflated variable.
             n_bins: Number of histogram bins (default 20).
-
-        Returns:
-            The matplotlib Figure.  The caller is responsible for saving/closing.
         """
-        import logging
-        logger = logging.getLogger(__name__)
+        pits = np.array(pit_values)
+        n = len(pits)
+        if n == 0:
+            ax.axis("off")
+            return
+        ax.hist(pits, bins=n_bins, density=True,
+                color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
+        ax.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0, label="Uniform")
+        ax.set_title(f"PIT  (n={n:,})", fontsize=9)
+        ax.set_xlabel("PIT value")
+        ax.set_ylabel("Density")
+        ax.set_xlim(0, 1)
+        ax.legend(fontsize=8)
 
-        all_data = self.compute_pit(time_indices, eval_station_indices)
+    def plot_zero_reliability(
+        self,
+        ax: Any,
+        gate_pred: list[float],
+        is_zero: list[float],
+    ) -> None:
+        """Plot a reliability diagram for the zero-gate of a ZI variable onto ax.
 
-        vars_list = list(self.predictor.var_to_indx.keys())
-        n_vars = len(vars_list)
-
-        try:
-            var_to_dist = self.predictor.model.output_head.variable_to_distribution
-        except AttributeError:
-            var_to_dist = {}
-        zi_vars = {v for v, d in var_to_dist.items() if d == "zero_inflated_lognormal"}
-
-        # ZI vars get double the column width (two sub-panels side by side)
-        width_ratios = [7 if v in zi_vars else 3.5 for v in vars_list]
-        total_width = sum(width_ratios)
-        fig = plt.figure(figsize=(total_width, 4))
-
-        if title:
-            fig.suptitle(title, y=1.05)
-
-        sfigs = fig.subfigures(1, n_vars, width_ratios=width_ratios, wspace=0.08)
-        if n_vars == 1:
-            sfigs = [sfigs]
-
-        for sfig, var in zip(sfigs, vars_list):
-            data = all_data[var]
-
-            if var in zi_vars:
-                sfig.suptitle(var, fontsize=11, fontweight="bold")
-                ax_rel, ax_pit = sfig.subplots(1, 2, gridspec_kw={"wspace": 0.35})
-                sfig.subplots_adjust(top=0.78)
-
-                # Left: reliability diagram for zero-probability
-                gate_pred = np.array(data["gate_pred"])
-                is_zero = np.array(data["is_zero"])
-                bin_edges = np.linspace(0, 1, 11)
-                mean_pred, mean_obs = [], []
-                for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
-                    m = (gate_pred >= lo) & (gate_pred < hi)
-                    if m.sum() > 5:
-                        mean_pred.append(float(gate_pred[m].mean()))
-                        mean_obs.append(float(is_zero[m].mean()))
-                ax_rel.plot([0, 1], [0, 1], "--", color="0.3", lw=1.0, label="Perfect")
-                if mean_pred:
-                    ax_rel.plot(mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2,
-                                label="Model")
-                ax_rel.set_xlim(0, 1)
-                ax_rel.set_ylim(0, 1)
-                ax_rel.set_title("Zero probability", fontsize=9)
-                ax_rel.set_xlabel("Predicted P(zero)", fontsize=8)
-                ax_rel.set_ylabel("Observed freq. of zeros", fontsize=8)
-                ax_rel.legend(fontsize=7)
-
-                # Right: conditional PIT for non-zero observations
-                pits = np.array(data["pit_nonzero"])
-                n = len(pits)
-                if n > 0:
-                    ax_pit.hist(pits, bins=n_bins, density=True,
-                                color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
-                    ax_pit.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0,
-                                   label="Uniform")
-                    ax_pit.set_title(f"PIT | non-zero  (n={n:,})", fontsize=9)
-                    ax_pit.set_xlabel("PIT value", fontsize=8)
-                    ax_pit.set_ylabel("Density", fontsize=8)
-                    ax_pit.set_xlim(0, 1)
-                    ax_pit.legend(fontsize=7)
-                    logger.info("%s (non-zero): %d values | mean=%.3f std=%.3f",
-                                var, n, float(np.mean(pits)), float(np.std(pits)))
-                else:
-                    ax_pit.axis("off")
-
-            else:
-                sfig.suptitle(var, fontsize=11, fontweight="bold")
-                ax = sfig.subplots()
-                sfig.subplots_adjust(top=0.78)
-                pits = np.array(data["pit"])
-                n = len(pits)
-                if n == 0:
-                    ax.set_title("no data")
-                    ax.axis("off")
-                    continue
-                ax.hist(pits, bins=n_bins, density=True,
-                        color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
-                ax.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0, label="Uniform")
-                ax.set_title(f"PIT  (n={n:,})", fontsize=9)
-                ax.set_xlabel("PIT value")
-                ax.set_ylabel("Density")
-                ax.set_xlim(0, 1)
-                ax.legend(fontsize=8)
-                logger.info("%s: %d PIT values | mean=%.3f std=%.3f",
-                            var, n, float(np.mean(pits)), float(np.std(pits)))
-
-        return fig
+        Args:
+            ax: Matplotlib Axes to draw onto.
+            gate_pred: Estimated P(zero) per valid (station, timestep) pair
+                (``data[var]["gate_pred"]`` from ``compute_pit``).
+            is_zero: Observed zero flag (1.0/0.0) per pair
+                (``data[var]["is_zero"]`` from ``compute_pit``).
+        """
+        gate_pred_arr = np.array(gate_pred)
+        is_zero_arr = np.array(is_zero)
+        bin_edges = np.linspace(0, 1, 11)
+        mean_pred, mean_obs = [], []
+        for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+            m = (gate_pred_arr >= lo) & (gate_pred_arr < hi)
+            if m.sum() > 5:
+                mean_pred.append(float(gate_pred_arr[m].mean()))
+                mean_obs.append(float(is_zero_arr[m].mean()))
+        ax.plot([0, 1], [0, 1], "--", color="0.3", lw=1.0, label="Perfect")
+        if mean_pred:
+            ax.plot(mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2, label="Model")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_title("Zero probability", fontsize=9)
+        ax.set_xlabel("Predicted P(zero)", fontsize=8)
+        ax.set_ylabel("Observed freq. of zeros", fontsize=8)
+        ax.legend(fontsize=7)

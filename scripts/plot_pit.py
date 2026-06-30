@@ -103,14 +103,51 @@ def main() -> None:
         plot_config=_load_plot_config(dataset),
     )
 
+    all_data = plotter.compute_pit(time_indices)
+
+    try:
+        var_to_dist = predictor.model.output_head.variable_to_distribution
+    except AttributeError:
+        var_to_dist = {}
+    zi_vars = {v for v, d in var_to_dist.items() if d == "zero_inflated_lognormal"}
+    vars_list = list(predictor.var_to_indx.keys())
+
+    # ZI variables get two columns (reliability diagram + conditional PIT);
+    # regular variables get one.
+    col_counts = [2 if v in zi_vars else 1 for v in vars_list]
+    n_cols = sum(col_counts)
+    width_ratios = [3.5 for v in vars_list for _ in range(2 if v in zi_vars else 1)]
+    fig, axes = plt.subplots(1, n_cols, figsize=(3.5 * n_cols, 3),
+                             gridspec_kw={"width_ratios": width_ratios, "wspace": 0.35})
+    axes = np.atleast_1d(axes)
+
     ckpt_tag = Path(args.checkpoint).parent.name
-    fig = plotter.plot_pit(
-        time_indices,
-        title=(
-            f"PIT calibration — {ckpt_tag}\n"
-            f"{args.split} split  |  {len(time_indices)} timesteps  |  {args.n_samples} samples"
-        ),
+    fig.suptitle(
+        f"PIT calibration — {ckpt_tag}\n"
+        f"{args.split} split  |  {len(time_indices)} timesteps  |  {args.n_samples} samples",
+        y=1.03,
     )
+
+    col = 0
+    for var in vars_list:
+        data = all_data[var]
+        if var in zi_vars:
+            ax_rel = axes[col]
+            ax_pit = axes[col + 1]
+            plotter.plot_zero_reliability(ax_rel, data["gate_pred"], data["is_zero"])
+            ax_rel.set_title(f"{var}\nzero probability", fontsize=9)
+            # Use pit_nonzero (conditional on non-zero obs); swap for data["pit"] for full PIT.
+            n_nz = len(data["pit_nonzero"])
+            plotter.plot_pit(ax_pit, data["pit_nonzero"])
+            ax_pit.set_title(f"{var}\nPIT | non-zero  (n={n_nz:,})", fontsize=9)
+            logger.info("%s: %d non-zero PIT values", var, n_nz)
+            col += 2
+        else:
+            ax = axes[col]
+            plotter.plot_pit(ax, data["pit"])
+            ax.set_title(f"{var}\n{ax.get_title()}", fontsize=9)
+            logger.info("%s: %d PIT values", var, len(data["pit"]))
+            col += 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = args.out or str(OUT_DIR / f"{ckpt_tag}_pit_{args.split}.png")
