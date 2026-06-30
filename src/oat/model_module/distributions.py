@@ -237,6 +237,11 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
             self.gate + (1 - self.gate) * lognormal.cdf(value.clamp(min=eps)),
         )
 
+    @property
+    def mean(self) -> torch.Tensor:
+        """E[X] = (1 - gate) * exp(loc + scale² / 2)."""
+        return (1 - self.gate) * torch.exp(self.loc + 0.5 * self.scale ** 2)
+
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         with torch.no_grad():
             shape = self._extended_shape(sample_shape)
