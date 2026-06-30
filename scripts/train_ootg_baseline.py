@@ -53,7 +53,7 @@ class OOTGLitModule(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
+@hydra.main(config_path="../configs", config_name="ootg_baseline", version_base=None)
 def main(cfg: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
     log.info("Loading dataset...")
