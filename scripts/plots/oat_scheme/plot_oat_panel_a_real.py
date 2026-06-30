@@ -19,6 +19,8 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 
+from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -424,41 +426,32 @@ def plot_panel_a_zoom(
     for yv in bounds_y:
         ax.axhline(yv, color="white", lw=0.3, alpha=0.4, zorder=3)
 
-    # ── Real station locations (one randomly marked missing)
+    # ── Station locations — canonical split shared across all panels
     print("Loading real stations …")
-    stations = load_stations_zoom()
-    rng = np.random.RandomState(SEED + 1)
-    missing_idx = rng.randint(len(stations))
-    obs_mask = np.ones(len(stations), dtype=bool)
-    obs_mask[missing_idx] = False
+    obs_sta, miss_sta = canonical_stations()
 
     ax.scatter(
-        stations[obs_mask, 0], stations[obs_mask, 1],
+        obs_sta[:, 0], obs_sta[:, 1],
         c=ORANGE, s=80, zorder=6, edgecolors="white", linewidths=0.8,
         label="Observed station",
     )
     ax.scatter(
-        stations[~obs_mask, 0], stations[~obs_mask, 1],
+        miss_sta[:, 0], miss_sta[:, 1],
         c=GRAY_STA, s=55, zorder=6, edgecolors="white", linewidths=0.8,
         alpha=0.85, label="Missing observation",
     )
 
-    # ── Random query locations (avoid legend corner)
-    span_x, span_y = xhi - xlo, yhi - ylo
-    legend_xmax = xlo + 0.35 * span_x
-    legend_ymax = ylo + 0.25 * span_y
-    margin = 2_000.0
-    query_pts = []
-    while len(query_pts) < 8:
-        x = rng.uniform(xlo + margin, xhi - margin)
-        y = rng.uniform(ylo + margin, yhi - margin)
-        if not (x < legend_xmax and y < legend_ymax):
-            query_pts.append([x, y])
-    queries = np.array(query_pts)
+    # ── Query locations — canonical positions shared across all panels
+    queries = canonical_queries()
     ax.scatter(
         queries[:, 0], queries[:, 1],
         c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8,
         label="Query location",
+    )
+    grid_queries = canonical_queries_grid()
+    ax.scatter(
+        grid_queries[:, 0], grid_queries[:, 1],
+        c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8,
     )
 
     ax.set_xlim(xlo, xhi)

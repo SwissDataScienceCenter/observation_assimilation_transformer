@@ -19,6 +19,8 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 
+from ._shared import canonical_queries, canonical_queries_grid
+
 # ---------------------------------------------------------------------------
 # Paths  (identical to plot_oat_panel_a_real.py)
 # ---------------------------------------------------------------------------
@@ -269,17 +271,14 @@ def plot_panel_b_zoom(
     )
 
     # ── Query locations only — prior has no knowledge of observations
-    rng = np.random.RandomState(SEED + 1)
-    span_x, span_y = xhi - xlo, yhi - ylo
-    margin = 2_000.0
-    query_pts: list[list[float]] = []
-    while len(query_pts) < 8:
-        x = rng.uniform(xlo + margin, xhi - margin)
-        y = rng.uniform(ylo + margin, yhi - margin)
-        query_pts.append([x, y])
-    queries = np.array(query_pts)
+    queries = canonical_queries()
     ax.scatter(
         queries[:, 0], queries[:, 1],
+        c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8,
+    )
+    grid_queries = canonical_queries_grid()
+    ax.scatter(
+        grid_queries[:, 0], grid_queries[:, 1],
         c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8,
     )
 
@@ -330,16 +329,12 @@ def plot_panel_b_uncertainty_zoom(ax: plt.Axes) -> None:
     ax.imshow(unc_rgba, origin="lower", aspect="equal",
               interpolation="bilinear", extent=ext_topo)
 
-    # ── Query locations only — same seed as prior mean panel
-    rng = np.random.RandomState(SEED + 1)
-    margin = 2_000.0
-    query_pts: list[list[float]] = []
-    while len(query_pts) < 8:
-        x = rng.uniform(xlo + margin, xhi - margin)
-        y = rng.uniform(ylo + margin, yhi - margin)
-        query_pts.append([x, y])
-    queries = np.array(query_pts)
+    # ── Query locations — canonical positions shared across all panels
+    queries = canonical_queries()
     ax.scatter(queries[:, 0], queries[:, 1],
+               c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8)
+    grid_queries = canonical_queries_grid()
+    ax.scatter(grid_queries[:, 0], grid_queries[:, 1],
                c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8)
 
     ax.set_xlim(xlo, xhi)

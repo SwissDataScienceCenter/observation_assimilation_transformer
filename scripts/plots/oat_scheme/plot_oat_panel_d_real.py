@@ -16,6 +16,8 @@ import matplotlib.patches as mpatches
 from matplotlib.colors import LinearSegmentedColormap, LightSource
 from matplotlib.patches import FancyArrowPatch
 
+from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -79,35 +81,13 @@ def load_topo_zoom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def load_stations_split() -> tuple[np.ndarray, np.ndarray]:
-    """Return (observed, missing) matching Panel A's zoom panel exactly.
+    """Return (observed, missing) using the canonical split from _shared.
 
-    Real stations are loaded and split with the same SEED+1 logic as
-    plot_oat_panel_a_real.py. Synthetic stations pad the observed set to 12.
+    Synthetic stations pad the observed set to 12 so attention edges read clearly.
     """
-    from peakweather.dataset import PeakWeatherDataset
-
     xlo, xhi, ylo, yhi = _zoom_bounds()
-    obs_ds = PeakWeatherDataset(
-        root="/scratch/mch/cdonner/data/peakweather",
-        station_type="meteo_station",
-        freq="1h",
-    )
-    tbl = obs_ds.stations_table
-    mask = (
-        (tbl["swiss_easting"] >= xlo) & (tbl["swiss_easting"] <= xhi)
-        & (tbl["swiss_northing"] >= ylo) & (tbl["swiss_northing"] <= yhi)
-    )
-    real = tbl.loc[mask, ["swiss_easting", "swiss_northing"]].values
+    real_obs, missing = canonical_stations()
 
-    # Identical to plot_oat_panel_a_real.py zoom panel
-    rng_miss = np.random.RandomState(SEED + 1)
-    missing_idx = rng_miss.randint(len(real))
-    obs_mask = np.ones(len(real), dtype=bool)
-    obs_mask[missing_idx] = False
-    real_obs = real[obs_mask]
-    missing = real[~obs_mask]
-
-    # Pad observed set with synthetic stations so self/cross-attention reads clearly
     rng_synth = np.random.RandomState(SEED)
     n_synth = max(0, 12 - len(real_obs))
     if n_synth > 0:
@@ -118,21 +98,6 @@ def load_stations_split() -> tuple[np.ndarray, np.ndarray]:
         real_obs = np.vstack([real_obs, synth])
 
     return real_obs, missing
-
-
-def _invented_queries(all_stations: np.ndarray, n: int = 10) -> np.ndarray:
-    """Random query locations that avoid all station positions (obs + missing)."""
-    xlo, xhi, ylo, yhi = _zoom_bounds()
-    rng = np.random.RandomState(SEED + 7)
-    pts: list[np.ndarray] = []
-    while len(pts) < n:
-        xy = np.array([
-            rng.uniform(xlo + 2000, xhi - 2000),
-            rng.uniform(ylo + 2000, yhi - 2000),
-        ])
-        if np.min(np.linalg.norm(all_stations - xy, axis=1)) > 3000:
-            pts.append(xy)
-    return np.array(pts)
 
 
 # ---------------------------------------------------------------------------
@@ -211,17 +176,13 @@ def _draw_self_attn_edges(ax: plt.Axes, stations: np.ndarray) -> None:
 
 
 def _draw_cross_attn_arrows(
-    ax: plt.Axes, stations: np.ndarray, queries: np.ndarray, k: int = 3
+    ax: plt.Axes, stations: np.ndarray, queries: np.ndarray, k: int = 4
 ) -> None:
-    """Arrows from each station to its k nearest queries (information propagation).
-
-    Every station gets at least one arrow; weight encodes distance decay.
-    """
-    for si in range(len(stations)):
-        dists = np.linalg.norm(queries - stations[si], axis=1)
-        for rank, qi in enumerate(np.argsort(dists)[:k]):
-            w = _decay_weight(stations[si], queries[qi])
-            # Closest query always visible; farther ones can be lighter
+    """Arrows from each query's k nearest stations to that query (information propagation)."""
+    for qi in range(len(queries)):
+        dists = np.linalg.norm(stations - queries[qi], axis=1)
+        for rank, si in enumerate(np.argsort(dists)[:k]):
+            w = _decay_weight(queries[qi], stations[si])
             alpha = (0.55 + w * 0.40) if rank == 0 else (0.20 + w * 0.45)
             lw = (1.0 + w * 2.0) if rank == 0 else (0.5 + w * 1.5)
             ax.annotate(
@@ -282,8 +243,10 @@ def plot_cross_attn_panel(
     queries: np.ndarray,
 ) -> None:
     all_sta = np.vstack([obs, missing])
+    grid_queries = canonical_queries_grid()
+    all_queries = np.vstack([queries, grid_queries])
     _draw_terrain(ax, dem, x_1d, y_1d)
-    _draw_cross_attn_arrows(ax, all_sta, queries, k=3)
+    _draw_cross_attn_arrows(ax, all_sta, all_queries)
     _scatter_missing(ax, missing)
     ax.scatter(
         obs[:, 0], obs[:, 1],
@@ -295,6 +258,10 @@ def plot_cross_attn_panel(
     ) if len(missing) > 0 else None
     ax.scatter(
         queries[:, 0], queries[:, 1],
+        c=BLUE_Q, s=60, zorder=8, marker="D", edgecolors="white", linewidths=0.8,
+    )
+    ax.scatter(
+        grid_queries[:, 0], grid_queries[:, 1],
         c=BLUE_Q, s=60, zorder=8, marker="D", edgecolors="white", linewidths=0.8,
     )
     ax.set_title(
@@ -313,7 +280,7 @@ def main() -> None:
 
     print("Loading stations …")
     obs, missing = load_stations_split()
-    queries = _invented_queries(np.vstack([obs, missing]), n=10)
+    queries = canonical_queries()
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5.5), facecolor="white")
 

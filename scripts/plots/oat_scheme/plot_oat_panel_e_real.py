@@ -21,6 +21,8 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 
+from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -139,26 +141,8 @@ def load_t2m_zoom(
 
 
 def load_stations_split() -> tuple[np.ndarray, np.ndarray]:
-    """Return (obs, missing) with the same SEED+1 split used across all panels."""
-    from peakweather.dataset import PeakWeatherDataset
-
-    xlo, xhi, ylo, yhi = _zoom_bounds()
-    obs_ds = PeakWeatherDataset(
-        root="/scratch/mch/cdonner/data/peakweather",
-        station_type="meteo_station",
-        freq="1h",
-    )
-    tbl = obs_ds.stations_table
-    mask = (
-        (tbl["swiss_easting"] >= xlo) & (tbl["swiss_easting"] <= xhi)
-        & (tbl["swiss_northing"] >= ylo) & (tbl["swiss_northing"] <= yhi)
-    )
-    stations = tbl.loc[mask, ["swiss_easting", "swiss_northing"]].values
-    rng = np.random.RandomState(SEED + 1)
-    missing_idx = rng.randint(len(stations))
-    obs_mask = np.ones(len(stations), dtype=bool)
-    obs_mask[missing_idx] = False
-    return stations[obs_mask], stations[~obs_mask]
+    """Return (obs, missing) using the canonical split from _shared."""
+    return canonical_stations()
 
 
 # ---------------------------------------------------------------------------
@@ -207,17 +191,13 @@ def _scatter_stations(
                c=GRAY_STA, s=55, zorder=6, edgecolors="white", linewidths=0.8, alpha=0.85)
     ax.scatter(queries[:, 0], queries[:, 1],
                c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8)
+    grid_queries = canonical_queries_grid()
+    ax.scatter(grid_queries[:, 0], grid_queries[:, 1],
+               c=BLUE_Q, s=60, zorder=6, marker="D", edgecolors="white", linewidths=0.8)
 
 
 def _query_locations(xlo: float, xhi: float, ylo: float, yhi: float) -> np.ndarray:
-    rng = np.random.RandomState(SEED + 1)
-    margin = 2_000.0
-    pts: list[list[float]] = []
-    while len(pts) < 8:
-        x = rng.uniform(xlo + margin, xhi - margin)
-        y = rng.uniform(ylo + margin, yhi - margin)
-        pts.append([x, y])
-    return np.array(pts)
+    return canonical_queries()
 
 
 def _set_ax(ax: plt.Axes, xlo: float, xhi: float, ylo: float, yhi: float) -> None:
