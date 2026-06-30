@@ -6,7 +6,6 @@ from torch.distributions import transform_to
 
 from oat.model_module.distributions import NormalOAT, ZeroInflatedLogNormal
 
-
 DIST_PARAM_COUNTS: dict[str, int] = {
     "normal": 2,                    # loc, scale
     "zero_inflated_lognormal": 3,   # gate, loc, scale

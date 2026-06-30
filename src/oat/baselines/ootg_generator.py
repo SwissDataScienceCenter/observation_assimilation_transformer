@@ -1,10 +1,10 @@
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
 
 import numpy as np
-import xarray as xr
 import torch
+import xarray as xr
 
 _TNPDIR = Path(__file__).parents[3] / "deps" / "gridded-tnp"
 if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
@@ -13,8 +13,8 @@ if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
 from tnp.data.base import DataGenerator, OOTGBatch
 
 from oat.baselines.coord_utils import (
-    lv95_to_latlon,
     lonlat_swap,
+    lv95_to_latlon,
     nwp_latlon_grid,
     nwp_latlon_grid_from_latlon,
 )
@@ -40,11 +40,11 @@ class OATOOTGDataGenerator(DataGenerator):
         nwp_std: torch.Tensor,
         xc_grid_latlon: torch.Tensor,
         coord_to_latlon: Callable[[torch.Tensor], torch.Tensor],
-        dist_names: List[str],
+        dist_names: list[str],
         pc_context: float = 0.8,
         nwp_stride: int = 10,
         samples_per_epoch: int = 10000,
-        time_indices: Optional[np.ndarray] = None,
+        time_indices: np.ndarray | None = None,
         **kwargs,
     ) -> None:
         super().__init__(samples_per_epoch=samples_per_epoch, batch_size=1, **kwargs)
@@ -65,7 +65,7 @@ class OATOOTGDataGenerator(DataGenerator):
             else (list(time_indices) if time_indices is not None else None)
         )
 
-    def generate_batch(self, batch_shape: Optional[torch.Size] = None) -> OOTGBatch:
+    def generate_batch(self, batch_shape: torch.Size | None = None) -> OOTGBatch:
         xc, yc, xt, yt, yc_grid = self._sample_once()
         xc_grid = self.xc_grid_latlon.unsqueeze(0)
         return OOTGBatch(
@@ -81,7 +81,7 @@ class OATOOTGDataGenerator(DataGenerator):
 
     def _sample_once(
         self,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if self._time_pool is not None:
             idx = self._time_pool[int(torch.randint(len(self._time_pool), ()).item())]
         else:
@@ -128,8 +128,8 @@ class OATOOTGDataGenerator(DataGenerator):
 def compute_norm_stats(
     dataset,
     n_samples: int = 500,
-    time_indices: Optional[np.ndarray] = None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    time_indices: np.ndarray | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Estimate per-variable normalization stats from a random dataset sample.
 
     Stats are computed for ALL variables. The generator only applies them to
@@ -190,8 +190,8 @@ def make_ootg_generator(
     obs_std: torch.Tensor,
     nwp_mean: torch.Tensor,
     nwp_std: torch.Tensor,
-    nwp_stride: Optional[int] = None,
-    time_indices: Optional[np.ndarray] = None,
+    nwp_stride: int | None = None,
+    time_indices: np.ndarray | None = None,
     **kwargs,
 ) -> "OATOOTGDataGenerator":
     """Build OATOOTGDataGenerator for either COSMO or ERA5 dataset.

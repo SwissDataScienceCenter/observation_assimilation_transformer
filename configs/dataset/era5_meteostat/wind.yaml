@@ -11,6 +11,4 @@ obs_vars:
   - wspd
 
 obs_variable_to_distribution:
-  temp: "normal"
-  prcp: "zero_inflated_lognormal"
   wspd: "lognormal"

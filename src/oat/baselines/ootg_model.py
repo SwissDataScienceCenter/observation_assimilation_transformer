@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 _TNPDIR = Path(__file__).parents[3] / "deps" / "gridded-tnp"
 if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
@@ -25,16 +24,16 @@ from oat.baselines.ootg_likelihood import MixedVariableLikelihood, decoder_out_d
 def build_ootg_model(
     dim_y: int = 1,
     dim_gridded_y: int = 2,
-    obs_variable_to_distribution: Optional[Dict[str, str]] = None,
+    obs_variable_to_distribution: dict[str, str] | None = None,
     embed_dim: int = 128,
     x_embed_dim: int = 128,
     num_heads: int = 8,
     head_dim: int = 16,
     num_layers: int = 5,
     num_legendre_polys: int = 10,
-    grid_shape: Tuple[int, int] = (32, 32),
-    window_sizes: Tuple[int, int] = (4, 4),
-    shift_sizes: Tuple[int, int] = (2, 2),
+    grid_shape: tuple[int, int] = (32, 32),
+    window_sizes: tuple[int, int] = (4, 4),
+    shift_sizes: tuple[int, int] = (2, 2),
     top_k_ctot: int = 9,
 ) -> OOTGGriddedTNP:
     """Build OOTGGriddedTNP with per-variable output distributions.

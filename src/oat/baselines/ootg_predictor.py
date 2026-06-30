@@ -1,6 +1,7 @@
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, Any, List, Literal, Optional
+from typing import Any, Literal
 
 import torch
 
@@ -10,15 +11,15 @@ if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
 
 from tnp.models.gridded_tnp import OOTGGriddedTNP
 
-from oat.predictor_module.base_predictor import BasePredictor
-from oat.predictor_module.functional_metrics import point_mae
 from oat.baselines.coord_utils import (
-    lv95_to_latlon,
     lonlat_swap,
+    lv95_to_latlon,
     nwp_latlon_grid,
     nwp_latlon_grid_from_latlon,
 )
 from oat.baselines.ootg_likelihood import JointMixedDistribution
+from oat.predictor_module.base_predictor import BasePredictor
+from oat.predictor_module.functional_metrics import point_mae
 
 
 class OOTGPredictor(BasePredictor):
@@ -36,14 +37,14 @@ class OOTGPredictor(BasePredictor):
     def __init__(
         self,
         model: OOTGGriddedTNP,
-        obs_vars: List[str],
+        obs_vars: list[str],
         obs_mean: torch.Tensor,      # (dim_y,)
         obs_std: torch.Tensor,       # (dim_y,)
         nwp_mean: torch.Tensor,      # (n_nwp,)
         nwp_std: torch.Tensor,       # (n_nwp,)
         xc_grid_base: torch.Tensor,  # (H_c, W_c, 2)
         coord_to_latlon: Callable[[torch.Tensor], torch.Tensor],
-        dist_names: List[str],
+        dist_names: list[str],
         n_nwp: int,
         nwp_stride: int,
     ) -> None:
@@ -60,7 +61,7 @@ class OOTGPredictor(BasePredictor):
         self.nwp_stride = nwp_stride
         self.metrics_fn = {"point_mae": point_mae}
 
-    def _normalize_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         return batch
 
     def _build_yc(self, obs: torch.Tensor) -> torch.Tensor:
@@ -92,7 +93,6 @@ class OOTGPredictor(BasePredictor):
         global_field: torch.Tensor,  # (C_global, H, W)
     ) -> JointMixedDistribution:
         valid = mask.all(dim=-1).bool()
-        Nq = q_coords.shape[0]
         dev = global_field.device
 
         if valid.sum() == 0:
@@ -115,7 +115,7 @@ class OOTGPredictor(BasePredictor):
 
         return self.model(xc, yc, xc_grid, yc_grid, xt)
 
-    def forward(self, batch: Dict[str, Any]):
+    def forward(self, batch: dict[str, Any]):
         obs_b = batch["observation_data"]["obs"]
         mask_b = batch["observation_data"]["mask_obs"]
         coords_b = batch["observation_data"]["coords"]
@@ -144,23 +144,23 @@ class OOTGPredictor(BasePredictor):
 
         return torch.stack(preds, dim=0), target_obs, target_mask
 
-    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> None:
         y_pred, target_obs, target_mask = self(batch)
         y_pred = y_pred.unsqueeze(-2)
         self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="val")
 
-    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
+    def test_step(self, batch: dict[str, Any], batch_idx: int) -> None:
         y_pred, target_obs, target_mask = self(batch)
         y_pred = y_pred.unsqueeze(-2)
         self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="test")
 
     def predict_step(
         self,
-        batch: Dict[str, Any],
+        batch: dict[str, Any],
         batch_idx: int,
         dataloader_idx: int = 0,
         return_as: Literal["samples", "distribution"] = "samples",
-        n_samples: Optional[int] = None,
+        n_samples: int | None = None,
     ) -> torch.Tensor:
         if return_as != "samples":
             raise ValueError("OOTGPredictor only supports return_as='samples'.")
@@ -230,7 +230,7 @@ def create_ootg_predictor(
     obs_std: torch.Tensor,
     nwp_mean: torch.Tensor,
     nwp_std: torch.Tensor,
-    nwp_stride: Optional[int] = None,
+    nwp_stride: int | None = None,
 ) -> OOTGPredictor:
     """Build OOTGPredictor from a trained model and the underlying dataset."""
     import xarray as xr
