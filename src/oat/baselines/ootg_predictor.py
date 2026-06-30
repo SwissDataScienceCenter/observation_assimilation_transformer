@@ -1,0 +1,268 @@
+import sys
+from pathlib import Path
+from typing import Callable, Dict, Any, List, Literal, Optional
+
+import torch
+
+_TNPDIR = Path(__file__).parents[3] / "deps" / "gridded-tnp"
+if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
+    sys.path.insert(0, str(_TNPDIR))
+
+from tnp.models.gridded_tnp import OOTGGriddedTNP
+
+from oat.predictor_module.base_predictor import BasePredictor
+from oat.predictor_module.functional_metrics import point_mae
+from oat.baselines.coord_utils import (
+    lv95_to_latlon,
+    lonlat_swap,
+    nwp_latlon_grid,
+    nwp_latlon_grid_from_latlon,
+)
+from oat.baselines.ootg_likelihood import JointMixedDistribution
+
+
+class OOTGPredictor(BasePredictor):
+    """Wraps a trained OOTGGriddedTNP to evaluate on OAT-format batches.
+
+    At inference, ALL valid observation stations are used as context.
+    Predictions are returned in original units:
+      - Normal variables: model predicts in standardized space, output is denormalized
+      - ZeroInflatedLogNormal variables: model predicts in original non-negative space
+
+    Outputs [B, N_q, n_samples, n_vars], matching BasePredictor's predict_step contract.
+    For n_samples > 1, uses dist.sample() (ZILN gate is Bernoulli → not reparameterizable).
+    """
+
+    def __init__(
+        self,
+        model: OOTGGriddedTNP,
+        obs_vars: List[str],
+        obs_mean: torch.Tensor,      # (dim_y,)
+        obs_std: torch.Tensor,       # (dim_y,)
+        nwp_mean: torch.Tensor,      # (n_nwp,)
+        nwp_std: torch.Tensor,       # (n_nwp,)
+        xc_grid_base: torch.Tensor,  # (H_c, W_c, 2)
+        coord_to_latlon: Callable[[torch.Tensor], torch.Tensor],
+        dist_names: List[str],
+        n_nwp: int,
+        nwp_stride: int,
+    ) -> None:
+        super().__init__(output_var_names=obs_vars)
+        self.model = model
+        self.register_buffer("obs_mean", obs_mean)
+        self.register_buffer("obs_std", obs_std)
+        self.register_buffer("nwp_mean", nwp_mean)
+        self.register_buffer("nwp_std", nwp_std)
+        self.register_buffer("xc_grid_base", xc_grid_base)
+        self.coord_to_latlon = coord_to_latlon
+        self.dist_names = dist_names
+        self.n_nwp = n_nwp
+        self.nwp_stride = nwp_stride
+        self.metrics_fn = {"point_mae": point_mae}
+
+    def _normalize_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        return batch
+
+    def _build_yc(self, obs: torch.Tensor) -> torch.Tensor:
+        """Apply per-variable normalization. Normal → standardize; ZILN → identity."""
+        yc = obs.clone()
+        om = self.obs_mean.to(obs.device)
+        os_ = self.obs_std.to(obs.device)
+        for v, dn in enumerate(self.dist_names):
+            if dn == "normal":
+                yc[:, v] = (yc[:, v] - om[v]) / os_[v]
+        return yc
+
+    def _denormalize(self, mean: torch.Tensor) -> torch.Tensor:
+        """Denormalize predictions: Normal vars → original units; ZILN → unchanged."""
+        out = mean.clone()
+        om = self.obs_mean.to(mean.device)
+        os_ = self.obs_std.to(mean.device)
+        for v, dn in enumerate(self.dist_names):
+            if dn == "normal":
+                out[..., v] = mean[..., v] * os_[v] + om[v]
+        return out
+
+    def _dist_for_sample(
+        self,
+        obs: torch.Tensor,           # (N_obs, dim_y)
+        mask: torch.Tensor,          # (N_obs, dim_y)
+        coords: torch.Tensor,        # (N_obs, 2) dataset CRS
+        q_coords: torch.Tensor,      # (N_q, 2) dataset CRS
+        global_field: torch.Tensor,  # (C_global, H, W)
+    ) -> JointMixedDistribution:
+        valid = mask.all(dim=-1).bool()
+        Nq = q_coords.shape[0]
+        dev = global_field.device
+
+        if valid.sum() == 0:
+            # No valid context: pass empty context tensors
+            xc = torch.zeros(1, 0, 2, device=dev, dtype=global_field.dtype)
+            yc = torch.zeros(1, 0, len(self.output_var_names), device=dev, dtype=global_field.dtype)
+        else:
+            xc = self.coord_to_latlon(coords[valid]).unsqueeze(0).to(dev)
+            yc = self._build_yc(obs[valid]).unsqueeze(0).to(dev)
+
+        xt = self.coord_to_latlon(q_coords).unsqueeze(0).to(dev)
+
+        nwp_c = global_field[: self.n_nwp, :: self.nwp_stride, :: self.nwp_stride]
+        nm = self.nwp_mean.to(dev)
+        ns = self.nwp_std.to(dev)
+        yc_grid = (
+            (nwp_c - nm[:, None, None]) / ns[:, None, None]
+        ).permute(1, 2, 0).unsqueeze(0)
+        xc_grid = self.xc_grid_base.to(dev).unsqueeze(0)
+
+        return self.model(xc, yc, xc_grid, yc_grid, xt)
+
+    def forward(self, batch: Dict[str, Any]):
+        obs_b = batch["observation_data"]["obs"]
+        mask_b = batch["observation_data"]["mask_obs"]
+        coords_b = batch["observation_data"]["coords"]
+        q_coords_b = batch["query_data"]["coords"]
+        gf_b = batch["global_data"]["global_field"]
+        target_obs = batch["query_data"].get("obs", None)
+        target_mask = batch["query_data"].get("mask_obs", None)
+
+        if obs_b.ndim == 2:
+            obs_b = obs_b.unsqueeze(0)
+            mask_b = mask_b.unsqueeze(0)
+            coords_b = coords_b.unsqueeze(0)
+            q_coords_b = q_coords_b.unsqueeze(0)
+            gf_b = gf_b.unsqueeze(0)
+            if target_obs is not None:
+                target_obs = target_obs.unsqueeze(0)
+            if target_mask is not None:
+                target_mask = target_mask.unsqueeze(0)
+
+        preds = []
+        for b in range(obs_b.shape[0]):
+            dist = self._dist_for_sample(
+                obs_b[b], mask_b[b], coords_b[b], q_coords_b[b], gf_b[b]
+            )
+            preds.append(self._denormalize(dist.mean.squeeze(0)))
+
+        return torch.stack(preds, dim=0), target_obs, target_mask
+
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
+        y_pred, target_obs, target_mask = self(batch)
+        y_pred = y_pred.unsqueeze(-2)
+        self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="val")
+
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> None:
+        y_pred, target_obs, target_mask = self(batch)
+        y_pred = y_pred.unsqueeze(-2)
+        self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="test")
+
+    def predict_step(
+        self,
+        batch: Dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        return_as: Literal["samples", "distribution"] = "samples",
+        n_samples: Optional[int] = None,
+    ) -> torch.Tensor:
+        if return_as != "samples":
+            raise ValueError("OOTGPredictor only supports return_as='samples'.")
+        n = n_samples if n_samples is not None else 1
+
+        obs_b = batch["observation_data"]["obs"]
+        mask_b = batch["observation_data"]["mask_obs"]
+        coords_b = batch["observation_data"]["coords"]
+        q_coords_b = batch["query_data"]["coords"]
+        gf_b = batch["global_data"]["global_field"]
+
+        if obs_b.ndim == 2:
+            obs_b = obs_b.unsqueeze(0)
+            mask_b = mask_b.unsqueeze(0)
+            coords_b = coords_b.unsqueeze(0)
+            q_coords_b = q_coords_b.unsqueeze(0)
+            gf_b = gf_b.unsqueeze(0)
+
+        with torch.no_grad():
+            all_samples = []
+            for b in range(obs_b.shape[0]):
+                dist = self._dist_for_sample(
+                    obs_b[b], mask_b[b], coords_b[b], q_coords_b[b], gf_b[b]
+                )
+                if n == 1:
+                    # (1, Nq, dim_y) → squeeze batch → (Nq, dim_y) → unsqueeze sample dim
+                    s = self._denormalize(dist.mean.squeeze(0)).unsqueeze(-2)  # (Nq, 1, dim_y)
+                else:
+                    # dist.sample((n,)) returns (n, 1, Nq, dim_y) or (n, Nq, dim_y)
+                    raw = dist.sample(torch.Size([n]))
+                    if raw.ndim == 4:
+                        raw = raw.squeeze(-3)       # (n, Nq, dim_y)
+                    # raw: (n, Nq, dim_y) → permute → (Nq, n, dim_y)
+                    raw = raw.permute(1, 0, 2)
+                    s = self._denormalize(raw)       # (Nq, n, dim_y)
+                all_samples.append(s)
+        return torch.stack(all_samples, dim=0)      # (B, Nq, n, dim_y)
+
+    def _log_instant_metrics(
+        self,
+        y_hat_samples: torch.Tensor,
+        y_true: torch.Tensor,
+        mask: torch.Tensor,
+        prefix: str = "",
+    ) -> None:
+        for metric_name, metric_fn in self.metrics_fn.items():
+            vals = metric_fn(
+                y_target=y_true,
+                y_hat=y_hat_samples,
+                mask=mask,
+                aggregation="variable",
+            )
+            for i, val in enumerate(vals):
+                self.log(
+                    f"{prefix}_{metric_name}_{self.indx_to_var[i]}",
+                    val,
+                    prog_bar=True,
+                    on_step=True,
+                    on_epoch=True,
+                )
+
+
+def create_ootg_predictor(
+    model: OOTGGriddedTNP,
+    underlying_ds,
+    obs_mean: torch.Tensor,
+    obs_std: torch.Tensor,
+    nwp_mean: torch.Tensor,
+    nwp_std: torch.Tensor,
+    nwp_stride: Optional[int] = None,
+) -> OOTGPredictor:
+    """Build OOTGPredictor from a trained model and the underlying dataset."""
+    import xarray as xr
+
+    dt = underlying_ds.config.dataset_type
+    if dt == "cosmo_peakweather":
+        stride = nwp_stride if nwp_stride is not None else 10
+        ref = xr.open_zarr(underlying_ds.config.ref_nwp_path)
+        xc_grid = nwp_latlon_grid(ref.x.values, ref.y.values, stride)
+        coord_fn = lv95_to_latlon
+    elif dt == "era5_meteostat":
+        stride = nwp_stride if nwp_stride is not None else 4
+        xc_grid = nwp_latlon_grid_from_latlon(
+            underlying_ds._ref_lats, underlying_ds._ref_lons, stride
+        )
+        coord_fn = lonlat_swap
+    else:
+        raise ValueError(f"Unknown dataset_type: {dt!r}")
+
+    v2d = dict(underlying_ds.config.obs_variable_to_distribution)
+    dist_names = [v2d.get(v, "normal") for v in underlying_ds.config.obs_vars]
+
+    return OOTGPredictor(
+        model=model,
+        obs_vars=list(underlying_ds.config.obs_vars),
+        obs_mean=obs_mean,
+        obs_std=obs_std,
+        nwp_mean=nwp_mean,
+        nwp_std=nwp_std,
+        xc_grid_base=xc_grid,
+        coord_to_latlon=coord_fn,
+        dist_names=dist_names,
+        n_nwp=len(underlying_ds.config.nwp_vars),
+        nwp_stride=stride,
+    )
