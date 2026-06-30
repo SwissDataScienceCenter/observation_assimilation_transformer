@@ -13,7 +13,7 @@ from datetime import datetime
 import hydra
 import pytorch_lightning as pl
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
@@ -105,6 +105,46 @@ def main(cfg: DictConfig) -> None:
     run_name = f"ootg-baseline_{dataset_tag}_{now_str}_job{job_id}"
     group = cfg.logging.get("group", "ootg_baseline")
 
+    checkpoint_dir = f"checkpoints/{group}/{run_name}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Save config and normalization stats so evaluate_test_set.py can load this checkpoint.
+    OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
+    _coord_fn_name = (
+        "lv95_to_latlon" if full_ds.config.dataset_type == "cosmo_peakweather" else "lonlat_swap"
+    )
+    torch.save(
+        {
+            "obs_mean": obs_mean,
+            "obs_std": obs_std,
+            "nwp_mean": nwp_mean,
+            "nwp_std": nwp_std,
+            "xc_grid_base": gen_train.xc_grid_latlon,
+            "obs_vars": obs_vars,
+            "dist_names": list(gen_train.dist_names),
+            "n_nwp": dim_gridded_y,
+            "nwp_stride": gen_train.nwp_stride,
+            "coord_fn_name": _coord_fn_name,
+            "model_kwargs": {
+                "dim_y": dim_y,
+                "dim_gridded_y": dim_gridded_y,
+                "obs_variable_to_distribution": v2d,
+                "embed_dim": cfg.get("embed_dim", 128),
+                "x_embed_dim": cfg.get("x_embed_dim", 128),
+                "num_heads": cfg.get("num_heads", 8),
+                "head_dim": cfg.get("head_dim", 16),
+                "num_layers": cfg.get("num_layers", 5),
+                "num_legendre_polys": cfg.get("num_legendre_polys", 10),
+                "grid_shape": tuple(cfg.get("grid_shape", [32, 32])),
+                "window_sizes": tuple(cfg.get("window_sizes", [4, 4])),
+                "shift_sizes": tuple(cfg.get("shift_sizes", [2, 2])),
+                "top_k_ctot": cfg.get("top_k_ctot", 9),
+            },
+        },
+        os.path.join(checkpoint_dir, "ootg_stats.pt"),
+    )
+    log.info("Saved config.yaml and ootg_stats.pt to %s", checkpoint_dir)
+
     enable_wandb = cfg.logging.get("enable_wandb", True)
     wandb_logger = (
         WandbLogger(project=cfg.logging.project, entity=cfg.logging.entity, group=group, name=run_name)
@@ -113,7 +153,7 @@ def main(cfg: DictConfig) -> None:
 
     callbacks = [
         ModelCheckpoint(
-            dirpath=f"checkpoints/{group}/{run_name}",
+            dirpath=checkpoint_dir,
             filename="epoch={epoch}-val_nll={val/nll:.4f}",
             monitor="val/nll", mode="min", save_top_k=2,
             auto_insert_metric_name=False,
