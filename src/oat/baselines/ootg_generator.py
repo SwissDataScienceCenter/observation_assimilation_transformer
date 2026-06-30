@@ -107,11 +107,9 @@ class OATOOTGDataGenerator(DataGenerator):
             # ZILN: keep original non-negative values
 
         n_valid = int(valid.sum().item())
-        n_ctx = max(1, int(n_valid * self.pc_context))
+        n_ctx = max(1, min(int(n_valid * self.pc_context), n_valid - 1))
         perm = torch.randperm(n_valid)
         ctx_idx, tgt_idx = perm[:n_ctx], perm[n_ctx:]
-        if len(tgt_idx) == 0:
-            tgt_idx = perm[-1:]
 
         xc = self.coord_to_latlon(valid_coords[ctx_idx])
         yc = valid_obs[ctx_idx]
