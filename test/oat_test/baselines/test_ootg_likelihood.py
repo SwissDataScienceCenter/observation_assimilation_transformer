@@ -1,5 +1,4 @@
 import torch
-import torch.distributions as td
 
 from oat.baselines.ootg_likelihood import (
     DIST_PARAM_COUNTS,

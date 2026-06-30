@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict
-
 import torch
 import torch.nn as nn
 from torch.distributions import transform_to
@@ -9,7 +7,7 @@ from torch.distributions import transform_to
 from oat.model_module.distributions import NormalOAT, ZeroInflatedLogNormal
 
 
-DIST_PARAM_COUNTS: Dict[str, int] = {
+DIST_PARAM_COUNTS: dict[str, int] = {
     "normal": 2,                    # loc, scale
     "zero_inflated_lognormal": 3,   # gate, loc, scale
 }
@@ -20,7 +18,7 @@ _DIST_CLASSES = {
 }
 
 
-def decoder_out_dim(obs_variable_to_distribution: Dict[str, str]) -> int:
+def decoder_out_dim(obs_variable_to_distribution: dict[str, str]) -> int:
     """Total number of raw decoder outputs for the given variable→distribution map."""
     return sum(DIST_PARAM_COUNTS[d] for d in obs_variable_to_distribution.values())
 
@@ -73,7 +71,7 @@ class MixedVariableLikelihood(nn.Module):
             The order determines which slice of the decoder output maps to which variable.
     """
 
-    def __init__(self, obs_variable_to_distribution: Dict[str, str]) -> None:
+    def __init__(self, obs_variable_to_distribution: dict[str, str]) -> None:
         super().__init__()
         for v, d in obs_variable_to_distribution.items():
             if d not in _DIST_CLASSES:
