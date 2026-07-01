@@ -135,6 +135,9 @@ def main(cfg: DictConfig) -> None:
                 "n_nwp": dim_gridded_y,
                 "nwp_stride": gen_train.nwp_stride,
                 "coord_fn_name": _coord_fn_name,
+                "output_transform": (
+                    output_transform.to_dict() if output_transform is not None else None
+                ),
                 "model_kwargs": {
                     "dim_y": dim_y,
                     "dim_gridded_y": dim_gridded_y,

@@ -18,6 +18,7 @@ _DEFAULT_PREDICTOR = "oat.predictor_module.oat_predictor.OATPredictor"
 def _predictor_cls_from_config(cfg: DictConfig) -> Type[pl.LightningModule]:
     """Infer predictor class from cfg.model.model_cls."""
     import importlib
+
     model_cls_str = cfg.model.model_cls
     target = _DEFAULT_PREDICTOR
     for fragment, predictor_path in _MODEL_CLS_TO_PREDICTOR.items():
@@ -37,6 +38,7 @@ def _load_ootg_predictor(
     from oat.baselines.coord_utils import lonlat_swap, lv95_to_latlon
     from oat.baselines.ootg_model import build_ootg_model
     from oat.baselines.ootg_predictor import OOTGPredictor
+    from oat.data_module.transform import StandardNormalizeTransform, Transform
 
     stats = torch.load(
         path.parent / "ootg_stats.pt", map_location=map_location, weights_only=False
@@ -50,6 +52,21 @@ def _load_ootg_predictor(
         if k.startswith("model.")
     }
     model.load_state_dict(model_state)
+
+    if "output_transform" in stats and stats["output_transform"] is not None:
+        output_transform = Transform.from_dict(stats["output_transform"])
+    else:
+        # Backward compat: reconstruct from obs_mean/obs_std (Normal vars only)
+        obs_mean = stats["obs_mean"]
+        obs_std = stats["obs_std"]
+        dist_names = stats["dist_names"]
+        mean_t = obs_mean.clone()
+        std_t = obs_std.clone()
+        for v, dn in enumerate(dist_names):
+            if dn != "normal":
+                mean_t[v] = 0.0
+                std_t[v] = 1.0
+        output_transform = StandardNormalizeTransform(mean_t, std_t, channel_dim=-1)
 
     coord_fn = (
         lv95_to_latlon if stats["coord_fn_name"] == "lv95_to_latlon" else lonlat_swap
@@ -66,6 +83,7 @@ def _load_ootg_predictor(
         dist_names=stats["dist_names"],
         n_nwp=stats["n_nwp"],
         nwp_stride=stats["nwp_stride"],
+        output_transform=output_transform,
     )
     return predictor, cfg
 
