@@ -6,6 +6,7 @@ Usage:
     python -m scripts.train_ootg_baseline dataset=era5_meteostat/temp
     python -m scripts.train_ootg_baseline dataset=era5_meteostat/temp_precip epochs=10
 """
+
 import logging
 import os
 from datetime import datetime
@@ -29,7 +30,9 @@ log = logging.getLogger(__name__)
 
 
 class OOTGLitModule(pl.LightningModule):
-    def __init__(self, model, obs_vars: list, lr: float = 5e-4, n_samples: int = 50) -> None:
+    def __init__(
+        self, model, obs_vars: list, lr: float = 5e-4, n_samples: int = 50
+    ) -> None:
         super().__init__()
         self.model = model
         self.obs_vars = obs_vars
@@ -49,7 +52,9 @@ class OOTGLitModule(pl.LightningModule):
         samples = self._samples(dist)
         mask = torch.ones_like(batch.yt)
 
-        per_var_crps = mc_crps(batch.yt, samples, mask, aggregation="variable")  # [dim_y]
+        per_var_crps = mc_crps(
+            batch.yt, samples, mask, aggregation="variable"
+        )  # [dim_y]
         for i, name in enumerate(self.obs_vars):
             self.log(f"train_loss_{name}", per_var_crps[i], on_step=True, on_epoch=True)
         loss = per_var_crps.mean()
@@ -58,8 +63,18 @@ class OOTGLitModule(pl.LightningModule):
         with torch.no_grad():
             per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
             for i, name in enumerate(self.obs_vars):
-                self.log(f"train_point_mae_{name}", per_var_mae[i], on_step=True, on_epoch=True)
-                self.log(f"train_crps_{name}", per_var_crps[i].detach(), on_step=True, on_epoch=True)
+                self.log(
+                    f"train_point_mae_{name}",
+                    per_var_mae[i],
+                    on_step=True,
+                    on_epoch=True,
+                )
+                self.log(
+                    f"train_crps_{name}",
+                    per_var_crps[i].detach(),
+                    on_step=True,
+                    on_epoch=True,
+                )
 
         return loss
 
@@ -68,14 +83,20 @@ class OOTGLitModule(pl.LightningModule):
         samples = self._samples(dist)
         mask = torch.ones_like(batch.yt)
 
-        per_var_crps = mc_crps(batch.yt, samples, mask, aggregation="variable")  # [dim_y]
+        per_var_crps = mc_crps(
+            batch.yt, samples, mask, aggregation="variable"
+        )  # [dim_y]
         for i, name in enumerate(self.obs_vars):
             self.log(f"val_loss_{name}", per_var_crps[i], on_step=False, on_epoch=True)
-        self.log("val_loss", per_var_crps.mean(), on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val_loss", per_var_crps.mean(), on_step=False, on_epoch=True, prog_bar=True
+        )
 
         per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
         for i, name in enumerate(self.obs_vars):
-            self.log(f"val_point_mae_{name}", per_var_mae[i], on_step=False, on_epoch=True)
+            self.log(
+                f"val_point_mae_{name}", per_var_mae[i], on_step=False, on_epoch=True
+            )
             self.log(f"val_crps_{name}", per_var_crps[i], on_step=False, on_epoch=True)
 
     def configure_optimizers(self):
@@ -95,33 +116,54 @@ def main(cfg: DictConfig) -> None:
     topo_vars = list(full_ds.config.topo_vars)
     v2d = dict(full_ds.config.obs_variable_to_distribution)
     dim_y, dim_gridded_y = len(obs_vars), len(nwp_vars) + len(topo_vars)
-    log.info("obs_vars=%s  v2d=%s  nwp_vars=%s  topo_vars=%s", obs_vars, v2d, nwp_vars, topo_vars)
+    log.info(
+        "obs_vars=%s  v2d=%s  nwp_vars=%s  topo_vars=%s",
+        obs_vars,
+        v2d,
+        nwp_vars,
+        topo_vars,
+    )
 
     log.info("Computing normalization stats (n=%d)...", cfg.get("norm_samples", 500))
     obs_mean, obs_std, nwp_mean, nwp_std = compute_norm_stats(
-        full_ds, n_samples=cfg.get("norm_samples", 500),
+        full_ds,
+        n_samples=cfg.get("norm_samples", 500),
         time_indices=train_wrap._time_indices,
     )
     log.info("obs_mean=%s  obs_std=%s", obs_mean.tolist(), obs_std.tolist())
 
     gen_train = make_ootg_generator(
-        full_ds, obs_mean=obs_mean, obs_std=obs_std, nwp_mean=nwp_mean, nwp_std=nwp_std,
-        nwp_stride=cfg.get("nwp_stride", None), time_indices=train_wrap._time_indices,
+        full_ds,
+        obs_mean=obs_mean,
+        obs_std=obs_std,
+        nwp_mean=nwp_mean,
+        nwp_std=nwp_std,
+        nwp_stride=cfg.get("nwp_stride", None),
+        time_indices=train_wrap._time_indices,
         pc_context=cfg.get("pc_context", 0.8),
         samples_per_epoch=cfg.get("samples_per_epoch", 10000),
     )
     gen_val = make_ootg_generator(
-        full_ds, obs_mean=obs_mean, obs_std=obs_std, nwp_mean=nwp_mean, nwp_std=nwp_std,
-        nwp_stride=cfg.get("nwp_stride", None), time_indices=val_wrap._time_indices,
+        full_ds,
+        obs_mean=obs_mean,
+        obs_std=obs_std,
+        nwp_mean=nwp_mean,
+        nwp_std=nwp_std,
+        nwp_stride=cfg.get("nwp_stride", None),
+        time_indices=val_wrap._time_indices,
         samples_per_epoch=cfg.get("val_samples_per_epoch", 1000),
     )
 
     model = build_ootg_model(
-        dim_y=dim_y, dim_gridded_y=dim_gridded_y,
+        dim_y=dim_y,
+        dim_gridded_y=dim_gridded_y,
         obs_variable_to_distribution=v2d,
-        embed_dim=cfg.get("embed_dim", 128), x_embed_dim=cfg.get("x_embed_dim", 128),
-        num_heads=cfg.get("num_heads", 8), head_dim=cfg.get("head_dim", 16),
-        num_layers=cfg.get("num_layers", 5), num_legendre_polys=cfg.get("num_legendre_polys", 10),
+        embed_dim=cfg.get("embed_dim", 128),
+        x_embed_dim=cfg.get("x_embed_dim", 128),
+        num_heads=cfg.get("num_heads", 8),
+        head_dim=cfg.get("head_dim", 16),
+        num_layers=cfg.get("num_layers", 5),
+        num_legendre_polys=cfg.get("num_legendre_polys", 10),
         grid_shape=tuple(cfg.get("grid_shape", [32, 32])),
         window_sizes=tuple(cfg.get("window_sizes", [4, 4])),
         shift_sizes=tuple(cfg.get("shift_sizes", [2, 2])),
@@ -143,7 +185,9 @@ def main(cfg: DictConfig) -> None:
     if int(os.environ.get("SLURM_PROCID", 0)) == 0:
         OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
     _coord_fn_name = (
-        "lv95_to_latlon" if full_ds.config.dataset_type == "cosmo_peakweather" else "lonlat_swap"
+        "lv95_to_latlon"
+        if full_ds.config.dataset_type == "cosmo_peakweather"
+        else "lonlat_swap"
     )
     if int(os.environ.get("SLURM_PROCID", 0)) == 0:
         torch.save(
@@ -180,15 +224,23 @@ def main(cfg: DictConfig) -> None:
 
     enable_wandb = cfg.logging.get("enable_wandb", True)
     wandb_logger = (
-        WandbLogger(project=cfg.logging.project, entity=cfg.logging.entity, group=group, name=run_name)
-        if enable_wandb else False
+        WandbLogger(
+            project=cfg.logging.project,
+            entity=cfg.logging.entity,
+            group=group,
+            name=run_name,
+        )
+        if enable_wandb
+        else False
     )
 
     callbacks = [
         ModelCheckpoint(
             dirpath=checkpoint_dir,
             filename="epoch={epoch}-val_loss={val_loss:.4f}",
-            monitor="val_loss", mode="min", save_top_k=2,
+            monitor="val_loss",
+            mode="min",
+            save_top_k=2,
             auto_insert_metric_name=False,
         ),
         LearningRateMonitor(),
@@ -196,16 +248,26 @@ def main(cfg: DictConfig) -> None:
 
     n_devices = cfg.get("devices", 1)
     trainer = pl.Trainer(
-        max_epochs=cfg.get("epochs", 300), logger=wandb_logger, callbacks=callbacks,
+        max_epochs=cfg.get("epochs", 300),
+        logger=wandb_logger,
+        callbacks=callbacks,
         gradient_clip_val=cfg.get("gradient_clip_val", 0.5),
-        accelerator="auto", devices=n_devices,
+        accelerator="auto",
+        devices=n_devices,
         strategy="ddp" if n_devices > 1 else "auto",
-        check_val_every_n_epoch=10, log_every_n_steps=10,
-        limit_train_batches=gen_train.num_batches, limit_val_batches=gen_val.num_batches,
+        check_val_every_n_epoch=10,
+        log_every_n_steps=10,
+        limit_train_batches=gen_train.num_batches,
+        limit_val_batches=gen_val.num_batches,
         enable_progress_bar=True,
     )
     trainer.fit(
-        OOTGLitModule(model, obs_vars=obs_vars, lr=cfg.get("lr", 5e-4), n_samples=cfg.get("crps_mc_samples", 50)),
+        OOTGLitModule(
+            model,
+            obs_vars=obs_vars,
+            lr=cfg.get("lr", 5e-4),
+            n_samples=cfg.get("crps_mc_samples", 50),
+        ),
         DataLoader(gen_train, batch_size=None, num_workers=0, pin_memory=True),
         DataLoader(gen_val, batch_size=None, num_workers=0, pin_memory=True),
     )
