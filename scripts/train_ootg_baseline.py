@@ -53,7 +53,7 @@ class OOTGLitModule(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
 
-@hydra.main(config_path="../configs", config_name="ootg_baseline", version_base=None)
+@hydra.main(config_path="../configs", config_name="ootg_baseline", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
     log.info("Loading dataset...")
@@ -109,41 +109,44 @@ def main(cfg: DictConfig) -> None:
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # Save config and normalization stats so evaluate_test_set.py can load this checkpoint.
-    OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
+    # Guard to rank 0: torch.save is not atomic, and all ranks have identical content.
+    if int(os.environ.get("SLURM_PROCID", 0)) == 0:
+        OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
     _coord_fn_name = (
         "lv95_to_latlon" if full_ds.config.dataset_type == "cosmo_peakweather" else "lonlat_swap"
     )
-    torch.save(
-        {
-            "obs_mean": obs_mean,
-            "obs_std": obs_std,
-            "nwp_mean": nwp_mean,
-            "nwp_std": nwp_std,
-            "xc_grid_base": gen_train.xc_grid_latlon,
-            "obs_vars": obs_vars,
-            "dist_names": list(gen_train.dist_names),
-            "n_nwp": dim_gridded_y,
-            "nwp_stride": gen_train.nwp_stride,
-            "coord_fn_name": _coord_fn_name,
-            "model_kwargs": {
-                "dim_y": dim_y,
-                "dim_gridded_y": dim_gridded_y,
-                "obs_variable_to_distribution": v2d,
-                "embed_dim": cfg.get("embed_dim", 128),
-                "x_embed_dim": cfg.get("x_embed_dim", 128),
-                "num_heads": cfg.get("num_heads", 8),
-                "head_dim": cfg.get("head_dim", 16),
-                "num_layers": cfg.get("num_layers", 5),
-                "num_legendre_polys": cfg.get("num_legendre_polys", 10),
-                "grid_shape": tuple(cfg.get("grid_shape", [32, 32])),
-                "window_sizes": tuple(cfg.get("window_sizes", [4, 4])),
-                "shift_sizes": tuple(cfg.get("shift_sizes", [2, 2])),
-                "top_k_ctot": cfg.get("top_k_ctot", 9),
+    if int(os.environ.get("SLURM_PROCID", 0)) == 0:
+        torch.save(
+            {
+                "obs_mean": obs_mean,
+                "obs_std": obs_std,
+                "nwp_mean": nwp_mean,
+                "nwp_std": nwp_std,
+                "xc_grid_base": gen_train.xc_grid_latlon,
+                "obs_vars": obs_vars,
+                "dist_names": list(gen_train.dist_names),
+                "n_nwp": dim_gridded_y,
+                "nwp_stride": gen_train.nwp_stride,
+                "coord_fn_name": _coord_fn_name,
+                "model_kwargs": {
+                    "dim_y": dim_y,
+                    "dim_gridded_y": dim_gridded_y,
+                    "obs_variable_to_distribution": v2d,
+                    "embed_dim": cfg.get("embed_dim", 128),
+                    "x_embed_dim": cfg.get("x_embed_dim", 128),
+                    "num_heads": cfg.get("num_heads", 8),
+                    "head_dim": cfg.get("head_dim", 16),
+                    "num_layers": cfg.get("num_layers", 5),
+                    "num_legendre_polys": cfg.get("num_legendre_polys", 10),
+                    "grid_shape": tuple(cfg.get("grid_shape", [32, 32])),
+                    "window_sizes": tuple(cfg.get("window_sizes", [4, 4])),
+                    "shift_sizes": tuple(cfg.get("shift_sizes", [2, 2])),
+                    "top_k_ctot": cfg.get("top_k_ctot", 9),
+                },
             },
-        },
-        os.path.join(checkpoint_dir, "ootg_stats.pt"),
-    )
-    log.info("Saved config.yaml and ootg_stats.pt to %s", checkpoint_dir)
+            os.path.join(checkpoint_dir, "ootg_stats.pt"),
+        )
+        log.info("Saved config.yaml and ootg_stats.pt to %s", checkpoint_dir)
 
     enable_wandb = cfg.logging.get("enable_wandb", True)
     wandb_logger = (
@@ -161,10 +164,13 @@ def main(cfg: DictConfig) -> None:
         LearningRateMonitor(),
     ]
 
+    n_devices = cfg.get("devices", 1)
     trainer = pl.Trainer(
         max_epochs=cfg.get("epochs", 300), logger=wandb_logger, callbacks=callbacks,
         gradient_clip_val=cfg.get("gradient_clip_val", 0.5),
-        accelerator="auto", devices=1, check_val_every_n_epoch=10, log_every_n_steps=10,
+        accelerator="auto", devices=n_devices,
+        strategy="ddp" if n_devices > 1 else "auto",
+        check_val_every_n_epoch=10, log_every_n_steps=10,
         limit_train_batches=gen_train.num_batches, limit_val_batches=gen_val.num_batches,
         enable_progress_bar=True,
     )

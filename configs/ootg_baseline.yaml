@@ -31,3 +31,4 @@ top_k_ctot: 9              # context-to-token top-k in MHCAGridDecoder
 epochs: 300
 lr: 5e-4
 gradient_clip_val: 0.5
+devices: 4             # GPUs per node; set to 1 to disable DDP

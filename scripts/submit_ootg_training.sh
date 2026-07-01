@@ -15,12 +15,13 @@
 ### HARDWARE ###
 #SBATCH --partition=normal
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --mem=0
+#SBATCH --time=24:00:00
 #SBATCH --no-requeue
+#SBATCH --exclusive
 
 ### OUTPUT ###
 #SBATCH --output=slurm_logs/ootg_training/ootg_training_%j.log
