@@ -45,6 +45,7 @@ class OATOOTGDataGenerator(DataGenerator):
         nwp_stride: int = 10,
         samples_per_epoch: int = 10000,
         time_indices: np.ndarray | None = None,
+        output_transform=None,
         **kwargs,
     ) -> None:
         super().__init__(samples_per_epoch=samples_per_epoch, batch_size=1, **kwargs)
@@ -58,6 +59,7 @@ class OATOOTGDataGenerator(DataGenerator):
         self.dist_names = dist_names
         self.pc_context = pc_context
         self.nwp_stride = nwp_stride
+        self.output_transform = output_transform
         self.n_nwp = len(dataset.config.nwp_vars) + len(dataset.config.topo_vars)
         self._time_pool = (
             time_indices.tolist()
@@ -88,7 +90,7 @@ class OATOOTGDataGenerator(DataGenerator):
             idx = int(torch.randint(len(self.dataset), ()).item())
 
         sample = self.dataset[idx]
-        obs = sample["observation_data"]["obs"]        # (N, dim_y)
+        obs = sample["observation_data"]["obs"]  # (N, dim_y)
         mask = sample["observation_data"]["mask_obs"]  # (N, dim_y)
         coords = sample["observation_data"]["coords"]  # (N, 2)
         global_field = sample["global_data"]["global_field"]
@@ -97,14 +99,19 @@ class OATOOTGDataGenerator(DataGenerator):
         if valid.sum() < 4:
             return self._sample_once()
 
-        valid_obs = obs[valid].clone()     # (N_valid, dim_y)
+        valid_obs = obs[valid].clone()  # (N_valid, dim_y)
         valid_coords = coords[valid]
 
         # Standardize only Normal-distributed variables
-        for v, dn in enumerate(self.dist_names):
-            if dn == "normal":
-                valid_obs[:, v] = (valid_obs[:, v] - self.obs_mean[v]) / self.obs_std[v]
-            # ZILN: keep original non-negative values
+        if self.output_transform is not None:
+            valid_obs = self.output_transform(valid_obs)
+        else:
+            for v, dn in enumerate(self.dist_names):
+                if dn == "normal":
+                    valid_obs[:, v] = (
+                        valid_obs[:, v] - self.obs_mean[v]
+                    ) / self.obs_std[v]
+                # ZILN: keep original non-negative values
 
         n_valid = int(valid.sum().item())
         n_ctx = max(1, min(int(n_valid * self.pc_context), n_valid - 1))
@@ -117,9 +124,9 @@ class OATOOTGDataGenerator(DataGenerator):
         yt = valid_obs[tgt_idx]
 
         nwp_coarse = global_field[: self.n_nwp, :: self.nwp_stride, :: self.nwp_stride]
-        nwp_norm = (
-            nwp_coarse - self.nwp_mean[:, None, None]
-        ) / self.nwp_std[:, None, None]
+        nwp_norm = (nwp_coarse - self.nwp_mean[:, None, None]) / self.nwp_std[
+            :, None, None
+        ]
         yc_grid = nwp_norm.permute(1, 2, 0)
 
         return xc, yc, xt, yt, yc_grid
@@ -147,9 +154,15 @@ def compute_norm_stats(
     pool = (
         time_indices.tolist()
         if isinstance(time_indices, np.ndarray)
-        else (list(time_indices) if time_indices is not None else list(range(len(dataset))))
+        else (
+            list(time_indices)
+            if time_indices is not None
+            else list(range(len(dataset)))
+        )
     )
-    chosen = [pool[i] for i in torch.randperm(len(pool))[: min(n_samples, len(pool))].tolist()]
+    chosen = [
+        pool[i] for i in torch.randperm(len(pool))[: min(n_samples, len(pool))].tolist()
+    ]
 
     obs_vals: list[list[torch.Tensor]] = [[] for _ in range(n_obs)]
     nwp_vals: list[torch.Tensor] = []
@@ -192,6 +205,7 @@ def make_ootg_generator(
     nwp_std: torch.Tensor,
     nwp_stride: int | None = None,
     time_indices: np.ndarray | None = None,
+    output_transform=None,
     **kwargs,
 ) -> "OATOOTGDataGenerator":
     """Build OATOOTGDataGenerator for either COSMO or ERA5 dataset.
@@ -219,12 +233,15 @@ def make_ootg_generator(
 
     return OATOOTGDataGenerator(
         dataset=underlying_ds,
-        obs_mean=obs_mean, obs_std=obs_std,
-        nwp_mean=nwp_mean, nwp_std=nwp_std,
+        obs_mean=obs_mean,
+        obs_std=obs_std,
+        nwp_mean=nwp_mean,
+        nwp_std=nwp_std,
         xc_grid_latlon=xc_grid,
         coord_to_latlon=coord_fn,
         dist_names=dist_names,
         nwp_stride=stride,
         time_indices=time_indices,
+        output_transform=output_transform,
         **kwargs,
     )
