@@ -66,7 +66,7 @@ def _make_generator(n_stations=20, n_obs=1):
     ds = _make_mock_dataset(n_stations, n_obs=n_obs)
     obs_mean = torch.full((n_obs,), 280.0)
     obs_std = torch.full((n_obs,), 5.0)
-    nwp_mean, nwp_std = torch.zeros(2), torch.ones(2)
+    nwp_mean, nwp_std = torch.zeros(3), torch.ones(3)
     dist_names = ["normal"] if n_obs == 1 else ["normal", "zero_inflated_lognormal"]
     return OATOOTGDataGenerator(
         dataset=ds,
@@ -101,7 +101,7 @@ def test_batch_coordinate_dims_multivariate():
 def test_batch_grid_shapes():
     batch = _make_generator().generate_batch()
     assert batch.xc_grid.shape == (1, 10, 10, 2)
-    assert batch.yc_grid.shape == (1, 10, 10, 2)
+    assert batch.yc_grid.shape == (1, 10, 10, 3)
 
 
 def test_context_plus_target_equals_valid_stations():
@@ -134,7 +134,7 @@ def test_latlon_range():
 def test_time_indices_restricts_samples():
     ds = _make_mock_dataset()
     obs_mean, obs_std = torch.tensor([280.0]), torch.tensor([5.0])
-    nwp_mean, nwp_std = torch.zeros(2), torch.ones(2)
+    nwp_mean, nwp_std = torch.zeros(3), torch.ones(3)
     gen = OATOOTGDataGenerator(
         dataset=ds, obs_mean=obs_mean, obs_std=obs_std,
         nwp_mean=nwp_mean, nwp_std=nwp_std,
@@ -152,7 +152,7 @@ def test_compute_norm_stats_shapes():
     ds = _make_mock_dataset()
     om, os_, nm, ns = compute_norm_stats(ds, n_samples=10)
     assert om.shape == (1,) and os_.shape == (1,)
-    assert nm.shape == (2,) and ns.shape == (2,)
+    assert nm.shape == (3,) and ns.shape == (3,)
     assert os_.item() > 0 and (ns > 0).all()
 
 
@@ -165,7 +165,7 @@ def test_compute_norm_stats_multivariate():
 def test_make_ootg_generator_cosmo():
     ds = _make_mock_dataset()
     obs_mean, obs_std = torch.tensor([280.0]), torch.tensor([5.0])
-    nwp_mean, nwp_std = torch.zeros(2), torch.ones(2)
+    nwp_mean, nwp_std = torch.zeros(3), torch.ones(3)
     from unittest.mock import patch
     mock_ref = MagicMock()
     mock_ref.x.values = np.linspace(2255500.0, 2964500.0, 20)

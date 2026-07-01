@@ -63,9 +63,10 @@ def main(cfg: DictConfig) -> None:
 
     obs_vars = list(full_ds.config.obs_vars)
     nwp_vars = list(full_ds.config.nwp_vars)
+    topo_vars = list(full_ds.config.topo_vars)
     v2d = dict(full_ds.config.obs_variable_to_distribution)
-    dim_y, dim_gridded_y = len(obs_vars), len(nwp_vars)
-    log.info("obs_vars=%s  v2d=%s  nwp_vars=%s", obs_vars, v2d, nwp_vars)
+    dim_y, dim_gridded_y = len(obs_vars), len(nwp_vars) + len(topo_vars)
+    log.info("obs_vars=%s  v2d=%s  nwp_vars=%s  topo_vars=%s", obs_vars, v2d, nwp_vars, topo_vars)
 
     log.info("Computing normalization stats (n=%d)...", cfg.get("norm_samples", 500))
     obs_mean, obs_std, nwp_mean, nwp_std = compute_norm_stats(

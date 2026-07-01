@@ -58,7 +58,7 @@ class OATOOTGDataGenerator(DataGenerator):
         self.dist_names = dist_names
         self.pc_context = pc_context
         self.nwp_stride = nwp_stride
-        self.n_nwp = len(dataset.config.nwp_vars)
+        self.n_nwp = len(dataset.config.nwp_vars) + len(dataset.config.topo_vars)
         self._time_pool = (
             time_indices.tolist()
             if isinstance(time_indices, np.ndarray)
@@ -141,7 +141,7 @@ def compute_norm_stats(
         nwp_mean: (n_nwp,) per-channel mean
         nwp_std:  (n_nwp,) per-channel std, clamped >= 1e-6
     """
-    n_nwp = len(dataset.config.nwp_vars)
+    n_nwp = len(dataset.config.nwp_vars) + len(dataset.config.topo_vars)
     n_obs = len(dataset.config.obs_vars)
 
     pool = (
