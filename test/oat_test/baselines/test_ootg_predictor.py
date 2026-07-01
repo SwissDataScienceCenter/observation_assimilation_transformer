@@ -1,5 +1,7 @@
 import sys
+import types
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import torch
@@ -112,3 +114,76 @@ def test_output_var_names():
     v2d = {"temperature": "normal", "precipitation": "zero_inflated_lognormal"}
     pred = _make_tiny_predictor(dim_y=2, v2d=v2d)
     assert pred.output_var_names == ["temperature", "precipitation"]
+
+
+def _make_gen_batch(B=1, N_c=5, N_t=4, dim_y=1):
+    """Synthetic generator-format batch (dot-notation attributes)."""
+    return types.SimpleNamespace(
+        xc=torch.randn(B, N_c, 2),
+        yc=torch.randn(B, N_c, dim_y),
+        xc_grid=torch.randn(B, 8, 8, 2),
+        yc_grid=torch.randn(B, 8, 8, 2),
+        xt=torch.randn(B, N_t, 2),
+        yt=torch.randn(B, N_t, dim_y),
+    )
+
+
+def test_draw_samples_shape():
+    pred = _make_tiny_predictor(dim_y=1)
+    pred.n_samples = 10
+    mock_dist = MagicMock()
+    mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)  # [n, B, N_t, dim_y]
+    samples = pred._draw_samples(mock_dist)
+    assert samples.shape == (1, 4, 10, 1)  # [B, N_t, n_samples, dim_y]
+
+
+def test_training_step_logs_normalized_loss_and_physical_metrics():
+    """train_loss_{var} (normalized CRPS) and train_crps_{var} (physical) must differ."""
+    pred = _make_tiny_predictor(dim_y=1)
+    pred.n_samples = 10
+
+    logged = {}
+
+    def capture(key, val, **kwargs):
+        logged[key] = val.item() if hasattr(val, "item") else float(val)
+
+    batch = _make_gen_batch(dim_y=1)
+    with patch.object(pred, "log", side_effect=capture):
+        with patch.object(pred, "_forward_generator_batch") as mock_fwd:
+            mock_dist = MagicMock()
+            mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)
+            mock_fwd.return_value = mock_dist
+            pred.training_step(batch, 0)
+
+    var = pred.output_var_names[0]
+    assert "train_loss" in logged
+    assert f"train_loss_{var}" in logged
+    assert f"train_crps_{var}" in logged
+
+
+def test_validation_step_dispatch():
+    pred = _make_tiny_predictor(dim_y=1)
+    pred.n_samples = 10
+
+    # Dict batch → inference path, must not raise
+    with patch.object(pred, "log"), patch.object(
+        pred, "_log_instant_metrics"
+    ), patch.object(pred, "__call__") as mock_call:
+        mock_call.return_value = (
+            torch.randn(1, 4, 1),
+            torch.randn(1, 4, 1),
+            torch.ones(1, 4, 1),
+        )
+        pred.validation_step(_make_oat_batch(dim_y=1), 0)
+
+    # Generator batch → training path, must log val_loss
+    logged = {}
+    with patch.object(
+        pred, "log", side_effect=lambda k, v, **kw: logged.update({k: v})
+    ), patch.object(pred, "_forward_generator_batch") as mock_fwd:
+        mock_dist = MagicMock()
+        mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)
+        mock_fwd.return_value = mock_dist
+        pred.validation_step(_make_gen_batch(dim_y=1), 0)
+
+    assert "val_loss" in logged

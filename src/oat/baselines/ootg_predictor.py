@@ -18,8 +18,9 @@ from oat.baselines.coord_utils import (
     nwp_latlon_grid_from_latlon,
 )
 from oat.baselines.ootg_likelihood import JointMixedDistribution
+from oat.data_module.transform import Transform
 from oat.predictor_module.base_predictor import BasePredictor
-from oat.predictor_module.functional_metrics import point_mae
+from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
 class OOTGPredictor(BasePredictor):
@@ -38,15 +39,18 @@ class OOTGPredictor(BasePredictor):
         self,
         model: OOTGGriddedTNP,
         obs_vars: list[str],
-        obs_mean: torch.Tensor,      # (dim_y,)
-        obs_std: torch.Tensor,       # (dim_y,)
-        nwp_mean: torch.Tensor,      # (n_nwp,)
-        nwp_std: torch.Tensor,       # (n_nwp,)
+        obs_mean: torch.Tensor,  # (dim_y,)
+        obs_std: torch.Tensor,  # (dim_y,)
+        nwp_mean: torch.Tensor,  # (n_nwp,)
+        nwp_std: torch.Tensor,  # (n_nwp,)
         xc_grid_base: torch.Tensor,  # (H_c, W_c, 2)
         coord_to_latlon: Callable[[torch.Tensor], torch.Tensor],
         dist_names: list[str],
         n_nwp: int,
         nwp_stride: int,
+        output_transform: "Transform | None" = None,
+        lr: float = 5e-4,
+        n_samples: int = 50,
     ) -> None:
         super().__init__(output_var_names=obs_vars)
         self.model = model
@@ -59,23 +63,33 @@ class OOTGPredictor(BasePredictor):
         self.dist_names = dist_names
         self.n_nwp = n_nwp
         self.nwp_stride = nwp_stride
-        self.metrics_fn = {"point_mae": point_mae}
+        self.metrics_fn = {"point_mae": point_mae, "crps": mc_crps}
+        self.output_transform = output_transform
+        self.lr = lr
+        self.n_samples = n_samples
 
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         return batch
 
     def _build_yc(self, obs: torch.Tensor) -> torch.Tensor:
         """Apply per-variable normalization. Normal → standardize; ZILN → identity."""
-        yc = obs.clone()
-        om = self.obs_mean.to(obs.device)
-        os_ = self.obs_std.to(obs.device)
-        for v, dn in enumerate(self.dist_names):
-            if dn == "normal":
-                yc[:, v] = (yc[:, v] - om[v]) / os_[v]
-        return yc
+        yc_obs = obs.clone()
+        if self.output_transform is not None:
+            yc_obs = self.output_transform(yc_obs)
+        else:
+            # legacy path: manual loop using obs_mean / obs_std
+            om = self.obs_mean.to(obs.device)
+            os_ = self.obs_std.to(obs.device)
+            for v, dn in enumerate(self.dist_names):
+                if dn == "normal":
+                    yc_obs[:, v] = (yc_obs[:, v] - om[v]) / os_[v]
+        return yc_obs
 
     def _denormalize(self, mean: torch.Tensor) -> torch.Tensor:
         """Denormalize predictions: Normal vars → original units; ZILN → unchanged."""
+        if self.output_transform is not None:
+            return self.output_transform.inverse(mean)
+        # legacy path
         out = mean.clone()
         om = self.obs_mean.to(mean.device)
         os_ = self.obs_std.to(mean.device)
@@ -86,10 +100,10 @@ class OOTGPredictor(BasePredictor):
 
     def _dist_for_sample(
         self,
-        obs: torch.Tensor,           # (N_obs, dim_y)
-        mask: torch.Tensor,          # (N_obs, dim_y)
-        coords: torch.Tensor,        # (N_obs, 2) dataset CRS
-        q_coords: torch.Tensor,      # (N_q, 2) dataset CRS
+        obs: torch.Tensor,  # (N_obs, dim_y)
+        mask: torch.Tensor,  # (N_obs, dim_y)
+        coords: torch.Tensor,  # (N_obs, 2) dataset CRS
+        q_coords: torch.Tensor,  # (N_q, 2) dataset CRS
         global_field: torch.Tensor,  # (C_global, H, W)
     ) -> JointMixedDistribution:
         valid = mask.all(dim=-1).bool()
@@ -98,7 +112,9 @@ class OOTGPredictor(BasePredictor):
         if valid.sum() == 0:
             # No valid context: pass empty context tensors
             xc = torch.zeros(1, 0, 2, device=dev, dtype=global_field.dtype)
-            yc = torch.zeros(1, 0, len(self.output_var_names), device=dev, dtype=global_field.dtype)
+            yc = torch.zeros(
+                1, 0, len(self.output_var_names), device=dev, dtype=global_field.dtype
+            )
         else:
             xc = self.coord_to_latlon(coords[valid]).unsqueeze(0).to(dev)
             yc = self._build_yc(obs[valid]).unsqueeze(0).to(dev)
@@ -109,8 +125,10 @@ class OOTGPredictor(BasePredictor):
         nm = self.nwp_mean.to(dev)
         ns = self.nwp_std.to(dev)
         yc_grid = (
-            (nwp_c - nm[:, None, None]) / ns[:, None, None]
-        ).permute(1, 2, 0).unsqueeze(0)
+            ((nwp_c - nm[:, None, None]) / ns[:, None, None])
+            .permute(1, 2, 0)
+            .unsqueeze(0)
+        )
         xc_grid = self.xc_grid_base.to(dev).unsqueeze(0)
 
         return self.model(xc, yc, xc_grid, yc_grid, xt)
@@ -144,10 +162,86 @@ class OOTGPredictor(BasePredictor):
 
         return torch.stack(preds, dim=0), target_obs, target_mask
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> None:
-        y_pred, target_obs, target_mask = self(batch)
-        y_pred = y_pred.unsqueeze(-2)
-        self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="val")
+    def _forward_generator_batch(self, batch) -> "JointMixedDistribution":
+        return self.model(batch.xc, batch.yc, batch.xc_grid, batch.yc_grid, batch.xt)
+
+    def _draw_samples(self, dist: "JointMixedDistribution") -> torch.Tensor:
+        """Return [B, N, n_samples, dim_y] in normalized space."""
+        raw = dist.sample(torch.Size([self.n_samples]))  # [n_samples, B, N, dim_y]
+        return raw.permute(1, 2, 0, 3)
+
+    def training_step(self, batch, batch_idx) -> torch.Tensor:
+        dist = self._forward_generator_batch(batch)
+        samples_norm = self._draw_samples(dist)  # [B, N, n_samples, dim_y]
+        mask = torch.ones_like(batch.yt)
+
+        # Normalized CRPS — optimizer signal
+        per_var_crps = mc_crps(
+            batch.yt, samples_norm, mask, aggregation="variable"
+        )  # [dim_y]
+        for i, name in enumerate(self.output_var_names):
+            self.log(f"train_loss_{name}", per_var_crps[i], on_step=True, on_epoch=True)
+        loss = per_var_crps.mean()
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+
+        # Physical-space metrics — no gradient needed
+        with torch.no_grad():
+            samples_phys = self._denormalize(samples_norm)
+            yt_phys = self._denormalize(batch.yt)
+            self._log_instant_metrics(
+                samples_phys,
+                yt_phys,
+                mask,
+                prefix="train",
+                on_step=True,
+                on_epoch=True,
+            )
+        return loss
+
+    def validation_step(self, batch, batch_idx) -> None:
+        if isinstance(batch, dict):
+            # Inference path: dict-style batch from standard evaluation dataset
+            y_pred, target_obs, target_mask = self(batch)
+            y_pred = y_pred.unsqueeze(-2)
+            self._log_instant_metrics(
+                y_pred,
+                target_obs,
+                target_mask,
+                prefix="val",
+                on_step=False,
+                on_epoch=True,
+            )
+        else:
+            # Training path: generator batch (dot-notation attributes)
+            dist = self._forward_generator_batch(batch)
+            samples_norm = self._draw_samples(dist)
+            mask = torch.ones_like(batch.yt)
+
+            per_var_crps = mc_crps(batch.yt, samples_norm, mask, aggregation="variable")
+            for i, name in enumerate(self.output_var_names):
+                self.log(
+                    f"val_loss_{name}", per_var_crps[i], on_step=False, on_epoch=True
+                )
+            self.log(
+                "val_loss",
+                per_var_crps.mean(),
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+            )
+            samples_phys = self._denormalize(samples_norm)
+            yt_phys = self._denormalize(batch.yt)
+            self._log_instant_metrics(
+                samples_phys,
+                yt_phys,
+                mask,
+                prefix="val",
+                on_step=False,
+                on_epoch=True,
+            )
+
+    def configure_optimizers(self):
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def test_step(self, batch: dict[str, Any], batch_idx: int) -> None:
         y_pred, target_obs, target_mask = self(batch)
@@ -187,7 +281,9 @@ class OOTGPredictor(BasePredictor):
                 )
                 if n == 1:
                     # (1, Nq, dim_y) → squeeze batch → (Nq, dim_y) → unsqueeze sample dim
-                    s = self._denormalize(dist.mean.squeeze(0)).unsqueeze(-2)  # (Nq, 1, dim_y)
+                    s = self._denormalize(dist.mean.squeeze(0)).unsqueeze(
+                        -2
+                    )  # (Nq, 1, dim_y)
                 else:
                     # dist.sample(Size([n])) → (n, 1, Nq, dim_y): dist batch shape is (1, Nq)
                     # from the (1, Nq, params) decoder output; squeeze the singleton batch dim.
@@ -195,9 +291,9 @@ class OOTGPredictor(BasePredictor):
                     raw = raw.squeeze(-3) if raw.ndim == 4 else raw  # → (n, Nq, dim_y)
                     # raw: (n, Nq, dim_y) → permute → (Nq, n, dim_y)
                     raw = raw.permute(1, 0, 2)
-                    s = self._denormalize(raw)       # (Nq, n, dim_y)
+                    s = self._denormalize(raw)  # (Nq, n, dim_y)
                 all_samples.append(s)
-        return torch.stack(all_samples, dim=0)      # (B, Nq, n, dim_y)
+        return torch.stack(all_samples, dim=0)  # (B, Nq, n, dim_y)
 
     def _log_instant_metrics(
         self,
@@ -205,6 +301,8 @@ class OOTGPredictor(BasePredictor):
         y_true: torch.Tensor,
         mask: torch.Tensor,
         prefix: str = "",
+        on_step: bool = True,
+        on_epoch: bool = True,
     ) -> None:
         for metric_name, metric_fn in self.metrics_fn.items():
             vals = metric_fn(
@@ -218,8 +316,8 @@ class OOTGPredictor(BasePredictor):
                     f"{prefix}_{metric_name}_{self.indx_to_var[i]}",
                     val,
                     prog_bar=True,
-                    on_step=True,
-                    on_epoch=True,
+                    on_step=on_step,
+                    on_epoch=on_epoch,
                 )
 
 
@@ -231,6 +329,7 @@ def create_ootg_predictor(
     nwp_mean: torch.Tensor,
     nwp_std: torch.Tensor,
     nwp_stride: int | None = None,
+    output_transform: "Transform | None" = None,
 ) -> OOTGPredictor:
     """Build OOTGPredictor from a trained model and the underlying dataset."""
     import xarray as xr
@@ -265,4 +364,5 @@ def create_ootg_predictor(
         dist_names=dist_names,
         n_nwp=len(underlying_ds.config.nwp_vars),
         nwp_stride=stride,
+        output_transform=output_transform,
     )
