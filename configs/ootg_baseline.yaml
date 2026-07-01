@@ -33,3 +33,4 @@ lr: 5e-4
 gradient_clip_val: 0.5
 crps_mc_samples: 50    # MC samples for CRPS loss and metrics (must be >= 2)
 devices: 4             # GPUs per node; set to 1 to disable DDP
+transform_type: keep_support   # matches OAT; disables log-transform

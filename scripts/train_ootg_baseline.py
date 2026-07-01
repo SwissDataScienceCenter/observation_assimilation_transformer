@@ -20,87 +20,12 @@ from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
 from oat.baselines.ootg_generator import compute_norm_stats, make_ootg_generator
-from oat.baselines.ootg_likelihood import JointMixedDistribution
 from oat.baselines.ootg_model import build_ootg_model
+from oat.baselines.ootg_predictor import OOTGPredictor
 from oat.data_module.data_split import create_splits
 from oat.data_module.setup import _instantiate_dataset
-from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 log = logging.getLogger(__name__)
-
-
-class OOTGLitModule(pl.LightningModule):
-    def __init__(
-        self, model, obs_vars: list, lr: float = 5e-4, n_samples: int = 50
-    ) -> None:
-        super().__init__()
-        self.model = model
-        self.obs_vars = obs_vars
-        self.lr = lr
-        self.n_samples = n_samples
-
-    def forward(self, batch) -> JointMixedDistribution:
-        return self.model(batch.xc, batch.yc, batch.xc_grid, batch.yc_grid, batch.xt)
-
-    def _samples(self, dist: JointMixedDistribution) -> torch.Tensor:
-        """Sample dist n_samples times; returns [B, N, n_samples, dim_y]."""
-        raw = dist.sample(torch.Size([self.n_samples]))  # [n_samples, B, N, dim_y]
-        return raw.permute(1, 2, 0, 3)
-
-    def training_step(self, batch, batch_idx) -> torch.Tensor:
-        dist = self(batch)
-        samples = self._samples(dist)
-        mask = torch.ones_like(batch.yt)
-
-        per_var_crps = mc_crps(
-            batch.yt, samples, mask, aggregation="variable"
-        )  # [dim_y]
-        for i, name in enumerate(self.obs_vars):
-            self.log(f"train_loss_{name}", per_var_crps[i], on_step=True, on_epoch=True)
-        loss = per_var_crps.mean()
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-
-        with torch.no_grad():
-            per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
-            for i, name in enumerate(self.obs_vars):
-                self.log(
-                    f"train_point_mae_{name}",
-                    per_var_mae[i],
-                    on_step=True,
-                    on_epoch=True,
-                )
-                self.log(
-                    f"train_crps_{name}",
-                    per_var_crps[i].detach(),
-                    on_step=True,
-                    on_epoch=True,
-                )
-
-        return loss
-
-    def validation_step(self, batch, batch_idx) -> None:
-        dist = self(batch)
-        samples = self._samples(dist)
-        mask = torch.ones_like(batch.yt)
-
-        per_var_crps = mc_crps(
-            batch.yt, samples, mask, aggregation="variable"
-        )  # [dim_y]
-        for i, name in enumerate(self.obs_vars):
-            self.log(f"val_loss_{name}", per_var_crps[i], on_step=False, on_epoch=True)
-        self.log(
-            "val_loss", per_var_crps.mean(), on_step=False, on_epoch=True, prog_bar=True
-        )
-
-        per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
-        for i, name in enumerate(self.obs_vars):
-            self.log(
-                f"val_point_mae_{name}", per_var_mae[i], on_step=False, on_epoch=True
-            )
-            self.log(f"val_crps_{name}", per_var_crps[i], on_step=False, on_epoch=True)
-
-    def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
 
 @hydra.main(config_path="../configs", config_name="ootg_baseline", version_base="1.3")
@@ -132,6 +57,12 @@ def main(cfg: DictConfig) -> None:
     )
     log.info("obs_mean=%s  obs_std=%s", obs_mean.tolist(), obs_std.tolist())
 
+    _, output_transform = full_ds.get_transform(
+        num_data_points=cfg.get("norm_samples", 500),
+        data_indices=train_wrap._time_indices,
+        type=cfg.get("transform_type", "keep_support"),
+    )
+
     gen_train = make_ootg_generator(
         full_ds,
         obs_mean=obs_mean,
@@ -140,6 +71,7 @@ def main(cfg: DictConfig) -> None:
         nwp_std=nwp_std,
         nwp_stride=cfg.get("nwp_stride", None),
         time_indices=train_wrap._time_indices,
+        output_transform=output_transform,
         pc_context=cfg.get("pc_context", 0.8),
         samples_per_epoch=cfg.get("samples_per_epoch", 10000),
     )
@@ -151,6 +83,7 @@ def main(cfg: DictConfig) -> None:
         nwp_std=nwp_std,
         nwp_stride=cfg.get("nwp_stride", None),
         time_indices=val_wrap._time_indices,
+        output_transform=output_transform,
         samples_per_epoch=cfg.get("val_samples_per_epoch", 1000),
     )
 
@@ -261,13 +194,24 @@ def main(cfg: DictConfig) -> None:
         limit_val_batches=gen_val.num_batches,
         enable_progress_bar=True,
     )
+    predictor = OOTGPredictor(
+        model=model,
+        obs_vars=obs_vars,
+        obs_mean=obs_mean,
+        obs_std=obs_std,
+        nwp_mean=nwp_mean,
+        nwp_std=nwp_std,
+        xc_grid_base=gen_train.xc_grid_latlon,
+        coord_to_latlon=gen_train.coord_to_latlon,
+        dist_names=list(gen_train.dist_names),
+        n_nwp=dim_gridded_y,
+        nwp_stride=gen_train.nwp_stride,
+        output_transform=output_transform,
+        lr=cfg.get("lr", 5e-4),
+        n_samples=cfg.get("crps_mc_samples", 50),
+    )
     trainer.fit(
-        OOTGLitModule(
-            model,
-            obs_vars=obs_vars,
-            lr=cfg.get("lr", 5e-4),
-            n_samples=cfg.get("crps_mc_samples", 50),
-        ),
+        predictor,
         DataLoader(gen_train, batch_size=None, num_workers=0, pin_memory=True),
         DataLoader(gen_val, batch_size=None, num_workers=0, pin_memory=True),
     )
