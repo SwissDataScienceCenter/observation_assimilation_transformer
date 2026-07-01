@@ -23,31 +23,60 @@ from oat.baselines.ootg_likelihood import JointMixedDistribution
 from oat.baselines.ootg_model import build_ootg_model
 from oat.data_module.data_split import create_splits
 from oat.data_module.setup import _instantiate_dataset
+from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 log = logging.getLogger(__name__)
 
 
 class OOTGLitModule(pl.LightningModule):
-    def __init__(self, model, lr: float = 5e-4) -> None:
+    def __init__(self, model, obs_vars: list, lr: float = 5e-4, n_samples: int = 50) -> None:
         super().__init__()
         self.model = model
+        self.obs_vars = obs_vars
         self.lr = lr
+        self.n_samples = n_samples
 
     def forward(self, batch) -> JointMixedDistribution:
         return self.model(batch.xc, batch.yc, batch.xc_grid, batch.yc_grid, batch.xt)
 
+    def _samples(self, dist: JointMixedDistribution) -> torch.Tensor:
+        """Sample dist n_samples times; returns [B, N, n_samples, dim_y]."""
+        raw = dist.sample(torch.Size([self.n_samples]))  # [n_samples, B, N, dim_y]
+        return raw.permute(1, 2, 0, 3)
+
     def training_step(self, batch, batch_idx) -> torch.Tensor:
         dist = self(batch)
-        loss = -dist.log_prob(batch.yt).sum(-1).mean()
-        self.log("train/nll", loss, on_step=True, on_epoch=True, prog_bar=True)
+        samples = self._samples(dist)
+        mask = torch.ones_like(batch.yt)
+
+        per_var_crps = mc_crps(batch.yt, samples, mask, aggregation="variable")  # [dim_y]
+        for i, name in enumerate(self.obs_vars):
+            self.log(f"train_loss_{name}", per_var_crps[i], on_step=True, on_epoch=True)
+        loss = per_var_crps.mean()
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+
+        with torch.no_grad():
+            per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
+            for i, name in enumerate(self.obs_vars):
+                self.log(f"train_point_mae_{name}", per_var_mae[i], on_step=True, on_epoch=True)
+                self.log(f"train_crps_{name}", per_var_crps[i].detach(), on_step=True, on_epoch=True)
+
         return loss
 
     def validation_step(self, batch, batch_idx) -> None:
         dist = self(batch)
-        nll = -dist.log_prob(batch.yt).sum(-1).mean()
-        rmse = (dist.mean - batch.yt).pow(2).mean().sqrt()
-        self.log("val/nll", nll, on_epoch=True, prog_bar=True)
-        self.log("val/rmse", rmse, on_epoch=True)
+        samples = self._samples(dist)
+        mask = torch.ones_like(batch.yt)
+
+        per_var_crps = mc_crps(batch.yt, samples, mask, aggregation="variable")  # [dim_y]
+        for i, name in enumerate(self.obs_vars):
+            self.log(f"val_loss_{name}", per_var_crps[i], on_step=False, on_epoch=True)
+        self.log("val_loss", per_var_crps.mean(), on_step=False, on_epoch=True, prog_bar=True)
+
+        per_var_mae = point_mae(batch.yt, samples, mask, aggregation="variable")
+        for i, name in enumerate(self.obs_vars):
+            self.log(f"val_point_mae_{name}", per_var_mae[i], on_step=False, on_epoch=True)
+            self.log(f"val_crps_{name}", per_var_crps[i], on_step=False, on_epoch=True)
 
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
@@ -158,8 +187,8 @@ def main(cfg: DictConfig) -> None:
     callbacks = [
         ModelCheckpoint(
             dirpath=checkpoint_dir,
-            filename="epoch={epoch}-val_nll={val/nll:.4f}",
-            monitor="val/nll", mode="min", save_top_k=2,
+            filename="epoch={epoch}-val_loss={val_loss:.4f}",
+            monitor="val_loss", mode="min", save_top_k=2,
             auto_insert_metric_name=False,
         ),
         LearningRateMonitor(),
@@ -176,7 +205,7 @@ def main(cfg: DictConfig) -> None:
         enable_progress_bar=True,
     )
     trainer.fit(
-        OOTGLitModule(model, lr=cfg.get("lr", 5e-4)),
+        OOTGLitModule(model, obs_vars=obs_vars, lr=cfg.get("lr", 5e-4), n_samples=cfg.get("crps_mc_samples", 50)),
         DataLoader(gen_train, batch_size=None, num_workers=0, pin_memory=True),
         DataLoader(gen_val, batch_size=None, num_workers=0, pin_memory=True),
     )
