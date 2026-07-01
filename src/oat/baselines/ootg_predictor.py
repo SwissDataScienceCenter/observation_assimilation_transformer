@@ -229,17 +229,18 @@ class OOTGPredictor(BasePredictor):
                 on_epoch=True,
                 prog_bar=True,
             )
-            samples_norm = self._draw_samples(dist)
-            samples_phys = self._denormalize(samples_norm)
-            yt_phys = self._denormalize(batch.yt)
-            self._log_instant_metrics(
-                samples_phys,
-                yt_phys,
-                mask,
-                prefix="val",
-                on_step=False,
-                on_epoch=True,
-            )
+            with torch.no_grad():
+                samples_norm = self._draw_samples(dist)
+                samples_phys = self._denormalize(samples_norm)
+                yt_phys = self._denormalize(batch.yt)
+                self._log_instant_metrics(
+                    samples_phys,
+                    yt_phys,
+                    mask,
+                    prefix="val",
+                    on_step=False,
+                    on_epoch=True,
+                )
 
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)

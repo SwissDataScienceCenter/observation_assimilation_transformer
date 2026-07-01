@@ -209,6 +209,13 @@ def test_validation_step_dispatch():
 def test_training_step_loss_has_grad():
     """Verify training_step loss has grad_fn (gradient flows through model)."""
     pred = _make_tiny_predictor(dim_y=1)
+    pred.n_samples = 10
     batch = _make_gen_batch(dim_y=1)
-    loss = pred.training_step(batch, 0)
+    with patch.object(pred, "log"):
+        with patch.object(pred, "_forward_generator_batch") as mock_fwd:
+            mock_dist = MagicMock()
+            mock_dist.crps.return_value = torch.randn(1, 4, 1, requires_grad=True)
+            mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)
+            mock_fwd.return_value = mock_dist
+            loss = pred.training_step(batch, 0)
     assert loss.grad_fn is not None, "training_step loss must be differentiable"
