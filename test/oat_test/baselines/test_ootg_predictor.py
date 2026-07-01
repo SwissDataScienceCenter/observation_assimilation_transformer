@@ -19,18 +19,28 @@ def _make_tiny_predictor(dim_y=1, dim_gridded_y=2, v2d=None):
     if v2d is None:
         v2d = {"temperature": "normal"}
     model = build_ootg_model(
-        dim_y=dim_y, dim_gridded_y=dim_gridded_y, obs_variable_to_distribution=v2d,
-        embed_dim=32, x_embed_dim=32, num_heads=2, head_dim=8,
-        num_layers=2, num_legendre_polys=4, grid_shape=(8, 8),
-        window_sizes=(4, 4), shift_sizes=(2, 2), top_k_ctot=4,
+        dim_y=dim_y,
+        dim_gridded_y=dim_gridded_y,
+        obs_variable_to_distribution=v2d,
+        embed_dim=32,
+        x_embed_dim=32,
+        num_heads=2,
+        head_dim=8,
+        num_layers=2,
+        num_legendre_polys=4,
+        grid_shape=(8, 8),
+        window_sizes=(4, 4),
+        shift_sizes=(2, 2),
+        top_k_ctot=4,
     )
     ref_x = np.linspace(2255500.0, 2964500.0, 80)
     ref_y = np.linspace(840500.0, 1479500.0, 80)
-    xc_grid = nwp_latlon_grid(ref_x, ref_y, stride=10)   # (8, 8, 2)
+    xc_grid = nwp_latlon_grid(ref_x, ref_y, stride=10)  # (8, 8, 2)
     obs_vars = list(v2d.keys())
     dist_names = list(v2d.values())
     return OOTGPredictor(
-        model=model, obs_vars=obs_vars,
+        model=model,
+        obs_vars=obs_vars,
         obs_mean=torch.full((dim_y,), 280.0),
         obs_std=torch.full((dim_y,), 5.0),
         nwp_mean=torch.zeros(dim_gridded_y),
@@ -91,7 +101,9 @@ def test_precipitation_non_negative():
     v2d = {"temperature": "normal", "precipitation": "zero_inflated_lognormal"}
     pred = _make_tiny_predictor(dim_y=2, dim_gridded_y=4, v2d=v2d)
     # sample many times to check ZILN samples are non-negative
-    out = pred.predict_step(_make_oat_batch(B=1, N_q=5, dim_y=2, n_nwp=4), 0, n_samples=20)
+    out = pred.predict_step(
+        _make_oat_batch(B=1, N_q=5, dim_y=2, n_nwp=4), 0, n_samples=20
+    )
     assert (out[..., 1] >= 0).all(), "ZILN samples must be non-negative"
 
 
@@ -151,6 +163,7 @@ def test_training_step_logs_normalized_loss_and_physical_metrics():
     with patch.object(pred, "log", side_effect=capture):
         with patch.object(pred, "_forward_generator_batch") as mock_fwd:
             mock_dist = MagicMock()
+            mock_dist.crps.return_value = torch.randn(1, 4, 1)
             mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)
             mock_fwd.return_value = mock_dist
             pred.training_step(batch, 0)
@@ -166,9 +179,11 @@ def test_validation_step_dispatch():
     pred.n_samples = 10
 
     # Dict batch → inference path, must not raise
-    with patch.object(pred, "log"), patch.object(
-        pred, "_log_instant_metrics"
-    ), patch.object(pred, "__call__") as mock_call:
+    with (
+        patch.object(pred, "log"),
+        patch.object(pred, "_log_instant_metrics"),
+        patch.object(pred, "__call__") as mock_call,
+    ):
         mock_call.return_value = (
             torch.randn(1, 4, 1),
             torch.randn(1, 4, 1),
@@ -178,12 +193,22 @@ def test_validation_step_dispatch():
 
     # Generator batch → training path, must log val_loss
     logged = {}
-    with patch.object(
-        pred, "log", side_effect=lambda k, v, **kw: logged.update({k: v})
-    ), patch.object(pred, "_forward_generator_batch") as mock_fwd:
+    with (
+        patch.object(pred, "log", side_effect=lambda k, v, **kw: logged.update({k: v})),
+        patch.object(pred, "_forward_generator_batch") as mock_fwd,
+    ):
         mock_dist = MagicMock()
+        mock_dist.crps.return_value = torch.randn(1, 4, 1)
         mock_dist.sample.return_value = torch.randn(10, 1, 4, 1)
         mock_fwd.return_value = mock_dist
         pred.validation_step(_make_gen_batch(dim_y=1), 0)
 
     assert "val_loss" in logged
+
+
+def test_training_step_loss_has_grad():
+    """Verify training_step loss has grad_fn (gradient flows through model)."""
+    pred = _make_tiny_predictor(dim_y=1)
+    batch = _make_gen_batch(dim_y=1)
+    loss = pred.training_step(batch, 0)
+    assert loss.grad_fn is not None, "training_step loss must be differentiable"

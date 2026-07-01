@@ -172,13 +172,11 @@ class OOTGPredictor(BasePredictor):
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:
         dist = self._forward_generator_batch(batch)
-        samples_norm = self._draw_samples(dist)  # [B, N, n_samples, dim_y]
         mask = torch.ones_like(batch.yt)
 
-        # Normalized CRPS — optimizer signal
-        per_var_crps = mc_crps(
-            batch.yt, samples_norm, mask, aggregation="variable"
-        )  # [dim_y]
+        # Normalized analytical CRPS — differentiable optimizer signal
+        crps_norm = dist.crps(batch.yt)  # [B, N, dim_y]
+        per_var_crps = (crps_norm * mask).mean(dim=(0, 1))  # [dim_y]
         for i, name in enumerate(self.output_var_names):
             self.log(f"train_loss_{name}", per_var_crps[i], on_step=True, on_epoch=True)
         loss = per_var_crps.mean()
@@ -186,6 +184,7 @@ class OOTGPredictor(BasePredictor):
 
         # Physical-space metrics — no gradient needed
         with torch.no_grad():
+            samples_norm = self._draw_samples(dist)
             samples_phys = self._denormalize(samples_norm)
             yt_phys = self._denormalize(batch.yt)
             self._log_instant_metrics(
@@ -214,10 +213,11 @@ class OOTGPredictor(BasePredictor):
         else:
             # Training path: generator batch (dot-notation attributes)
             dist = self._forward_generator_batch(batch)
-            samples_norm = self._draw_samples(dist)
             mask = torch.ones_like(batch.yt)
 
-            per_var_crps = mc_crps(batch.yt, samples_norm, mask, aggregation="variable")
+            # Normalized analytical CRPS — consistent with training_step
+            crps_norm = dist.crps(batch.yt)  # [B, N, dim_y]
+            per_var_crps = (crps_norm * mask).mean(dim=(0, 1))  # [dim_y]
             for i, name in enumerate(self.output_var_names):
                 self.log(
                     f"val_loss_{name}", per_var_crps[i], on_step=False, on_epoch=True
@@ -229,6 +229,7 @@ class OOTGPredictor(BasePredictor):
                 on_epoch=True,
                 prog_bar=True,
             )
+            samples_norm = self._draw_samples(dist)
             samples_phys = self._denormalize(samples_norm)
             yt_phys = self._denormalize(batch.yt)
             self._log_instant_metrics(

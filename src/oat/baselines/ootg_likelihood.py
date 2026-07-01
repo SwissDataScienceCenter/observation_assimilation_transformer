@@ -7,8 +7,8 @@ from torch.distributions import transform_to
 from oat.model_module.distributions import NormalOAT, ZeroInflatedLogNormal
 
 DIST_PARAM_COUNTS: dict[str, int] = {
-    "normal": 2,                    # loc, scale
-    "zero_inflated_lognormal": 3,   # gate, loc, scale
+    "normal": 2,  # loc, scale
+    "zero_inflated_lognormal": 3,  # gate, loc, scale
 }
 
 _DIST_CLASSES = {
@@ -52,8 +52,20 @@ class JointMixedDistribution:
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Sample each variable independently; returns (..., dim_y)."""
+        return torch.stack([d.sample(sample_shape) for d in self.dists], dim=-1)
+
+    def crps(self, targets: torch.Tensor) -> torch.Tensor:
+        """Analytical per-variable CRPS with gradients.
+
+        Args:
+            targets: (..., dim_y) tensor, variables in the same order as self.dists
+
+        Returns:
+            (..., dim_y) CRPS values; the returned tensor has a grad_fn so that
+            loss.backward() flows through model parameters.
+        """
         return torch.stack(
-            [d.sample(sample_shape) for d in self.dists], dim=-1
+            [d.crps(targets[..., i]) for i, d in enumerate(self.dists)], dim=-1
         )
 
 
@@ -96,9 +108,7 @@ class MixedVariableLikelihood(nn.Module):
         for dist_class, n in zip(self.dist_classes, self.param_counts):
             raw = x[..., offset : offset + n]
             params = {}
-            for i, (pname, constraint) in enumerate(
-                dist_class.arg_constraints.items()
-            ):
+            for i, (pname, constraint) in enumerate(dist_class.arg_constraints.items()):
                 params[pname] = transform_to(constraint)(raw[..., i])
             dists.append(dist_class(**params))
             offset += n
