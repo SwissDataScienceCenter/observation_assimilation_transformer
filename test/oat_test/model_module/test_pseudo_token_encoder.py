@@ -1,6 +1,8 @@
 import pytest
 import torch
+from types import SimpleNamespace
 
+from oat.model_module import global_encoder as ge_mod
 from oat.model_module.global_encoder import PseudoTokenGridGlobalEncoder
 
 FIELD_EXTENT = {
@@ -90,3 +92,29 @@ def test_window_must_divide_grid() -> None:
             top_k_grid=4,
             top_k_readout=4,
         )
+
+
+def test_init_dispatch_builds_pseudo_token_encoder() -> None:
+    from oat.model_module.model import UninformedOAT
+
+    ge_cfg = SimpleNamespace(
+        type="PseudoTokenGrid",
+        in_channels=3,
+        out_channels=4,
+        field_extent_min=(45.0, 5.0),
+        field_extent_max=(49.0, 11.0),
+        embed_dim=16,
+        num_heads=2,
+        n_layers=1,
+        grid_shape=(8, 8),
+        window_sizes=(4, 4),
+        shift_sizes=(2, 2),
+        top_k_grid=4,
+        top_k_readout=4,
+        geo_bias_hidden_dim=16,
+    )
+    cfg = SimpleNamespace(global_encoder=ge_cfg)
+    enc = UninformedOAT._init_global_encoder(
+        UninformedOAT.__new__(UninformedOAT), cfg
+    )
+    assert isinstance(enc, ge_mod.PseudoTokenGridGlobalEncoder)

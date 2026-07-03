@@ -1,0 +1,18 @@
+type: PseudoTokenGrid
+# in_channels, field_extent_min, field_extent_max set by data
+# out_channels derived from d_model at runtime (as for other encoders)
+embed_dim: 128
+num_heads: 8
+n_layers: 5
+grid_shape:
+  - 32
+  - 32
+window_sizes:
+  - 4
+  - 4
+shift_sizes:
+  - 2
+  - 2
+top_k_grid: 9
+top_k_readout: 9
+geo_bias_hidden_dim: 64

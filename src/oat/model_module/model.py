@@ -29,6 +29,15 @@ class GlobalEncoderConfig:
     field_extent_max: Tuple[float, float] #= (2964500., 1479500.)   # data dependent
     type: str = "UNet"
     out_channels: int = 32
+    embed_dim: int = 128
+    num_heads: int = 8
+    n_layers: int = 5
+    grid_shape: Tuple[int, int] = (32, 32)
+    window_sizes: Tuple[int, int] = (4, 4)
+    shift_sizes: Tuple[int, int] = (2, 2)
+    top_k_grid: int = 9
+    top_k_readout: int = 9
+    geo_bias_hidden_dim: int = 64
     spatial_dims: int = 2
     patch_size: int = 2
     window_size: int = 7
@@ -290,8 +299,30 @@ class UninformedOAT(nn.Module):
                     'max': torch.tensor(config.global_encoder.field_extent_max)
                 }
             )
+        elif config.global_encoder.type == "PseudoTokenGrid":
+            return global_encoder.PseudoTokenGridGlobalEncoder(
+                in_channels=config.global_encoder.in_channels,
+                out_channels=config.global_encoder.out_channels,
+                field_extent={
+                    "min": torch.tensor(config.global_encoder.field_extent_min),
+                    "max": torch.tensor(config.global_encoder.field_extent_max),
+                },
+                embed_dim=config.global_encoder.embed_dim,
+                num_heads=config.global_encoder.num_heads,
+                n_layers=config.global_encoder.n_layers,
+                grid_shape=tuple(config.global_encoder.grid_shape),
+                window_sizes=tuple(config.global_encoder.window_sizes),
+                shift_sizes=tuple(config.global_encoder.shift_sizes),
+                top_k_grid=config.global_encoder.top_k_grid,
+                top_k_readout=config.global_encoder.top_k_readout,
+                geo_bias_hidden_dim=config.global_encoder.geo_bias_hidden_dim,
+            )
         
-        raise ValueError(f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', and 'ResNetCNN'.")
+        raise ValueError(
+            "Unsupported global encoder type: "
+            f"{config.global_encoder.type}. Supported types are 'UNet', "
+            "'SwinUNETR', 'MLP', 'ResNetCNN', and 'PseudoTokenGrid'."
+        )
     
     def _init_output_head(self, config):
         
