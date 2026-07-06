@@ -12,6 +12,7 @@ import os
 from datetime import datetime
 
 import hydra
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -31,10 +32,18 @@ log = logging.getLogger(__name__)
 @hydra.main(config_path="../configs", config_name="ootg_baseline", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
+    # Seed so the random train/val station partition (create_splits uses the
+    # global RNG) is identical across runs — required for a valid ablation
+    # comparison where only the information regime should differ. Default 42
+    # matches OAT (configs/config.yaml) so OOTG and OAT share the split.
+    torch.manual_seed(cfg.get("seed", 42))
     log.info("Loading dataset...")
     full_ds = _instantiate_dataset(cfg)
     splits = create_splits(full_ds, **cfg.split, logger=log)
     train_wrap, val_wrap, _ = splits["datasets"]
+    train_station_indices, val_station_indices, _ = splits["station_indices"]
+    train_station_indices = np.array(train_station_indices)
+    val_station_indices = np.array(val_station_indices)
 
     obs_vars = list(full_ds.config.obs_vars)
     nwp_vars = list(full_ds.config.nwp_vars)
@@ -57,11 +66,41 @@ def main(cfg: DictConfig) -> None:
     )
     log.info("obs_mean=%s  obs_std=%s", obs_mean.tolist(), obs_std.tolist())
 
-    _, output_transform = full_ds.get_transform(
+    post_transform, output_transform = full_ds.get_transform(
         num_data_points=cfg.get("norm_samples", 500),
         data_indices=train_wrap._time_indices,
         type=cfg.get("transform_type", "keep_support"),
     )
+
+    use_topo = cfg.get("use_topo", False)
+    topo_transform = None
+    topo_in_channels = None
+    topo_initial_hw = None
+    if use_topo:
+        topo_transform = post_transform.transform_dict[
+            "observation_data"
+        ].transform_dict["topo"]
+        # Derive patch geometry from an actual sample (dataset-agnostic).
+        sample_topo = full_ds[int(train_wrap._time_indices[0])]["observation_data"][
+            "topo"
+        ]
+        topo_in_channels = sample_topo.shape[-3]
+        topo_initial_hw = (sample_topo.shape[-2], sample_topo.shape[-1])
+        log.info(
+            "use_topo=True  C_topo=%d  patch_hw=%s",
+            topo_in_channels,
+            topo_initial_hw,
+        )
+
+    # Ablations for H2 (NWP-grid) vs H3 (observation-assimilation) diagnosis.
+    # Applied to BOTH train and val generators so the model is trained and
+    # scored under the same information regime.
+    ablate_obs = cfg.get("ablate_obs", False)
+    ablate_grid = cfg.get("ablate_grid", False)
+    if ablate_obs and ablate_grid:
+        raise ValueError("ablate_obs and ablate_grid together leave no signal.")
+    if ablate_obs or ablate_grid:
+        log.info("ABLATION active: ablate_obs=%s ablate_grid=%s", ablate_obs, ablate_grid)
 
     gen_train = make_ootg_generator(
         full_ds,
@@ -74,6 +113,10 @@ def main(cfg: DictConfig) -> None:
         output_transform=output_transform,
         pc_context=cfg.get("pc_context", 0.8),
         samples_per_epoch=cfg.get("samples_per_epoch", 10000),
+        eligible_station_indices=train_station_indices,
+        ablate_obs=ablate_obs,
+        ablate_grid=ablate_grid,
+        topo_transform=topo_transform,
     )
     gen_val = make_ootg_generator(
         full_ds,
@@ -85,6 +128,11 @@ def main(cfg: DictConfig) -> None:
         time_indices=val_wrap._time_indices,
         output_transform=output_transform,
         samples_per_epoch=cfg.get("val_samples_per_epoch", 1000),
+        context_station_indices=train_station_indices,
+        target_station_indices=val_station_indices,
+        ablate_obs=ablate_obs,
+        ablate_grid=ablate_grid,
+        topo_transform=topo_transform,
     )
 
     model = build_ootg_model(
@@ -101,13 +149,22 @@ def main(cfg: DictConfig) -> None:
         window_sizes=tuple(cfg.get("window_sizes", [4, 4])),
         shift_sizes=tuple(cfg.get("shift_sizes", [2, 2])),
         top_k_ctot=cfg.get("top_k_ctot", 9),
+        use_topo=use_topo,
+        topo_in_channels=topo_in_channels,
+        topo_out_channels=cfg.get("topo_out_channels", 32),
+        topo_n_layers=cfg.get("topo_n_layers", 3),
+        topo_kernel_size=cfg.get("topo_kernel_size", 3),
+        topo_initial_hw=topo_initial_hw,
     )
     log.info("Parameters: %.1fM", sum(p.numel() for p in model.parameters()) / 1e6)
 
     now_str = datetime.now().strftime("%Y%m%d")
     job_id = os.environ.get("SLURM_JOB_ID", "local")
+    ablation_tag = (
+        "_nwponly" if ablate_obs else "_obsonly" if ablate_grid else ""
+    )
     dataset_tag = f"{full_ds.config.dataset_type}_{'_'.join(obs_vars)}"
-    run_name = f"ootg-baseline_{dataset_tag}_{now_str}_job{job_id}"
+    run_name = f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
     group = cfg.logging.get("group", "ootg_baseline")
 
     checkpoint_dir = f"checkpoints/{group}/{run_name}"
@@ -138,6 +195,9 @@ def main(cfg: DictConfig) -> None:
                 "output_transform": (
                     output_transform.to_dict() if output_transform is not None else None
                 ),
+                "topo_transform": (
+                    topo_transform.to_dict() if topo_transform is not None else None
+                ),
                 "model_kwargs": {
                     "dim_y": dim_y,
                     "dim_gridded_y": dim_gridded_y,
@@ -152,6 +212,12 @@ def main(cfg: DictConfig) -> None:
                     "window_sizes": tuple(cfg.get("window_sizes", [4, 4])),
                     "shift_sizes": tuple(cfg.get("shift_sizes", [2, 2])),
                     "top_k_ctot": cfg.get("top_k_ctot", 9),
+                    "use_topo": use_topo,
+                    "topo_in_channels": topo_in_channels,
+                    "topo_out_channels": cfg.get("topo_out_channels", 32),
+                    "topo_n_layers": cfg.get("topo_n_layers", 3),
+                    "topo_kernel_size": cfg.get("topo_kernel_size", 3),
+                    "topo_initial_hw": topo_initial_hw,
                 },
             },
             os.path.join(checkpoint_dir, "ootg_stats.pt"),
@@ -191,7 +257,7 @@ def main(cfg: DictConfig) -> None:
         accelerator="auto",
         devices=n_devices,
         strategy="ddp" if n_devices > 1 else "auto",
-        check_val_every_n_epoch=10,
+        check_val_every_n_epoch=cfg.get("check_val_every_n_epoch", 10),
         log_every_n_steps=10,
         limit_train_batches=gen_train.num_batches,
         limit_val_batches=gen_val.num_batches,
@@ -212,6 +278,8 @@ def main(cfg: DictConfig) -> None:
         output_transform=output_transform,
         lr=cfg.get("lr", 5e-4),
         n_samples=cfg.get("crps_mc_samples", 50),
+        use_topo=use_topo,
+        topo_transform=topo_transform,
     )
     trainer.fit(
         predictor,
