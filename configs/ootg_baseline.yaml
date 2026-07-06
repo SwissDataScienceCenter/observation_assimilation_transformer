@@ -41,4 +41,4 @@ transform_type: keep_support   # matches OAT; disables log-transform
 use_topo: false
 topo_out_channels: 32
 topo_n_layers: 3
-topo_kernel_size: 3
+topo_kernel_size: 1
