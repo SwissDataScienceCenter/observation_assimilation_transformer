@@ -22,7 +22,7 @@ num_heads: 8
 head_dim: 16
 num_layers: 5
 num_legendre_polys: 10
-grid_shape: [32, 32]       # pseudo-token grid
+grid_shape: [128, 128]       # pseudo-token grid
 window_sizes: [4, 4]       # SWIN attention window (must divide grid_shape evenly)
 shift_sizes: [2, 2]
 top_k_ctot: 9              # context-to-token top-k in MHCAGridDecoder
