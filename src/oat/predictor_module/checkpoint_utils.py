@@ -71,6 +71,12 @@ def _load_ootg_predictor(
     coord_fn = (
         lv95_to_latlon if stats["coord_fn_name"] == "lv95_to_latlon" else lonlat_swap
     )
+
+    use_topo = stats["model_kwargs"].get("use_topo", False)
+    topo_transform = None
+    if use_topo and stats.get("topo_transform") is not None:
+        topo_transform = Transform.from_dict(stats["topo_transform"])
+
     predictor = OOTGPredictor(
         model=model,
         obs_vars=stats["obs_vars"],
@@ -84,6 +90,8 @@ def _load_ootg_predictor(
         n_nwp=stats["n_nwp"],
         nwp_stride=stats["nwp_stride"],
         output_transform=output_transform,
+        use_topo=use_topo,
+        topo_transform=topo_transform,
     )
     return predictor, cfg
 
