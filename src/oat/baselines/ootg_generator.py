@@ -190,7 +190,14 @@ class OATOOTGDataGenerator(DataGenerator):
         topo_valid = None
         if self.topo_transform is not None:
             topo_all = sample["observation_data"]["topo"]  # (N, C_topo, Hp, Wp)
-            topo_valid = self.topo_transform(topo_all[combined_valid])
+            # topo_transform may share buffers with OOTGPredictor, which Lightning
+            # moves to GPU; bring sel to the transform's device then back to CPU.
+            sel = topo_all[combined_valid]
+            buf = next(self.topo_transform.buffers(), None)
+            src_dev = sel.device
+            topo_valid = self.topo_transform(
+                sel.to(buf.device) if buf is not None else sel
+            ).to(src_dev)
 
         # Standardize only Normal-distributed variables
         if self.output_transform is not None:

@@ -34,7 +34,9 @@ class TopoOOTGGriddedTNPEncoder(OOTGGriddedTNPEncoder):
     xy_encoder. All other behavior is identical to the parent.
     """
 
-    def __init__(self, *args: Any, topo_encoder: CNNTopographyEncoder, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, topo_encoder: CNNTopographyEncoder, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.topo_encoder = topo_encoder
 
@@ -46,7 +48,16 @@ class TopoOOTGGriddedTNPEncoder(OOTGGriddedTNPEncoder):
             return topo.new_zeros(*topo.shape[:2], self.topo_encoder.out_channels)
         return self.topo_encoder(topo)
 
-    def forward(self, xc: torch.Tensor, yc: torch.Tensor, xc_grid: torch.Tensor, yc_grid: torch.Tensor, xt: torch.Tensor, topo_c: torch.Tensor, topo_t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        xc: torch.Tensor,
+        yc: torch.Tensor,
+        xc_grid: torch.Tensor,
+        yc_grid: torch.Tensor,
+        xt: torch.Tensor,
+        topo_c: torch.Tensor,
+        topo_t: torch.Tensor,
+    ) -> torch.Tensor:
         yc, yt = preprocess_observations(xt, yc)
 
         x = torch.cat((xc, xt), dim=1)
@@ -80,7 +91,16 @@ class TopoOOTGGriddedTNPEncoder(OOTGGriddedTNPEncoder):
 class TopoOOTGGriddedTNP(OOTGGriddedTNP):
     """OOTGGriddedTNP whose forward threads topo_c/topo_t to the encoder."""
 
-    def forward(self, xc: torch.Tensor, yc: torch.Tensor, xc_grid: torch.Tensor, yc_grid: torch.Tensor, xt: torch.Tensor, topo_c: torch.Tensor, topo_t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        xc: torch.Tensor,
+        yc: torch.Tensor,
+        xc_grid: torch.Tensor,
+        yc_grid: torch.Tensor,
+        xt: torch.Tensor,
+        topo_c: torch.Tensor,
+        topo_t: torch.Tensor,
+    ) -> torch.Tensor:
         return self.likelihood(
             self.decoder(self.encoder(xc, yc, xc_grid, yc_grid, xt, topo_c, topo_t), xt)
         )
@@ -221,8 +241,6 @@ def build_ootg_model(
         x_encoder=x_enc,
     )
     decoder = TNPDecoder(
-        z_decoder=MLP(
-            in_dim=embed_dim, out_dim=out_dim, num_layers=2, width=embed_dim
-        )
+        z_decoder=MLP(in_dim=embed_dim, out_dim=out_dim, num_layers=2, width=embed_dim)
     )
     return OOTGGriddedTNP(encoder=encoder, decoder=decoder, likelihood=likelihood)
