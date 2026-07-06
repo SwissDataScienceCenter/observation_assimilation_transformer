@@ -16,9 +16,11 @@ from tnp.data.base import OOTGBatch
 from oat.baselines.coord_utils import lv95_to_latlon, nwp_latlon_grid
 from oat.baselines.ootg_generator import (
     OATOOTGDataGenerator,
+    OOTGTopoBatch,
     compute_norm_stats,
     make_ootg_generator,
 )
+from oat.data_module.transform import StandardNormalizeTransform
 
 
 # --- helpers -----------------------------------------------------------
@@ -77,6 +79,41 @@ def _make_generator(n_stations=20, n_obs=1):
         dist_names=dist_names,
         nwp_stride=2,
         samples_per_epoch=10,
+    )
+
+
+C_TOPO, HP, WP = 3, 16, 16
+
+
+def _add_topo_to_dataset(ds, n_stations, c_topo=C_TOPO, hp=HP, wp=WP):
+    """Attach a topo patch tensor to the mock dataset's returned sample."""
+    sample = ds.__getitem__.return_value
+    sample["observation_data"]["topo"] = torch.randn(n_stations, c_topo, hp, wp)
+    return ds
+
+
+def _topo_transform(c_topo=C_TOPO):
+    return StandardNormalizeTransform(
+        mean=torch.zeros(c_topo), std=torch.ones(c_topo), channel_dim=-3
+    )
+
+
+def _make_topo_generator(n_stations=20, n_obs=1):
+    ds = _add_topo_to_dataset(_make_mock_dataset(n_stations, n_obs=n_obs), n_stations)
+    obs_mean = torch.full((n_obs,), 280.0)
+    obs_std = torch.full((n_obs,), 5.0)
+    nwp_mean, nwp_std = torch.zeros(3), torch.ones(3)
+    dist_names = ["normal"] if n_obs == 1 else ["normal", "zero_inflated_lognormal"]
+    return OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=obs_mean, obs_std=obs_std,
+        nwp_mean=nwp_mean, nwp_std=nwp_std,
+        xc_grid_latlon=_xc_grid(),
+        coord_to_latlon=lv95_to_latlon,
+        dist_names=dist_names,
+        nwp_stride=2,
+        samples_per_epoch=10,
+        topo_transform=_topo_transform(),
     )
 
 
@@ -148,6 +185,131 @@ def test_time_indices_restricts_samples():
     assert ds.__getitem__.call_args[0][0] in [0, 1, 2]
 
 
+def test_eligible_station_indices_restricts_pool():
+    ds = _make_mock_dataset(n_stations=20)
+    ds.__getitem__.return_value["observation_data"]["mask_obs"][:] = 1.0
+    eligible = np.array([0, 1, 2, 3, 4])
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        eligible_station_indices=eligible,
+    )
+    for _ in range(20):
+        batch = gen.generate_batch()
+        assert batch.xc.shape[1] + batch.xt.shape[1] <= len(eligible)
+
+
+def test_context_target_station_indices_fixed_roles():
+    ds = _make_mock_dataset(n_stations=20)
+    ds.__getitem__.return_value["observation_data"]["mask_obs"][:] = 1.0
+    context_idx = np.array([0, 1, 2, 3, 4])
+    target_idx = np.array([10, 11, 12])
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        context_station_indices=context_idx, target_station_indices=target_idx,
+    )
+    for _ in range(10):
+        batch = gen.generate_batch()
+        assert batch.xc.shape[1] == len(context_idx)
+        assert batch.xt.shape[1] == len(target_idx)
+
+
+def test_context_without_target_raises():
+    ds = _make_mock_dataset()
+    with pytest.raises(ValueError):
+        OATOOTGDataGenerator(
+            dataset=ds,
+            obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+            nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+            xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+            dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+            context_station_indices=np.array([0, 1]),
+        )
+
+
+def test_conflicting_station_index_args_raises():
+    ds = _make_mock_dataset()
+    with pytest.raises(ValueError):
+        OATOOTGDataGenerator(
+            dataset=ds,
+            obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+            nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+            xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+            dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+            eligible_station_indices=np.array([0, 1, 2]),
+            context_station_indices=np.array([0, 1]),
+            target_station_indices=np.array([2, 3]),
+        )
+
+
+def test_ablate_obs_empties_context():
+    ds = _make_mock_dataset(n_stations=20)
+    ds.__getitem__.return_value["observation_data"]["mask_obs"][:] = 1.0
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        ablate_obs=True,
+    )
+    batch = gen.generate_batch()
+    assert batch.xc.shape[1] == 0 and batch.yc.shape[1] == 0
+    assert batch.xc.shape[2] == 2 and batch.yc.shape[2] == 1  # dims preserved
+    assert batch.xt.shape[1] > 0  # targets untouched
+    # NWP grid retained under obs ablation
+    assert batch.yc_grid.abs().sum() > 0
+
+
+def test_ablate_grid_zeros_nwp():
+    ds = _make_mock_dataset(n_stations=20)
+    ds.__getitem__.return_value["observation_data"]["mask_obs"][:] = 1.0
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        ablate_grid=True,
+    )
+    batch = gen.generate_batch()
+    assert (batch.yc_grid == 0).all()  # NWP grid killed
+    assert batch.xc.shape[1] > 0  # station context retained
+
+
+def test_ablate_obs_forward_through_model():
+    """Empty-context batch must propagate through the real OOTG model (nc=0)."""
+    from oat.baselines.ootg_model import build_ootg_model
+
+    ds = _make_mock_dataset(n_stations=20)
+    ds.__getitem__.return_value["observation_data"]["mask_obs"][:] = 1.0
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        ablate_obs=True,
+    )
+    batch = gen.generate_batch()
+    model = build_ootg_model(
+        dim_y=1, dim_gridded_y=3,
+        obs_variable_to_distribution={"temperature": "normal"},
+        embed_dim=16, x_embed_dim=16, num_heads=2, head_dim=8, num_layers=1,
+        num_legendre_polys=4, grid_shape=(8, 8), window_sizes=(4, 4),
+        shift_sizes=(2, 2), top_k_ctot=4,
+    )
+    dist = model(batch.xc, batch.yc, batch.xc_grid, batch.yc_grid, batch.xt)
+    assert dist.mean.shape[1] == batch.xt.shape[1]  # one prediction per target
+
+
 def test_compute_norm_stats_shapes():
     ds = _make_mock_dataset()
     om, os_, nm, ns = compute_norm_stats(ds, n_samples=10)
@@ -177,3 +339,37 @@ def test_make_ootg_generator_cosmo():
         )
     assert isinstance(gen, OATOOTGDataGenerator)
     assert gen.dist_names == ["normal"]
+
+
+def test_topo_generator_returns_topo_batch():
+    batch = _make_topo_generator().generate_batch()
+    assert isinstance(batch, OOTGTopoBatch)
+
+
+def test_topo_shapes_match_context_and_target():
+    batch = _make_topo_generator().generate_batch()
+    # topo_c/topo_t: [B=1, N, C_topo, Hp, Wp]; N matches xc/xt station counts
+    assert batch.topo_c.shape[1] == batch.xc.shape[1]
+    assert batch.topo_t.shape[1] == batch.xt.shape[1]
+    assert batch.topo_c.shape[2:] == (C_TOPO, HP, WP)
+    assert batch.topo_t.shape[2:] == (C_TOPO, HP, WP)
+
+
+def test_no_topo_transform_returns_plain_batch():
+    # topo_transform=None (default) -> unchanged behavior
+    assert not isinstance(_make_generator().generate_batch(), OOTGTopoBatch)
+
+
+def test_ablate_obs_empty_topo_context():
+    ds = _add_topo_to_dataset(_make_mock_dataset(20, n_obs=1), 20)
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.full((1,), 280.0), obs_std=torch.full((1,), 5.0),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        topo_transform=_topo_transform(), ablate_obs=True,
+    )
+    batch = gen.generate_batch()
+    assert batch.topo_c.shape[1] == 0
+    assert batch.topo_t.shape[1] == batch.xt.shape[1]
