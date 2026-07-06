@@ -51,6 +51,8 @@ class OOTGPredictor(BasePredictor):
         output_transform: "Transform | None" = None,
         lr: float = 5e-4,
         n_samples: int = 50,
+        use_topo: bool = False,
+        topo_transform: "Transform | None" = None,
     ) -> None:
         super().__init__(output_var_names=obs_vars)
         self.model = model
@@ -67,6 +69,8 @@ class OOTGPredictor(BasePredictor):
         self.output_transform = output_transform
         self.lr = lr
         self.n_samples = n_samples
+        self.use_topo = use_topo
+        self.topo_transform = topo_transform
 
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         return batch
@@ -105,6 +109,8 @@ class OOTGPredictor(BasePredictor):
         coords: torch.Tensor,  # (N_obs, 2) dataset CRS
         q_coords: torch.Tensor,  # (N_q, 2) dataset CRS
         global_field: torch.Tensor,  # (C_global, H, W)
+        topo_obs: torch.Tensor | None = None,  # (N_obs, C_topo, Hp, Wp)
+        topo_q: torch.Tensor | None = None,  # (N_q, C_topo, Hp, Wp)
     ) -> JointMixedDistribution:
         valid = mask.all(dim=-1).bool()
         dev = global_field.device
@@ -131,6 +137,18 @@ class OOTGPredictor(BasePredictor):
         )
         xc_grid = self.xc_grid_base.to(dev).unsqueeze(0)
 
+        if self.use_topo:
+            assert self.topo_transform is not None and topo_q is not None
+            tt = self.topo_transform
+            if valid.sum() == 0:
+                topo_c = torch.zeros(
+                    1, 0, *topo_q.shape[-3:], device=dev, dtype=global_field.dtype
+                )
+            else:
+                assert topo_obs is not None
+                topo_c = tt(topo_obs[valid]).unsqueeze(0).to(dev)
+            topo_t = tt(topo_q).unsqueeze(0).to(dev)
+            return self.model(xc, yc, xc_grid, yc_grid, xt, topo_c, topo_t)
         return self.model(xc, yc, xc_grid, yc_grid, xt)
 
     def forward(self, batch: dict[str, Any]):
@@ -139,6 +157,10 @@ class OOTGPredictor(BasePredictor):
         coords_b = batch["observation_data"]["coords"]
         q_coords_b = batch["query_data"]["coords"]
         gf_b = batch["global_data"]["global_field"]
+        topo_obs_b = (
+            batch["observation_data"].get("topo", None) if self.use_topo else None
+        )
+        topo_q_b = batch["query_data"].get("topo", None) if self.use_topo else None
         target_obs = batch["query_data"].get("obs", None)
         target_mask = batch["query_data"].get("mask_obs", None)
 
@@ -148,6 +170,9 @@ class OOTGPredictor(BasePredictor):
             coords_b = coords_b.unsqueeze(0)
             q_coords_b = q_coords_b.unsqueeze(0)
             gf_b = gf_b.unsqueeze(0)
+            if topo_obs_b is not None and topo_q_b is not None:
+                topo_obs_b = topo_obs_b.unsqueeze(0)
+                topo_q_b = topo_q_b.unsqueeze(0)
             if target_obs is not None:
                 target_obs = target_obs.unsqueeze(0)
             if target_mask is not None:
@@ -156,13 +181,29 @@ class OOTGPredictor(BasePredictor):
         preds = []
         for b in range(obs_b.shape[0]):
             dist = self._dist_for_sample(
-                obs_b[b], mask_b[b], coords_b[b], q_coords_b[b], gf_b[b]
+                obs_b[b],
+                mask_b[b],
+                coords_b[b],
+                q_coords_b[b],
+                gf_b[b],
+                topo_obs=None if topo_obs_b is None else topo_obs_b[b],
+                topo_q=None if topo_q_b is None else topo_q_b[b],
             )
             preds.append(self._denormalize(dist.mean.squeeze(0)))
 
         return torch.stack(preds, dim=0), target_obs, target_mask
 
     def _forward_generator_batch(self, batch) -> "JointMixedDistribution":
+        if self.use_topo:
+            return self.model(
+                batch.xc,
+                batch.yc,
+                batch.xc_grid,
+                batch.yc_grid,
+                batch.xt,
+                batch.topo_c,
+                batch.topo_t,
+            )
         return self.model(batch.xc, batch.yc, batch.xc_grid, batch.yc_grid, batch.xt)
 
     def _draw_samples(self, dist: "JointMixedDistribution") -> torch.Tensor:
@@ -267,6 +308,10 @@ class OOTGPredictor(BasePredictor):
         coords_b = batch["observation_data"]["coords"]
         q_coords_b = batch["query_data"]["coords"]
         gf_b = batch["global_data"]["global_field"]
+        topo_obs_b = (
+            batch["observation_data"].get("topo", None) if self.use_topo else None
+        )
+        topo_q_b = batch["query_data"].get("topo", None) if self.use_topo else None
 
         if obs_b.ndim == 2:
             obs_b = obs_b.unsqueeze(0)
@@ -274,12 +319,21 @@ class OOTGPredictor(BasePredictor):
             coords_b = coords_b.unsqueeze(0)
             q_coords_b = q_coords_b.unsqueeze(0)
             gf_b = gf_b.unsqueeze(0)
+            if topo_obs_b is not None and topo_q_b is not None:
+                topo_obs_b = topo_obs_b.unsqueeze(0)
+                topo_q_b = topo_q_b.unsqueeze(0)
 
         with torch.no_grad():
             all_samples = []
             for b in range(obs_b.shape[0]):
                 dist = self._dist_for_sample(
-                    obs_b[b], mask_b[b], coords_b[b], q_coords_b[b], gf_b[b]
+                    obs_b[b],
+                    mask_b[b],
+                    coords_b[b],
+                    q_coords_b[b],
+                    gf_b[b],
+                    topo_obs=None if topo_obs_b is None else topo_obs_b[b],
+                    topo_q=None if topo_q_b is None else topo_q_b[b],
                 )
                 if n == 1:
                     # (1, Nq, dim_y) → squeeze batch → (Nq, dim_y) → unsqueeze sample dim
