@@ -31,6 +31,14 @@ top_k_ctot: 9              # context-to-token top-k in MHCAGridDecoder
 epochs: 300
 lr: 5e-4
 gradient_clip_val: 0.5
+check_val_every_n_epoch: 2
 crps_mc_samples: 50    # MC samples for CRPS loss and metrics (must be >= 2)
 devices: 4             # GPUs per node; set to 1 to disable DDP
 transform_type: keep_support   # matches OAT; disables log-transform
+
+# High-res topography into the decoder (off by default; see
+# docs/superpowers/specs/2026-07-03-ootg-decoder-topo-design.md)
+use_topo: false
+topo_out_channels: 32
+topo_n_layers: 3
+topo_kernel_size: 3
