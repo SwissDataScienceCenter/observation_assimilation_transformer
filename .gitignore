@@ -41,3 +41,7 @@ benchmarking/
 profiler_outputs/
 docs/
 .claude/
+.superpowers/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

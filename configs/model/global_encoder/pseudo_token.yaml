@@ -5,8 +5,8 @@ embed_dim: 128
 num_heads: 8
 n_layers: 5
 grid_shape:
-  - 32
-  - 32
+  - 128
+  - 128
 window_sizes:
   - 4
   - 4
