@@ -1,5 +1,5 @@
 defaults:
-  - dataset: cosmo_peakweather/temperature
+  - dataset: cosmo_peakweather/temp
   - split: default
   - dataloader: default
   - model: oat
