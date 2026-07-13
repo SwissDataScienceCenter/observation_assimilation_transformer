@@ -250,7 +250,9 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
             return torch.where(is_zero, torch.zeros_like(lognormal_samples), lognormal_samples)
 
     def crps(self, target: torch.Tensor, num_samples: int | None = None) -> torch.Tensor:
-        # WARNING: This analytical CRPS formula needs independent numerical verification.
+        # Verified numerically against a clean Monte-Carlo estimate in
+        # test/oat_test/model_module/test_distributions.py::test_ziln_crps_vs_montecarlo
+        # (agreement < 3e-3 across gate/loc/scale regimes and targets incl. 0).
         # Derivation (for target >= 0, P = gate*δ₀ + (1-gate)*LogN(loc, scale)):
         #   CRPS = gate*target
         #        + (1-gate)*CRPS(LogN(loc,scale), target)

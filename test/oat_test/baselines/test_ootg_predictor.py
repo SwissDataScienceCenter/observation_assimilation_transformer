@@ -207,6 +207,25 @@ def test_validation_step_dispatch():
     assert "val_loss" in logged
 
 
+def test_test_step_logs_finite_crps():
+    """Regression: metrics are computed on drawn samples, not a single mean.
+
+    A single mean "sample" makes mc_crps divide by n*(n-1)=0 → NaN. Matches
+    OATPredictor, which scores on model-drawn samples.
+    """
+    pred = _make_tiny_predictor(dim_y=1)
+    pred.n_samples = 8
+    logged: dict = {}
+    with patch.object(
+        pred, "log", side_effect=lambda name, value, **kw: logged.update({name: value})
+    ):
+        pred.test_step(_make_oat_batch(B=1, N_obs=15, N_q=5, dim_y=1), 0)
+    crps_keys = [k for k in logged if k.startswith("test_crps")]
+    assert crps_keys, f"no test_crps metric logged; got {list(logged)}"
+    for k in crps_keys:
+        assert torch.isfinite(torch.as_tensor(logged[k])), f"{k} = {logged[k]}"
+
+
 def test_training_step_loss_has_grad():
     """Verify training_step loss has grad_fn (gradient flows through model)."""
     pred = _make_tiny_predictor(dim_y=1)

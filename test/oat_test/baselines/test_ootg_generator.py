@@ -360,6 +360,46 @@ def test_no_topo_transform_returns_plain_batch():
     assert not isinstance(_make_generator().generate_batch(), OOTGTopoBatch)
 
 
+def _sampled_time_indices(rank, n_batches=40, base_seed=0):
+    """Time steps a generator draws when it believes it is DDP `rank`."""
+    from unittest.mock import patch
+
+    ds = _make_mock_dataset(n_stations=20)
+    gen = OATOOTGDataGenerator(
+        dataset=ds,
+        obs_mean=torch.tensor([280.0]), obs_std=torch.tensor([5.0]),
+        nwp_mean=torch.zeros(3), nwp_std=torch.ones(3),
+        xc_grid_latlon=_xc_grid(), coord_to_latlon=lv95_to_latlon,
+        dist_names=["normal"], nwp_stride=2, samples_per_epoch=10,
+        time_indices=np.arange(50), seed=base_seed,
+    )
+    with (
+        patch("torch.distributed.is_available", return_value=True),
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("torch.distributed.get_rank", return_value=rank),
+    ):
+        indices = []
+        for _ in range(n_batches):
+            gen.generate_batch()
+            indices.append(int(ds.__getitem__.call_args[0][0]))
+    return indices
+
+
+def test_ddp_ranks_sample_different_timesteps():
+    """Each DDP rank must draw different time steps, else all ranks compute
+    identical batches and DDP averages duplicate (redundant) gradients."""
+    rank0 = _sampled_time_indices(rank=0)
+    rank1 = _sampled_time_indices(rank=1)
+    assert rank0 != rank1, "ranks drew identical time-step sequences"
+    frac_shared = sum(a == b for a, b in zip(rank0, rank1)) / len(rank0)
+    assert frac_shared < 0.2, f"rank streams too correlated ({frac_shared:.2f})"
+
+
+def test_per_rank_sampling_is_deterministic():
+    """A given rank draws a reproducible sequence (needed for resumable runs)."""
+    assert _sampled_time_indices(rank=0) == _sampled_time_indices(rank=0)
+
+
 def test_ablate_obs_empty_topo_context():
     ds = _add_topo_to_dataset(_make_mock_dataset(20, n_obs=1), 20)
     gen = OATOOTGDataGenerator(

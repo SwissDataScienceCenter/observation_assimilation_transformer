@@ -70,6 +70,7 @@ class OATOOTGDataGenerator(DataGenerator):
         ablate_obs: bool = False,
         ablate_grid: bool = False,
         topo_transform=None,
+        seed: int = 0,
         **kwargs,
     ) -> None:
         super().__init__(samples_per_epoch=samples_per_epoch, batch_size=1, **kwargs)
@@ -102,6 +103,13 @@ class OATOOTGDataGenerator(DataGenerator):
         self.ablate_obs = ablate_obs
         self.ablate_grid = ablate_grid
         self.topo_transform = topo_transform
+        # Per-batch sampling uses a private, rank-seeded RNG so each DDP rank draws
+        # DIFFERENT time steps and ctx/target splits. Seeding the *global* RNG per
+        # rank is not an option: the training script relies on it being identical
+        # across ranks for create_splits / compute_norm_stats. Without this, every
+        # rank would produce identical batches → duplicate (redundant) gradients.
+        self._base_seed = seed
+        self._rng: torch.Generator | None = None
         self.n_nwp = len(dataset.config.nwp_vars) + len(dataset.config.topo_vars)
         self.eligible_station_indices = (
             torch.as_tensor(eligible_station_indices, dtype=torch.long)
@@ -123,6 +131,21 @@ class OATOOTGDataGenerator(DataGenerator):
             if isinstance(time_indices, np.ndarray)
             else (list(time_indices) if time_indices is not None else None)
         )
+
+    def _generator(self) -> torch.Generator:
+        """Lazily build a CPU RNG seeded with base_seed + DDP rank.
+
+        Built lazily (not in __init__) so the rank is read at iteration time, when
+        torch.distributed is initialized during trainer.fit. Single-process runs
+        (no DDP) fall back to rank 0.
+        """
+        if self._rng is None:
+            rank = 0
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            self._rng = torch.Generator()
+            self._rng.manual_seed(self._base_seed + rank)
+        return self._rng
 
     def generate_batch(self, batch_shape: torch.Size | None = None) -> "OOTGBatch":
         xc, yc, xt, yt, yc_grid, topo_c, topo_t = self._sample_once()
@@ -154,10 +177,13 @@ class OATOOTGDataGenerator(DataGenerator):
         torch.Tensor,
         torch.Tensor,
     ]:
+        rng = self._generator()
         if self._time_pool is not None:
-            idx = self._time_pool[int(torch.randint(len(self._time_pool), ()).item())]
+            idx = self._time_pool[
+                int(torch.randint(len(self._time_pool), (), generator=rng).item())
+            ]
         else:
-            idx = int(torch.randint(len(self.dataset), ()).item())
+            idx = int(torch.randint(len(self.dataset), (), generator=rng).item())
 
         sample = self.dataset[idx]
         obs = sample["observation_data"]["obs"]  # (N, dim_y)
@@ -225,7 +251,7 @@ class OATOOTGDataGenerator(DataGenerator):
         else:
             n_valid = valid_obs.shape[0]
             n_ctx = max(1, min(int(n_valid * self.pc_context), n_valid - 1))
-            perm = torch.randperm(n_valid)
+            perm = torch.randperm(n_valid, generator=self._generator())
             ctx_idx, tgt_idx = perm[:n_ctx], perm[n_ctx:]
 
         xc = self.coord_to_latlon(valid_coords[ctx_idx])

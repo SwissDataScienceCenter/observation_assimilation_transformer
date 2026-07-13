@@ -151,6 +151,13 @@ class OOTGPredictor(BasePredictor):
             return self.model(xc, yc, xc_grid, yc_grid, xt, topo_c, topo_t)
         return self.model(xc, yc, xc_grid, yc_grid, xt)
 
+    def _denorm_samples(self, dist: "JointMixedDistribution", n: int) -> torch.Tensor:
+        """Draw n samples from a single-batch dist → (N_q, n, dim_y) in physical units."""
+        raw = dist.sample(torch.Size([n]))  # (n, 1, N_q, dim_y)
+        raw = raw.squeeze(-3) if raw.ndim == 4 else raw  # → (n, N_q, dim_y)
+        raw = raw.permute(1, 0, 2)  # → (N_q, n, dim_y)
+        return self._denormalize(raw)
+
     def forward(self, batch: dict[str, Any]):
         obs_b = batch["observation_data"]["obs"]
         mask_b = batch["observation_data"]["mask_obs"]
@@ -178,6 +185,9 @@ class OOTGPredictor(BasePredictor):
             if target_mask is not None:
                 target_mask = target_mask.unsqueeze(0)
 
+        # Metrics (CRPS/MAE) are computed on drawn samples, matching
+        # OATPredictor: never on a single mean sample (that degenerates mc_crps
+        # to a 0/0 = NaN). self.n_samples is the OOTG analog of model.num_samples.
         preds = []
         for b in range(obs_b.shape[0]):
             dist = self._dist_for_sample(
@@ -189,9 +199,9 @@ class OOTGPredictor(BasePredictor):
                 topo_obs=None if topo_obs_b is None else topo_obs_b[b],
                 topo_q=None if topo_q_b is None else topo_q_b[b],
             )
-            preds.append(self._denormalize(dist.mean.squeeze(0)))
+            preds.append(self._denorm_samples(dist, self.n_samples))
 
-        return torch.stack(preds, dim=0), target_obs, target_mask
+        return torch.stack(preds, dim=0), target_obs, target_mask  # (B, N_q, n, dim_y)
 
     def _forward_generator_batch(self, batch) -> "JointMixedDistribution":
         if self.use_topo:
@@ -241,8 +251,7 @@ class OOTGPredictor(BasePredictor):
     def validation_step(self, batch, batch_idx) -> None:
         if isinstance(batch, dict):
             # Inference path: dict-style batch from standard evaluation dataset
-            y_pred, target_obs, target_mask = self(batch)
-            y_pred = y_pred.unsqueeze(-2)
+            y_pred, target_obs, target_mask = self(batch)  # (B, N_q, n, dim_y)
             self._log_instant_metrics(
                 y_pred,
                 target_obs,
@@ -287,8 +296,7 @@ class OOTGPredictor(BasePredictor):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def test_step(self, batch: dict[str, Any], batch_idx: int) -> None:
-        y_pred, target_obs, target_mask = self(batch)
-        y_pred = y_pred.unsqueeze(-2)
+        y_pred, target_obs, target_mask = self(batch)  # (B, N_q, n, dim_y)
         self._log_instant_metrics(y_pred, target_obs, target_mask, prefix="test")
 
     def predict_step(
@@ -341,13 +349,7 @@ class OOTGPredictor(BasePredictor):
                         -2
                     )  # (Nq, 1, dim_y)
                 else:
-                    # dist.sample(Size([n])) → (n, 1, Nq, dim_y): dist batch shape is (1, Nq)
-                    # from the (1, Nq, params) decoder output; squeeze the singleton batch dim.
-                    raw = dist.sample(torch.Size([n]))
-                    raw = raw.squeeze(-3) if raw.ndim == 4 else raw  # → (n, Nq, dim_y)
-                    # raw: (n, Nq, dim_y) → permute → (Nq, n, dim_y)
-                    raw = raw.permute(1, 0, 2)
-                    s = self._denormalize(raw)  # (Nq, n, dim_y)
+                    s = self._denorm_samples(dist, n)  # (Nq, n, dim_y)
                 all_samples.append(s)
         return torch.stack(all_samples, dim=0)  # (B, Nq, n, dim_y)
 
