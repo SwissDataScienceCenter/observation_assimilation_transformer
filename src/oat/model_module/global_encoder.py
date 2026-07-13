@@ -42,6 +42,31 @@ class BaseGlobalEncoder(torch.nn.Module, ABC):
         """
         raise NotImplementedError("Subclasses must implement the forward method.")
 
+    def encode_global(self, global_data: Dict[str, Any]) -> Any:
+        """Precompute the ``global_data``-only part of the encoding.
+
+        Encoders whose forward pass splits into a (potentially expensive)
+        global-only stage and a cheap per-location readout should override this
+        together with :meth:`decode`, so the global stage runs once per batch
+        instead of once per readout (stations and queries share it). Returns
+        ``None`` for encoders without such a split.
+        """
+        return None
+
+    def decode(
+        self,
+        global_data: Dict[str, Any],
+        local_data: Dict[str, Any],
+        encoded: Any = None,
+    ) -> torch.Tensor:
+        """Produce features at local positions, optionally reusing ``encoded``.
+
+        ``encoded`` is the value returned by :meth:`encode_global`. The default
+        ignores it and runs a full :meth:`forward`, so encoders that do not
+        override :meth:`encode_global` behave exactly as before.
+        """
+        return self(global_data, local_data)
+
 
 class InterpolationGlobalEncoder(BaseGlobalEncoder):
 
@@ -431,9 +456,18 @@ class PseudoTokenGridGlobalEncoder(BaseGlobalEncoder):
         yy, xx = torch.meshgrid(cy, cx, indexing="ij")
         return torch.stack((yy.reshape(-1), xx.reshape(-1)), dim=-1)
 
-    def forward(
-        self, global_data: Dict[str, Any], local_data: Dict[str, Any]
-    ) -> torch.Tensor:
+    def _encode_grid(
+        self, global_data: Dict[str, Any]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Encode the NWP field into pseudo-token grid features.
+
+        Depends only on ``global_data``, so its (expensive) result can be
+        shared across multiple readouts within a single forward pass.
+
+        Returns:
+            grid_tokens: [B, num_grid, embed_dim] encoded pseudo-token grid.
+            grid_coords: [B, num_grid, 2] pseudo-token grid coordinates.
+        """
         field = global_data["global_field"]
         batch_size, in_channels, height, width = field.shape
         device = field.device
@@ -469,10 +503,20 @@ class PseudoTokenGridGlobalEncoder(BaseGlobalEncoder):
             grid_tokens = layer(grid_tokens)
         grid_tokens = grid_tokens.reshape(batch_size, num_grid, self.embed_dim)
 
+        return grid_tokens, grid_coords
+
+    def _readout(
+        self,
+        grid_tokens: torch.Tensor,
+        grid_coords: torch.Tensor,
+        local_data: Dict[str, Any],
+    ) -> torch.Tensor:
+        """Read the encoded grid out at local query/station positions."""
+        device = grid_tokens.device
         query_coords = pos_transform(
             local_data["coords"].to(device), self.field_min, self.field_max
         )
-        num_queries = query_coords.shape[1]
+        batch_size, num_queries = query_coords.shape[0], query_coords.shape[1]
         query_tokens = self.query_token.view(1, 1, -1).expand(
             batch_size, num_queries, -1
         )
@@ -488,3 +532,24 @@ class PseudoTokenGridGlobalEncoder(BaseGlobalEncoder):
             attn_edges=readout_edges,
         )
         return self.out_proj(query_tokens + readout)
+
+    def encode_global(
+        self, global_data: Dict[str, Any]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self._encode_grid(global_data)
+
+    def decode(
+        self,
+        global_data: Dict[str, Any],
+        local_data: Dict[str, Any],
+        encoded: Any = None,
+    ) -> torch.Tensor:
+        if encoded is None:
+            encoded = self._encode_grid(global_data)
+        grid_tokens, grid_coords = encoded
+        return self._readout(grid_tokens, grid_coords, local_data)
+
+    def forward(
+        self, global_data: Dict[str, Any], local_data: Dict[str, Any]
+    ) -> torch.Tensor:
+        return self.decode(global_data, local_data)

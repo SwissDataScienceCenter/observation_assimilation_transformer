@@ -425,26 +425,32 @@ class UninformedOAT(nn.Module):
     def _create_uninformed_tokens(
         self,
         global_data: Dict[str, torch.Tensor],
-        local_data: Dict[str, torch.Tensor]
+        local_data: Dict[str, torch.Tensor],
+        encoded_global: Any = None,
     ) -> torch.Tensor:
         """
         Create uninformed tokens from global and local information.
-        
+
         Implements Eq. 1-7:
         1. Z_nwp = G(U_nwp, τ)  - Global encoding
         2. Z_nwp_x = R(Z_nwp, x)  - Spatial readout
         3. Z_ξ = E_ξ(ξ)  - Topographic encoding
         4. Z = F([Z_nwp || Z_ξ], τ)  - Fusion
-        
+
         Args:
             global_data: Global NWP fields and time embeddings
             local_data: Local coordinates and topographic patches
-        
+            encoded_global: Optional precomputed global-only encoding from
+                ``global_encoder.encode_global`` to reuse across readouts,
+                avoiding recomputing the (expensive) global stage per call.
+
         Returns:
             Uninformed tokens: (B, N, D_model)
         """
         # Global encoding and readout (Eq. 1-3)
-        global_token = self.global_encoder(global_data, local_data)
+        global_token = self.global_encoder.decode(
+            global_data, local_data, encoded_global
+        )
         
         # Topographic encoding (Eq. 4-5)
         topo_token = self.topographic_encoder(local_data['topo'])
@@ -696,10 +702,16 @@ class OAT(UninformedOAT):
         Returns:
             Updated query tokens: (B, N_q, D_model)
         """
+        # The global-data-only encoding is identical for station and query
+        # readouts, so compute it once and reuse it (encoders without a split
+        # return None and fall back to a full pass per readout).
+        encoded_global = self.global_encoder.encode_global(global_data)
+
         # Step 1: Create uninformed station tokens (Eq. 1-7)
         uninformed_kv_token = self._create_uninformed_tokens(
             global_data=global_data,
-            local_data=observation_data
+            local_data=observation_data,
+            encoded_global=encoded_global,
         )
         
         # Step 2: Compute innovation at stations (Eq. 8-12)
@@ -734,7 +746,8 @@ class OAT(UninformedOAT):
         # Step 4: Create uninformed query tokens (Eq. 1-7)
         query_token = self._create_uninformed_tokens(
             global_data=global_data,
-            local_data=query_data
+            local_data=query_data,
+            encoded_global=encoded_global,
         )
         
         # Step 5: Create spatial masks (Eq. 14)

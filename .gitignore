@@ -25,7 +25,7 @@ checkpoints
 # VS Code
 .vscode/
 !.devcontainer/
-
+paper/
 # Build
 dist/
 build/

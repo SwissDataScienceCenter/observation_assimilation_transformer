@@ -94,6 +94,35 @@ def test_window_must_divide_grid() -> None:
         )
 
 
+def test_encode_decode_matches_forward() -> None:
+    """decode(encode_global(...)) must equal a plain forward pass."""
+    torch.manual_seed(0)
+    enc = _make_encoder().eval()
+    global_data, local_data = _inputs(B=2, S=6)
+
+    reference = enc(global_data, local_data)
+    encoded = enc.encode_global(global_data)
+    split = enc.decode(global_data, local_data, encoded)
+    assert torch.allclose(reference, split, atol=1e-5)
+
+
+def test_shared_encoding_reused_across_readouts() -> None:
+    """A single encode_global feeds two different readouts consistently."""
+    torch.manual_seed(0)
+    enc = _make_encoder().eval()
+    global_data, station_data = _inputs(B=2, S=6)
+    _, query_data = _inputs(B=2, S=9)
+
+    encoded = enc.encode_global(global_data)
+    stations = enc.decode(global_data, station_data, encoded)
+    queries = enc.decode(global_data, query_data, encoded)
+
+    assert stations.shape == (2, 6, 4)
+    assert queries.shape == (2, 9, 4)
+    assert torch.allclose(stations, enc(global_data, station_data), atol=1e-5)
+    assert torch.allclose(queries, enc(global_data, query_data), atol=1e-5)
+
+
 def test_init_dispatch_builds_pseudo_token_encoder() -> None:
     from oat.model_module.model import UninformedOAT
 
