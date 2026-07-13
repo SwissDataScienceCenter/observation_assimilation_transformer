@@ -649,44 +649,43 @@ def test_distribution_map_allows_gradients(dist_class: type) -> None:
         
         
 def test_ziln_crps_vs_montecarlo():
-    
-    torch.manual_seed(0)
-    batch, stations, in_features = 4, 10, 8
-    
-    layer = DistributionMap(ZeroInflatedLogNormal, in_features=in_features)
-    x = torch.randn(batch, stations, in_features)
-    d = layer(x)
-    
+    """ZILN analytical CRPS must match the codebase's mc_crps estimator.
+
+    The MC samples are drawn ONLY from the distribution — no artificial zero
+    injection, which would bias the empirical distribution away from d and make
+    the estimate no longer estimate d's CRPS. Covers several (gate, loc, scale)
+    regimes and targets including exactly 0 (the point-mass branch). N is capped
+    (mc_crps builds the full N×N pairwise term) so atol reflects MC noise at
+    n=8000 (worst observed deviation ~0.025 over seeds).
+    """
     from oat.predictor_module.functional_metrics import mc_crps
-    
-    # [100,4,10]
-    samples = d.sample((5000,))
-    samples = samples.permute(1,2,0)  # [4,10,100]
-    samples = samples.unsqueeze(-1)  # [4,10,100,1]
-    # put some true zeros in the samples to make sure the zero-inflation is tested 
-    # at random locations
-    zero_mask = torch.rand_like(samples) < 0.1
-    samples = torch.where(zero_mask, torch.zeros_like(samples), samples) 
-    
-    
-    target = d.sample()  # [4,10]
-    target = target.unsqueeze(-1)  # [4,10,1]
-    # put true zeros in the target to make sure the zero-inflation is tested at random locations
-    zero_mask_target = torch.rand_like(target) < 0.1
-    target = torch.where(zero_mask_target, torch.zeros_like(target), target)
-    
-    mask = torch.ones_like(target)  # [4,10,1]
-    
-    
-    crps_estimate = mc_crps(y_target=target, y_hat=samples, mask=mask, aggregation="variable")
-    
-    closed_crps = d.crps(target.squeeze(-1)).mean()
-    
-    
-    # check the MC estimate is close to the closed-form CRPS, up to the first comma
-    assert torch.allclose(crps_estimate, closed_crps, atol=0.01), (
-        f"MC CRPS: {crps_estimate}, Closed-form CRPS: {closed_crps}"
-    )
-    
+
+    torch.manual_seed(0)
+    n = 8000
+    regimes = [
+        (0.0, 0.0, 0.5),  # no zero-inflation -> pure LogNormal
+        (0.3, 0.0, 0.5),
+        (0.6, -0.5, 0.8),
+        (0.9, 0.5, 1.0),
+    ]
+    for gate, loc, scale in regimes:
+        d = ZeroInflatedLogNormal(
+            gate=torch.tensor(gate), loc=torch.tensor(loc), scale=torch.tensor(scale)
+        )
+        for target_val in (0.0, 0.5, 1.5, 3.0):
+            target = torch.tensor(target_val)
+            analytical = d.crps(target)
+            samples = d.sample((n,)).reshape(1, 1, n, 1)  # [B, S, sample, feature]
+            mc = mc_crps(
+                y_target=target.reshape(1, 1, 1),
+                y_hat=samples,
+                mask=torch.ones(1, 1, 1),
+                aggregation="variable",
+            ).squeeze()
+            assert torch.allclose(analytical, mc, atol=0.05), (
+                f"gate={gate} loc={loc} scale={scale} target={target_val}: "
+                f"analytical={analytical.item():.5f} mc={mc.item():.5f}"
+            )
+
 
 # TODO add the other CRPS tests for the other distributions, similar to the above test for ZILN

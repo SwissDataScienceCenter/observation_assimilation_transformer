@@ -1,0 +1,44 @@
+defaults:
+  - dataset: cosmo_peakweather/temp
+  - split: default
+  - logging: default
+  - _self_
+
+hydra:
+  run:
+    dir: outputs/ootg_baseline/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+# Data
+norm_samples: 500          # timesteps sampled to estimate normalization stats
+nwp_stride: null           # grid coarsening; null → 10 for COSMO, 4 for ERA5
+pc_context: 0.8            # fraction of valid stations used as context during training
+samples_per_epoch: 10000
+val_samples_per_epoch: 1000
+
+# Architecture
+embed_dim: 128
+x_embed_dim: 128
+num_heads: 8
+head_dim: 16
+num_layers: 5
+num_legendre_polys: 10
+grid_shape: [128, 128]       # pseudo-token grid
+window_sizes: [4, 4]       # SWIN attention window (must divide grid_shape evenly)
+shift_sizes: [2, 2]
+top_k_ctot: 9              # context-to-token top-k in MHCAGridDecoder
+
+# Training
+epochs: 300
+lr: 5e-4
+gradient_clip_val: 0.5
+check_val_every_n_epoch: 2
+crps_mc_samples: 50    # MC samples for CRPS loss and metrics (must be >= 2)
+devices: 4             # GPUs per node; set to 1 to disable DDP
+transform_type: keep_support   # matches OAT; disables log-transform
+
+# High-res topography into the decoder (off by default; see
+# docs/superpowers/specs/2026-07-03-ootg-decoder-topo-design.md)
+use_topo: false
+topo_out_channels: 32
+topo_n_layers: 3
+topo_kernel_size: 1

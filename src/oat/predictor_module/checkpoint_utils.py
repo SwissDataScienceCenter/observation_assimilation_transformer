@@ -2,6 +2,7 @@ from typing import Type, Tuple, Optional
 from pathlib import Path
 
 import pytorch_lightning as pl
+import torch
 from omegaconf import OmegaConf, DictConfig
 
 _DEFAULT_REGISTRY = Path(__file__).parents[3] / "configs" / "checkpoints.yaml"
@@ -25,6 +26,73 @@ def _predictor_cls_from_config(cfg: DictConfig) -> Type[pl.LightningModule]:
             break
     module_path, cls_name = target.rsplit(".", 1)
     return getattr(importlib.import_module(module_path), cls_name)
+
+
+def _load_ootg_predictor(
+    path: Path,
+    cfg: DictConfig,
+    map_location: str | None,
+) -> Tuple[pl.LightningModule, DictConfig]:
+    """Load an OOTGPredictor from an OOTG checkpoint directory."""
+    from oat.baselines.coord_utils import lonlat_swap, lv95_to_latlon
+    from oat.baselines.ootg_model import build_ootg_model
+    from oat.baselines.ootg_predictor import OOTGPredictor
+    from oat.data_module.transform import StandardNormalizeTransform, Transform
+
+    stats = torch.load(
+        path.parent / "ootg_stats.pt", map_location=map_location, weights_only=False
+    )
+
+    model = build_ootg_model(**stats["model_kwargs"])
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    model_state = {
+        k.removeprefix("model."): v
+        for k, v in ckpt["state_dict"].items()
+        if k.startswith("model.")
+    }
+    model.load_state_dict(model_state)
+
+    if "output_transform" in stats and stats["output_transform"] is not None:
+        output_transform = Transform.from_dict(stats["output_transform"])
+    else:
+        # Backward compat: reconstruct from obs_mean/obs_std (Normal vars only)
+        obs_mean = stats["obs_mean"]
+        obs_std = stats["obs_std"]
+        dist_names = stats["dist_names"]
+        mean_t = obs_mean.clone()
+        std_t = obs_std.clone()
+        for v, dn in enumerate(dist_names):
+            if dn != "normal":
+                mean_t[v] = 0.0
+                std_t[v] = 1.0
+        output_transform = StandardNormalizeTransform(mean_t, std_t, channel_dim=-1)
+
+    coord_fn = (
+        lv95_to_latlon if stats["coord_fn_name"] == "lv95_to_latlon" else lonlat_swap
+    )
+
+    use_topo = stats["model_kwargs"].get("use_topo", False)
+    topo_transform = None
+    if use_topo and stats.get("topo_transform") is not None:
+        topo_transform = Transform.from_dict(stats["topo_transform"])
+
+    predictor = OOTGPredictor(
+        model=model,
+        obs_vars=stats["obs_vars"],
+        obs_mean=stats["obs_mean"],
+        obs_std=stats["obs_std"],
+        nwp_mean=stats["nwp_mean"],
+        nwp_std=stats["nwp_std"],
+        xc_grid_base=stats["xc_grid_base"],
+        coord_to_latlon=coord_fn,
+        dist_names=stats["dist_names"],
+        n_nwp=stats["n_nwp"],
+        nwp_stride=stats["nwp_stride"],
+        output_transform=output_transform,
+        use_topo=use_topo,
+        topo_transform=topo_transform,
+    )
+    return predictor, cfg
 
 
 def resolve_checkpoint(
@@ -65,6 +133,9 @@ def load_checkpoint(
     config_path = path.parent / "config.yaml"
 
     cfg = OmegaConf.load(config_path)
+
+    if (path.parent / "ootg_stats.pt").exists():
+        return _load_ootg_predictor(path, cfg, map_location)
 
     if predictor_cls is None:
         predictor_cls = _predictor_cls_from_config(cfg)

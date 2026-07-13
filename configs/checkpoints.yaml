@@ -7,13 +7,15 @@
 #   python -m scripts.plot_oat_example   --dataset cosmo_peakweather --model oat_wind
 
 cosmo_peakweather:
-  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_20260619_job4664408/best-model-epoch=40-val_loss=0.1879.ckpt
+  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_20260622_job4686983/best-model-epoch=44-val_loss=0.1879.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed/uninformed_20260622_job4693563/best-model-epoch=16-val_loss=0.2375.ckpt
+  no_inno_oat_temp_precip: /users/miccatta/s-ruc/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_no_innovation_20260630_job4755879/best-model-epoch=30-val_loss=0.1927.ckpt
 #  gaussian_process_temp: ~
 #  gaussian_process_precip: ~
 
 era5_meteostat:
   oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_20260622_job4687505/best-model-epoch=88-val_loss=0.2109.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed/uninformed_20260622_job4693552/best-model-epoch=17-val_loss=0.2610.ckpt
+  no_inno_oat_temp_precip: /users/miccatta/s-ruc/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_no_innovation_20260630_job4755884/best-model-epoch=72-val_loss=0.2176.ckpt
 #  gaussian_process_temp: ~
 #  gaussian_process_precip: ~
