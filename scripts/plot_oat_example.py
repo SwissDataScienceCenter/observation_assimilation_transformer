@@ -31,7 +31,6 @@ from oat.data_module.setup import setup_data_and_transform
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.oat_predictor import OATPredictor
 from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from oat.plotting_module.geo_overlays import _add_borders
 
