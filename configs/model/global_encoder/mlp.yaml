@@ -1,9 +1,9 @@
 type: MLP
-out_channels: 32
+# out_channels: derived from d_model // 2 at runtime
 # Note: `in_channels` and `field_extent_min/max` are data-dependent and are
 # configured elsewhere (e.g., via data-specific or higher-level Hydra configs),
 # consistent with other global encoder configs.
 act_fn: GELU
-hidden_dims:
-   - 32
+# hidden_dims: should match d_model // 2; derived at runtime
+hidden_dims: []
 

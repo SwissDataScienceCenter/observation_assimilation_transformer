@@ -478,23 +478,27 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     data_cfg = cfg.dataset
     logger.info("Setting up model configs...")
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
+    d_model = model_cfg.d_model
     global_encoder_cfg = model.GlobalEncoderConfig(
         **model_cfg.global_encoder,
         in_channels=global_input_chans,
+        out_channels=d_model // 2,
         field_extent_max=field_extent['max'],
         field_extent_min=field_extent['min']
         )
 
     topography_encoder_cfg = model.TopographicEncoderConfig(
         **model_cfg.topographic_encoder,
-        in_channels=len(data_cfg.topo_vars)
+        in_channels=len(data_cfg.topo_vars),
+        out_channels=d_model // 2,
         )
 
     time_cond_dim = 4 if data_cfg.use_time_embedding else 0
     nwp_topo_fusion_cfg = model.NwpTopoFusionConfig(
         **model_cfg.nwp_topo_fusion,
         cond_dim=time_cond_dim,
-        out_channels=model_cfg.d_model)
+        hidden_channels=d_model,
+        out_channels=d_model)
 
     if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
         raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")
@@ -526,7 +530,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
 
     transformer_cfg = model.TransformerConfig(
         d_geo_bias=len(data_cfg.geo_vars),
-        d_model=model_cfg.d_model,
+        d_model=d_model,
+        dim_feedforward=2 * d_model,
         **model_cfg.transformer)
 
     n_obs_vars = len(data_cfg.obs_vars)
@@ -535,7 +540,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     innovation_fusion_cfg = model.InnovationFusionConfig(
         **model_cfg.innovation_fusion,
         cond_dim=innovation_cond_dim,
-        out_channels=model_cfg.d_model)
+        hidden_channels=d_model,
+        out_channels=d_model)
 
     if not model_cfg.get("learnable_gating", False):
         logger.info("Learnable gating disabled.")
@@ -545,7 +551,8 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         learnable_gating_cfg = model.LearnableGatingConfig(
             **model_cfg.learnable_gating,
             in_channels=n_obs_vars,
-            out_channels=model_cfg.d_model)
+            hidden_channels=d_model // 2,
+            out_channels=d_model)
 
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,

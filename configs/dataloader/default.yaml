@@ -5,13 +5,13 @@ train:
   persistent_workers: true
   pin_memory: false
 validation:
-  batch_size: 256
+  batch_size: 32
   num_workers: 6
   prefetch_factor: 2
   persistent_workers: true
   pin_memory: false
 test:
-  batch_size: 256
+  batch_size: 32
   num_workers: 6
   prefetch_factor: 2
   persistent_workers: true

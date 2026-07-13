@@ -26,6 +26,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from pytorch_lightning.loggers import WandbLogger
+import wandb
 from pytorch_lightning.profilers import SimpleProfiler
 from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
@@ -61,7 +62,8 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
                          project=cfg.logging.project,
                          group=cfg.logging.group,
                          entity=cfg.logging.entity,
-                         log_model=False)
+                         log_model=False,
+                         settings=wandb.Settings(init_timeout=300))
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
     

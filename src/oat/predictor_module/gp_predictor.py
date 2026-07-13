@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 from importlib import import_module
 
-import pytorch_lightning as pl
 import torch
 from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig
 
 from oat.data_module.transform import Transform
 from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
+from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
-class GPPredictor(pl.LightningModule):
+class GPPredictor(BasePredictor):
     def __init__(
         self,
         gp_model: GPBaseline,
@@ -26,15 +26,11 @@ class GPPredictor(pl.LightningModule):
         scheduler_class: Optional[Type] = None,
         scheduler_params: Optional[dict] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(output_var_names=output_var_names)
 
         self.model = gp_model
         self.input_transform = input_transform
         self.output_transform = output_transform
-
-        self.output_var_names = output_var_names
-        self.var_to_indx = {v: i for i, v in enumerate(output_var_names)}
-        self.indx_to_var = {i: v for i, v in enumerate(output_var_names)}
 
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
@@ -166,15 +162,26 @@ class GPPredictor(pl.LightningModule):
         return loss
 
     def predict_step(
-        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+        self,
+        batch: dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        return_as: Literal["samples", "distribution"] = "samples",
+        n_samples: Optional[int] = None,
     ) -> torch.Tensor:
         batch = self._normalize_batch(batch)
-        y_hat = self.model.forward(
-            global_data=batch["global_data"],
-            observation_data=batch["observation_data"],
-            query_data=batch["query_data"],
+        if return_as == "samples":
+            with torch.no_grad():
+                y_hat = self.model.forward(
+                    global_data=batch["global_data"],
+                    observation_data=batch["observation_data"],
+                    query_data=batch["query_data"],
+                    num_samples=n_samples,
+                )
+            return self.output_transform.inverse(y_hat["samples"])
+        raise NotImplementedError(
+            "GPPredictor does not support return_as='distribution'"
         )
-        return self.output_transform.inverse(y_hat["samples"])
 
     def configure_optimizers(self) -> Optimizer | dict:
         optimizer = self.optimizer_class(self.model.parameters(), **self.optimizer_params)
@@ -217,8 +224,11 @@ def setup_gp_predictor(
         use_time_emb=bool(model_cfg.use_time_emb),
         use_topography=bool(model_cfg.get("use_topography", False)),
         topography_encoder_kwargs=gp_topography_kwargs,
-        mean_hidden_dims=tuple(model_cfg.mean_hidden_dims),
-        kernel_hidden_dims=tuple(model_cfg.kernel_hidden_dims),
+        d_model=int(model_cfg.d_model),
+        mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
+        kernel_n_hidden_layers=int(model_cfg.get("kernel_n_hidden_layers", 2)),
+        mean_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))),
+        kernel_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),
         mean_groups=model_cfg.get("mean_groups"),
         stationary_cov_groups=model_cfg.get("stationary_cov_groups"),

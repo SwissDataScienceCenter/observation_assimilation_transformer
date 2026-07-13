@@ -1,0 +1,19 @@
+# Registry of evaluation checkpoints.
+# Structure: {dataset_name: {model_name: checkpoint_path}}
+# Use ~ (null) as a placeholder for checkpoints not yet available.
+#
+# Usage in scripts:
+#   python -m scripts.evaluate_test_set --dataset cosmo_peakweather --model oat_wind
+#   python -m scripts.plot_oat_example   --dataset cosmo_peakweather --model oat_wind
+
+cosmo_peakweather:
+  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_20260619_job4664408/best-model-epoch=40-val_loss=0.1879.ckpt
+  uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed/uninformed_20260622_job4693563/best-model-epoch=16-val_loss=0.2375.ckpt
+#  gaussian_process_temp: ~
+#  gaussian_process_precip: ~
+
+era5_meteostat:
+  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_L/oat_L_v1_20260622_job4687505/best-model-epoch=88-val_loss=0.2109.ckpt
+  uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed/uninformed_20260622_job4693552/best-model-epoch=17-val_loss=0.2610.ckpt
+#  gaussian_process_temp: ~
+#  gaussian_process_precip: ~

@@ -13,3 +13,5 @@ obs_vars:
 
 obs_variable_to_distribution:
   temperature: "normal"
+
+station_type: null # with null, all stations are taken, among which there are rain gauges
