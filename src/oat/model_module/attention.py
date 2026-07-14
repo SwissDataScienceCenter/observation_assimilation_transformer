@@ -160,6 +160,18 @@ class GeometryAwareMHA(nn.Module):
         attn_output = attn_output.view(B, N_q, self.embed_dim)  # Restore original shape
         return attn_output, attn_weights_out
     
+    def _dist_function(self, geo_q: torch.Tensor, geo_k: torch.Tensor) -> torch.Tensor:
+        """
+        Compute pairwise distances between query and key geometric features.
+        Args:
+            geo_q: Geometric features for queries of shape (B, N_q, d_geo)
+            geo_k: Geometric features for keys of shape (B, N_k, d_geo)
+        Returns:
+            A tensor of pairwise distances of shape (B, N_q, N_k, d_geo)
+        """
+        dist_qk = geo_q - geo_k  # (B, N_q, N_k, d_geo)
+        return dist_qk
+    
     def _sparse_attention(
         self,
         Q: torch.Tensor,  # [B, H, N_q, d_k]
@@ -191,7 +203,7 @@ class GeometryAwareMHA(nn.Module):
             geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
             geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
             
-            dist_qk = torch.abs(geo_q_flat[attn_edges[0]] - geo_k_flat[attn_edges[1]])  # [E, d_geo]
+            dist_qk = self._dist_function(geo_q_flat[attn_edges[0]], geo_k_flat[attn_edges[1]])  # [E, d_geo]
             b_attn = self.f_geo(dist_qk)  # [E, H]
             attn_logits = attn_logits + b_attn
         
@@ -235,7 +247,7 @@ class GeometryAwareMHA(nn.Module):
             # Compute pairwise geometry features
             geo_q_exp = geo_q.unsqueeze(2)  # [B, N_q, 1, d_geo]
             geo_k_exp = geo_k.unsqueeze(1)  # [B, 1, N_k, d_geo]
-            dist_qk = torch.abs(geo_q_exp - geo_k_exp)  # [B, N_q, N_k, d_geo]
+            dist_qk = self._dist_function(geo_q_exp, geo_k_exp)  # [B, N_q, N_k, d_geo]
             
             b_attn = self.f_geo(dist_qk)  # [B, N_q, N_k, H]
             b_attn = b_attn.permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
