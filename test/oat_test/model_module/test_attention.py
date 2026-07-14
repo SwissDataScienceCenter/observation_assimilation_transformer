@@ -207,3 +207,21 @@ def test_vanilla_ignores_geometry(setup_data: Dict[str, Any]) -> None:
                         geo_k=d["g_src"] + 3.0, geo_q=d["g_tgt"] - 1.0)
         assert torch.isfinite(out_a).all()
         assert torch.allclose(out_a, out_b, atol=1e-6)
+
+
+def test_tetnp_dense_forward(setup_data: Dict[str, Any]) -> None:
+    d = setup_data
+    if d["dropout"] != 0.0:
+        pytest.skip("determinism check only needed once")
+    attn = attention.GeometryAwareMHA(
+        embed_dim=d["D"], num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="tetnp",
+    )
+    out, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
+                  attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    assert out.shape == (d["B"], d["N_q"], d["D"])
+    assert torch.isfinite(out).all()
+    # the kernel must actually participate in the score (not be inert)
+    out.sum().backward()
+    assert attn.geo_kernel[0].weight.grad is not None
+    assert not torch.all(attn.geo_kernel[0].weight.grad == 0)

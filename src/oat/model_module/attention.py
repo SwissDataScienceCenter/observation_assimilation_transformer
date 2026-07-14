@@ -268,18 +268,27 @@ class GeometryAwareMHA(nn.Module):
         N_k = K.shape[2]
         
         # Equation 20: QK^T / sqrt(d_k)
-        attn_logits = torch.matmul(Q, K.transpose(-2, -1)) / (d_k ** 0.5)  # [B, H, N_q, N_k]
-        
-        # Equation 15: Geometry bias
-        if self.f_geo is not None and geo_k is not None and geo_q is not None:
-            # Compute pairwise geometry features
+        token_dots = torch.matmul(Q, K.transpose(-2, -1)) / (d_k ** 0.5)  # [B, H, N_q, N_k]
+
+        if self.geo_attn_mode == "tetnp" and self.geo_kernel is not None \
+                and geo_q is not None and geo_k is not None:
+            # TE-TNP content-dependent kernel: concat([diff, QK]) -> logits
             geo_q_exp = geo_q.unsqueeze(2)  # [B, N_q, 1, d_geo]
             geo_k_exp = geo_k.unsqueeze(1)  # [B, 1, N_k, d_geo]
             dist_qk = self._dist_function(geo_q_exp, geo_k_exp)  # [B, N_q, N_k, d_geo]
-            
-            b_attn = self.f_geo(dist_qk)  # [B, N_q, N_k, H]
-            b_attn = b_attn.permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
-            attn_logits = attn_logits + b_attn
+            token_dots_p = token_dots.permute(0, 2, 3, 1)  # [B, N_q, N_k, H]
+            kernel_in = torch.cat([dist_qk, token_dots_p], dim=-1)  # [B, N_q, N_k, d_geo+H]
+            attn_logits = self.geo_kernel(kernel_in).permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
+        else:
+            attn_logits = token_dots
+            # Equation 15: additive geometry bias
+            if self.f_geo is not None and geo_k is not None and geo_q is not None:
+                geo_q_exp = geo_q.unsqueeze(2)  # [B, N_q, 1, d_geo]
+                geo_k_exp = geo_k.unsqueeze(1)  # [B, 1, N_k, d_geo]
+                dist_qk = self._dist_function(geo_q_exp, geo_k_exp)  # [B, N_q, N_k, d_geo]
+                b_attn = self.f_geo(dist_qk)  # [B, N_q, N_k, H]
+                b_attn = b_attn.permute(0, 3, 1, 2)  # [B, H, N_q, N_k]
+                attn_logits = attn_logits + b_attn
         
         # Equation 21: Apply distance mask
         if attn_edges is not None:
