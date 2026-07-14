@@ -41,6 +41,10 @@ class GeometryAwareMHA(nn.Module):
             dtype: Data type for tensors.
         Raises:
             ValueError: If embed_dim or num_heads are not greater than 0.
+            ValueError: If geo_attn_mode is not one of "additive", "tetnp",
+                or "vanilla".
+            ValueError: If geo_attn_mode="tetnp" is used with a falsy
+                d_geo_bias (the kernel has nothing to consume).
             AssertionError: If embed_dim is not divisible by num_heads.
         """
         if embed_dim <= 0 or num_heads <= 0:
@@ -237,6 +241,10 @@ class GeometryAwareMHA(nn.Module):
         # Equation 20: Scaled dot-product attention
         token_dots = (edge_Q * edge_K).sum(dim=-1) / (d_k**0.5)  # [E, H]
 
+        # Note: if geo_q/geo_k are None here, neither branch below fires and
+        # attn_logits falls through to the plain token_dots (QK/sqrt(d))
+        # computed above. OAT always supplies geometry, so this is a safety
+        # fallback for callers that don't, not an expected code path.
         if (
             self.geo_attn_mode == "tetnp"
             and self.geo_kernel is not None
@@ -246,6 +254,10 @@ class GeometryAwareMHA(nn.Module):
             # TE-TNP content-dependent kernel: concat([diff, QK]) -> logits
             geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
             geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
+            # dist_qk is recomputed here (rather than shared with the
+            # additive branch below) intentionally: keeping the two branches
+            # independent means the additive path is untouched by the tetnp
+            # addition, preserving numerical/checkpoint parity.
             dist_qk = self._dist_function(
                 geo_q_flat[attn_edges[0]], geo_k_flat[attn_edges[1]]
             )  # [E, d_geo]
@@ -306,6 +318,10 @@ class GeometryAwareMHA(nn.Module):
             d_k**0.5
         )  # [B, H, N_q, N_k]
 
+        # Note: if geo_q/geo_k are None here, neither branch below fires and
+        # attn_logits falls through to the plain token_dots (QK/sqrt(d))
+        # computed above. OAT always supplies geometry, so this is a safety
+        # fallback for callers that don't, not an expected code path.
         if (
             self.geo_attn_mode == "tetnp"
             and self.geo_kernel is not None
@@ -315,6 +331,10 @@ class GeometryAwareMHA(nn.Module):
             # TE-TNP content-dependent kernel: concat([diff, QK]) -> logits
             geo_q_exp = geo_q.unsqueeze(2)  # [B, N_q, 1, d_geo]
             geo_k_exp = geo_k.unsqueeze(1)  # [B, 1, N_k, d_geo]
+            # dist_qk is recomputed here (rather than shared with the
+            # additive branch below) intentionally: keeping the two branches
+            # independent means the additive path is untouched by the tetnp
+            # addition, preserving numerical/checkpoint parity.
             dist_qk = self._dist_function(geo_q_exp, geo_k_exp)  # [B, N_q, N_k, d_geo]
             token_dots_p = token_dots.permute(0, 2, 3, 1)  # [B, N_q, N_k, H]
             kernel_in = torch.cat(

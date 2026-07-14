@@ -5,14 +5,21 @@ import torch
 import pytest
 from typing import Dict, Any
 
-@pytest.fixture(params=[(0.0, True), (0.0, False), (0.1, False),])
+
+@pytest.fixture(
+    params=[
+        (0.0, True),
+        (0.0, False),
+        (0.1, False),
+    ]
+)
 def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
     dropout, norm_first = request.param
     torch.manual_seed(0)
     B = 2  # Batch size
     N_kv = 10  # Number of key/value tokens
-    N_q = 5   # Number of query tokens
-    D = 16    # Model dimension
+    N_q = 5  # Number of query tokens
+    D = 16  # Model dimension
     num_heads = 4
     d_geo_bias = 8
 
@@ -26,16 +33,22 @@ def setup_data(request: pytest.FixtureRequest) -> Dict[str, Any]:
     for b in range(B):
         # For memory edges
         q_flat_mem, k_flat_mem = torch.nonzero(~mask_memory[b], as_tuple=True)
-        edges_list_memory.append(torch.stack([q_flat_mem + b * N_q, k_flat_mem + b * N_kv], dim=0))
+        edges_list_memory.append(
+            torch.stack([q_flat_mem + b * N_q, k_flat_mem + b * N_kv], dim=0)
+        )
         # For target and source self-attention edges
         q_flat_tgt, k_flat_tgt = torch.nonzero(~mask_tgt[b], as_tuple=True)
-        edges_list_tgt.append(torch.stack([q_flat_tgt + b * N_q, k_flat_tgt + b * N_q], dim=0))
+        edges_list_tgt.append(
+            torch.stack([q_flat_tgt + b * N_q, k_flat_tgt + b * N_q], dim=0)
+        )
         q_flat_src, k_flat_src = torch.nonzero(~mask_src[b], as_tuple=True)
-        edges_list_src.append(torch.stack([k_flat_src + b * N_kv, q_flat_src + b * N_kv], dim=0))
+        edges_list_src.append(
+            torch.stack([k_flat_src + b * N_kv, q_flat_src + b * N_kv], dim=0)
+        )
     edges_src = torch.cat(edges_list_src, dim=1)  # [2, E]
     edges_tgt = torch.cat(edges_list_tgt, dim=1)  # [2, E]
     edges_memory = torch.cat(edges_list_memory, dim=1)  # [2, E]
-    
+
     g_src = torch.randn(B, N_kv, d_geo_bias)
     g_tgt = torch.randn(B, N_q, d_geo_bias)
 
@@ -79,15 +92,20 @@ def test_geometry_aware_multihead_attention(setup_data: Dict[str, Any]) -> None:
         dropout=dropout,
     )
 
-    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde, _ = attn_module(
+        Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt
+    )
     attn_module.sparse_attn = True
-    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde_sparse, _ = attn_module(
+        Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt
+    )
 
     assert Z_q_tilde.shape == (B, N_q, D)
-    assert Z_q_tilde_sparse.shape == (B, N_q, D)   
+    assert Z_q_tilde_sparse.shape == (B, N_q, D)
     if dropout == 0.0:
         assert torch.allclose(Z_q_tilde, Z_q_tilde_sparse, atol=1e-5)
-    
+
+
 def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     N_q = setup_data["N_q"]
     D = setup_data["D"]
@@ -106,9 +124,10 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
         d_geo_bias=d_geo_bias,
         dropout=dropout,
     )
-    
 
-    Z_q_tilde, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
+    Z_q_tilde, _ = attn_module(
+        Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt
+    )
     loss = Z_q_tilde.sum()
     loss.backward()
 
@@ -116,13 +135,13 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     assert Z_kv.grad is not None
     assert Z_q.grad.shape == Z_q.shape
     assert Z_kv.grad.shape == Z_kv.shape
-    
+
     # gradients of parameters
     for param in attn_module.parameters():
         assert param.grad is not None
         assert param.grad.shape == param.shape
         assert not torch.all(param.grad == 0)
-        
+
     # reset gradients
     Z_q.grad.zero_()
     Z_kv.grad.zero_()
@@ -130,8 +149,10 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
         param.grad.zero_()
     # sparse attention
     attn_module.sparse_attn = True
-    
-    Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
+
+    Z_q_tilde_sparse, _ = attn_module(
+        Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt
+    )
     loss_sparse = Z_q_tilde_sparse.sum()
     loss_sparse.backward()
 
@@ -196,17 +217,31 @@ def test_vanilla_ignores_geometry(setup_data: Dict[str, Any]) -> None:
     if d["dropout"] != 0.0:
         pytest.skip("determinism check only needed once")
     attn = attention.GeometryAwareMHA(
-        embed_dim=d["D"], num_heads=d["num_heads"],
-        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="vanilla",
+        embed_dim=d["D"],
+        num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"],
+        dropout=0.0,
+        geo_attn_mode="vanilla",
     )
     for sparse in (False, True):
         attn.sparse_attn = sparse
-        out_a, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
-                        attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+        out_a, _ = attn(
+            d["Z_q"],
+            d["Z_kv"],
+            d["Z_kv"],
+            attn_edges=d["edges_memory"],
+            geo_k=d["g_src"],
+            geo_q=d["g_tgt"],
+        )
         # different geometry, identical everything else -> identical output
-        out_b, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
-                        attn_edges=d["edges_memory"],
-                        geo_k=d["g_src"] + 3.0, geo_q=d["g_tgt"] - 1.0)
+        out_b, _ = attn(
+            d["Z_q"],
+            d["Z_kv"],
+            d["Z_kv"],
+            attn_edges=d["edges_memory"],
+            geo_k=d["g_src"] + 3.0,
+            geo_q=d["g_tgt"] - 1.0,
+        )
         assert torch.isfinite(out_a).all()
         assert torch.allclose(out_a, out_b, atol=1e-6)
 
@@ -216,11 +251,20 @@ def test_tetnp_dense_forward(setup_data: Dict[str, Any]) -> None:
     if d["dropout"] != 0.0:
         pytest.skip("determinism check only needed once")
     attn = attention.GeometryAwareMHA(
-        embed_dim=d["D"], num_heads=d["num_heads"],
-        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="tetnp",
+        embed_dim=d["D"],
+        num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"],
+        dropout=0.0,
+        geo_attn_mode="tetnp",
     )
-    out, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
-                  attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    out, _ = attn(
+        d["Z_q"],
+        d["Z_kv"],
+        d["Z_kv"],
+        attn_edges=d["edges_memory"],
+        geo_k=d["g_src"],
+        geo_q=d["g_tgt"],
+    )
     assert out.shape == (d["B"], d["N_q"], d["D"])
     assert torch.isfinite(out).all()
     # the kernel must actually participate in the score (not be inert)
@@ -234,36 +278,114 @@ def test_tetnp_sparse_matches_dense(setup_data: Dict[str, Any]) -> None:
     if d["dropout"] != 0.0:
         pytest.skip("parity requires dropout=0")
     attn = attention.GeometryAwareMHA(
-        embed_dim=d["D"], num_heads=d["num_heads"],
-        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="tetnp",
+        embed_dim=d["D"],
+        num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"],
+        dropout=0.0,
+        geo_attn_mode="tetnp",
     )
     attn.sparse_attn = False
-    dense, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
-                    attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    dense, _ = attn(
+        d["Z_q"],
+        d["Z_kv"],
+        d["Z_kv"],
+        attn_edges=d["edges_memory"],
+        geo_k=d["g_src"],
+        geo_q=d["g_tgt"],
+    )
     attn.sparse_attn = True
-    sparse, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
-                     attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    sparse, _ = attn(
+        d["Z_q"],
+        d["Z_kv"],
+        d["Z_kv"],
+        attn_edges=d["edges_memory"],
+        geo_k=d["g_src"],
+        geo_q=d["g_tgt"],
+    )
     assert sparse.shape == (d["B"], d["N_q"], d["D"])
     assert torch.allclose(dense, sparse, atol=1e-5)
 
 
+def test_tetnp_empty_context_and_single_key(setup_data: Dict[str, Any]) -> None:
+    d = setup_data
+    if d["dropout"] != 0.0:
+        pytest.skip("determinism check only needed once")
+    attn = attention.GeometryAwareMHA(
+        embed_dim=d["D"],
+        num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"],
+        dropout=0.0,
+        geo_attn_mode="tetnp",
+    )
+    B, N_q = d["B"], d["N_q"]
+
+    # --- Empty context: drop every edge touching query 0 in batch 0, so
+    # that query has zero incoming edges (no context to attend to). ---
+    edges_memory = d["edges_memory"]
+    keep = edges_memory[0] != 0  # global query index 0 == batch 0, query 0
+    edges_empty_ctx = edges_memory[:, keep]
+    for sparse in (False, True):
+        attn.sparse_attn = sparse
+        out, _ = attn(
+            d["Z_q"],
+            d["Z_kv"],
+            d["Z_kv"],
+            attn_edges=edges_empty_ctx,
+            geo_k=d["g_src"],
+            geo_q=d["g_tgt"],
+        )
+        assert out.shape == (B, N_q, d["D"])
+        assert torch.isfinite(out).all()
+
+    # --- Single key: only one key/value token per batch in the context. ---
+    Z_kv_single = d["Z_kv"][:, :1, :]
+    g_src_single = d["g_src"][:, :1, :]
+    q_idx = torch.arange(B * N_q)
+    k_idx = torch.repeat_interleave(
+        torch.arange(B), N_q
+    )  # N_kv=1 -> global key idx == batch
+    edges_single_key = torch.stack([q_idx, k_idx], dim=0)
+    for sparse in (False, True):
+        attn.sparse_attn = sparse
+        out, _ = attn(
+            d["Z_q"],
+            Z_kv_single,
+            Z_kv_single,
+            attn_edges=edges_single_key,
+            geo_k=g_src_single,
+            geo_q=d["g_tgt"],
+        )
+        assert out.shape == (B, N_q, d["D"])
+        assert torch.isfinite(out).all()
+
+
 def test_geo_attn_mode_threads_through_layers() -> None:
     enc = transformer.GeometryAwareEncoderLayer(
-        d_model=16, nhead=4, d_geo_bias=8, geo_attn_mode="tetnp",
+        d_model=16,
+        nhead=4,
+        d_geo_bias=8,
+        geo_attn_mode="tetnp",
     )
     assert enc.self_attn.geo_attn_mode == "tetnp"
     assert enc.self_attn.geo_kernel is not None
 
     dec = transformer.GeometryAwareDecoderLayer(
-        d_model=16, nhead=4, d_geo_bias=8,
-        self_attention=True, geo_attn_mode="tetnp",
+        d_model=16,
+        nhead=4,
+        d_geo_bias=8,
+        self_attention=True,
+        geo_attn_mode="tetnp",
     )
     assert dec.multihead_attn.geo_attn_mode == "tetnp"
     assert dec.self_attn.geo_attn_mode == "tetnp"
 
     oat = transformer.ObservationAssimilationTransformer(
-        d_model=16, nhead=4, num_encoder_layers=1, num_decoder_layers=1,
-        d_geo_bias=8, geo_attn_mode="tetnp",
+        d_model=16,
+        nhead=4,
+        num_encoder_layers=1,
+        num_decoder_layers=1,
+        d_geo_bias=8,
+        geo_attn_mode="tetnp",
     )
     assert oat.encoder.layers[0].self_attn.geo_attn_mode == "tetnp"
     assert oat.decoder.layers[0].multihead_attn.geo_attn_mode == "tetnp"
