@@ -1,5 +1,6 @@
 from oat.model_module import attention
 from oat.model_module import transformer
+from oat.model_module import model as oat_model
 import torch
 import pytest
 from typing import Dict, Any
@@ -266,3 +267,10 @@ def test_geo_attn_mode_threads_through_layers() -> None:
     )
     assert oat.encoder.layers[0].self_attn.geo_attn_mode == "tetnp"
     assert oat.decoder.layers[0].multihead_attn.geo_attn_mode == "tetnp"
+
+
+def test_transformer_config_geo_attn_mode() -> None:
+    cfg = oat_model.TransformerConfig(d_geo_bias=3)
+    assert cfg.geo_attn_mode == "additive"  # backward-compatible default
+    cfg_te = oat_model.TransformerConfig(d_geo_bias=3, geo_attn_mode="tetnp")
+    assert cfg_te.geo_attn_mode == "tetnp"

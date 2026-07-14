@@ -8,11 +8,13 @@ from torch.nn.init import xavier_uniform_
 from oat.model_module.activations import get_activation
 from oat.model_module.attention import GeometryAwareMHA
 
+
 def _get_clones(module: nn.Module, N: int) -> nn.ModuleList:
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-    
+
+
 class ObservationAssimilationTransformer(nn.Module):
-    
+
     def __init__(
         self,
         *,
@@ -57,10 +59,10 @@ class ObservationAssimilationTransformer(nn.Module):
             device: The device to place the model on. Defaults to None.
             dtype: The desired data type of the model parameters. Defaults to None.
         """
-        
-        factory_kwargs = {'device': device, 'dtype': dtype}
+
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        
+
         encoder_layer = GeometryAwareEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -78,13 +80,15 @@ class ObservationAssimilationTransformer(nn.Module):
             device=device,
             dtype=dtype,
         )
-        encoder_norm = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
+        encoder_norm = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
         self.encoder = GeometryAwareEncoder(
             encoder_layer=encoder_layer,
             num_layers=num_encoder_layers,
             norm=encoder_norm,
         )
-        
+
         decoder_layer = GeometryAwareDecoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -103,17 +107,19 @@ class ObservationAssimilationTransformer(nn.Module):
             device=device,
             dtype=dtype,
         )
-        decoder_norm = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
+        decoder_norm = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
         self.decoder = GeometryAwareDecoder(
             decoder_layer=decoder_layer,
             num_layers=num_decoder_layers,
             norm=decoder_norm,
         )
-        
+
         self.d_model = d_model
         self.nhead = nhead
         self._reset_parameters()
-    
+
     def forward(
         self,
         src: torch.Tensor,
@@ -129,15 +135,15 @@ class ObservationAssimilationTransformer(nn.Module):
         Args:
             src (torch.Tensor): Source sequence tensor to be encoded.
             tgt (torch.Tensor): Target sequence tensor to be decoded.
-            src_mask_edges (Optional[torch.Tensor], optional): Edges for the source sequence to prevent 
+            src_mask_edges (Optional[torch.Tensor], optional): Edges for the source sequence to prevent
                 attention to certain positions. Defaults to None.
-            tgt_mask_edges (Optional[torch.Tensor], optional): Edges for the target sequence to prevent 
+            tgt_mask_edges (Optional[torch.Tensor], optional): Edges for the target sequence to prevent
                 attention to certain positions (e.g., for causal masking). Defaults to None.
-            memory_mask_edges (Optional[torch.Tensor], optional): Edges for the encoder output (memory) 
+            memory_mask_edges (Optional[torch.Tensor], optional): Edges for the encoder output (memory)
                 in the decoder's cross-attention. Defaults to None.
-            g_src (Optional[torch.Tensor], optional): Geometry information for the source sequence, 
+            g_src (Optional[torch.Tensor], optional): Geometry information for the source sequence,
                 used for positional encoding or attention biasing. Defaults to None.
-            g_tgt (Optional[torch.Tensor], optional): Geometry information for the target sequence, 
+            g_tgt (Optional[torch.Tensor], optional): Geometry information for the target sequence,
                 used for positional encoding or attention biasing. Defaults to None.
         Returns:
             torch.Tensor: The output tensor from the decoder, representing the transformed target sequence.
@@ -156,16 +162,16 @@ class ObservationAssimilationTransformer(nn.Module):
             g_src=g_src,
         )
         return output
-        
-        
+
     def _reset_parameters(self) -> None:
         r"""Initiate parameters in the transformer model."""
         for p in self.parameters():
             if p.dim() > 1:
                 xavier_uniform_(p)
 
+
 class GeometryAwareEncoder(nn.Module):
-    
+
     def __init__(
         self,
         *,
@@ -186,12 +192,12 @@ class GeometryAwareEncoder(nn.Module):
             num_layers: The total number of encoder layers in the stack.
             norm: The normalization layer applied after all encoder layers, if provided.
         """
-        
+
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-        
+
     def forward(
         self,
         src: torch.Tensor,
@@ -214,17 +220,18 @@ class GeometryAwareEncoder(nn.Module):
                 Shape: (batch_size, sequence_length, d_model)
         """
         output = src
-        
+
         for mod in self.layers:
             output = mod(output, src_mask_edges=src_mask_edges, g_src=g_src)
-        
+
         if self.norm is not None:
             output = self.norm(output)
-        
+
         return output
-    
+
+
 class GeometryAwareDecoder(nn.Module):
-    
+
     def __init__(
         self,
         *,
@@ -237,7 +244,7 @@ class GeometryAwareDecoder(nn.Module):
         Args:
             decoder_layer: An instance of the decoder layer to be cloned.
             num_layers: Number of decoder layers to stack.
-            norm: Normalization layer to apply after all decoder layers. 
+            norm: Normalization layer to apply after all decoder layers.
                 Defaults to None.
         Attributes:
             layers: List of cloned decoder layers.
@@ -248,7 +255,7 @@ class GeometryAwareDecoder(nn.Module):
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-        
+
     def forward(
         self,
         tgt: torch.Tensor,
@@ -260,7 +267,7 @@ class GeometryAwareDecoder(nn.Module):
     ) -> torch.Tensor:
         """
         Forward pass through the transformer decoder.
-        
+
         Args:
             tgt: Target sequence tensor
             memory: Memory tensor from the encoder
@@ -272,7 +279,7 @@ class GeometryAwareDecoder(nn.Module):
             Transformed output tensor after passing through all decoder layers and optional normalization
         """
         output = tgt
-        
+
         for mod in self.layers:
             output = mod(
                 output,
@@ -282,15 +289,15 @@ class GeometryAwareDecoder(nn.Module):
                 g_tgt=g_tgt,
                 g_src=g_src,
             )
-        
+
         if self.norm is not None:
             output = self.norm(output)
-        
+
         return output
-                 
+
 
 class GeometryAwareEncoderLayer(nn.Module):
-    
+
     def __init__(
         self,
         *,
@@ -329,7 +336,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             device: The device to place the parameters on.
             dtype: The data type for the parameters.
         """
-        factory_kwargs = {'device': device, 'dtype': dtype}
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.self_attn = GeometryAwareMHA(
@@ -350,13 +357,17 @@ class GeometryAwareEncoderLayer(nn.Module):
         self.linear2 = nn.Linear(dim_feedforward, d_model, bias=bias, **factory_kwargs)
 
         self.norm_first = norm_first
-        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
-        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
+        self.norm1 = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
+        self.norm2 = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
         self.activation = get_activation(activation)
-        
+
     def forward(
         self,
         src: torch.Tensor,
@@ -382,7 +393,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             x = self.norm1(x + self._sa_block(x, src_mask_edges, g_src))
             x = self.norm2(x + self._ffn_block(x))
         return x
-        
+
     def _sa_block(
         self,
         x: torch.Tensor,
@@ -398,14 +409,14 @@ class GeometryAwareEncoderLayer(nn.Module):
             attn_edges=src_mask_edges,
         )
         return self.dropout1(attn_output)
-    
+
     def _ffn_block(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
         return self.dropout2(x)
-    
-    
+
+
 class GeometryAwareDecoderLayer(nn.Module):
-    
+
     def __init__(
         self,
         *,
@@ -446,7 +457,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             device: The device to place the parameters on.
             dtype: The dtype of the parameters.
         """
-        factory_kwargs = {'device': device, 'dtype': dtype}
+        factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
         self.perform_self_attention = self_attention
@@ -479,20 +490,26 @@ class GeometryAwareDecoderLayer(nn.Module):
         self.linear1 = nn.Linear(d_model, dim_feedforward, bias=bias, **factory_kwargs)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model, bias=bias, **factory_kwargs)
-        
+
         self.norm_first = norm_first
-        
+
         if self_attention:
-            self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
-        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
-        self.norm3 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
+            self.norm1 = nn.LayerNorm(
+                d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+            )
+        self.norm2 = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
+        self.norm3 = nn.LayerNorm(
+            d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs
+        )
         if self_attention:
             self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-        
+
         self.activation = get_activation(activation)
-        
+
     def forward(
         self,
         tgt: torch.Tensor,
@@ -518,19 +535,22 @@ class GeometryAwareDecoderLayer(nn.Module):
         """
         x = tgt
         if self.norm_first:
-            
+
             if self.perform_self_attention:
                 x = x + self._sa_block(self.norm1(x), tgt_mask_edges, g_tgt)
-            x = x + self._mha_block(self.norm2(x), memory, memory_mask_edges, g_src, g_tgt)
+            x = x + self._mha_block(
+                self.norm2(x), memory, memory_mask_edges, g_src, g_tgt
+            )
             x = x + self._ffn_block(self.norm3(x))
         else:
             if self.perform_self_attention:
                 x = self.norm1(x + self._sa_block(x, tgt_mask_edges, g_tgt))
-            x = self.norm2(x + self._mha_block(x, memory, memory_mask_edges, g_src, g_tgt))
+            x = self.norm2(
+                x + self._mha_block(x, memory, memory_mask_edges, g_src, g_tgt)
+            )
             x = self.norm3(x + self._ffn_block(x))
         return x
-    
-    
+
     def _sa_block(
         self,
         x: torch.Tensor,
@@ -546,7 +566,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             attn_edges=tgt_edges,
         )
         return self.dropout1(attn_output)
-    
+
     def _mha_block(
         self,
         x: torch.Tensor,
@@ -564,7 +584,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             attn_edges=memory_edges,
         )
         return self.dropout2(attn_output)
-    
+
     def _ffn_block(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
         return self.dropout3(x)
