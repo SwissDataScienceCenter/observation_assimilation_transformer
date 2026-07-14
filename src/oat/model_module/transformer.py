@@ -31,12 +31,13 @@ class ObservationAssimilationTransformer(nn.Module):
         bias: bool = True,
         sparse_attn: bool = False,
         decoder_self_attention: bool = False,
+        geo_attn_mode: str = "additive",
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         """
         Initialize a Geometry-Aware Transformer model.
-        
+
         Args:
             d_model: The number of expected features in the encoder/decoder inputs. Defaults to 512.
             nhead: The number of heads in the multi-head attention layers. Defaults to 8.
@@ -52,6 +53,7 @@ class ObservationAssimilationTransformer(nn.Module):
             bias: If True, adds bias to linear layers. Defaults to True.
             sparse_attn: If True, uses sparse attention mechanism. Defaults to False.
             decoder_self_attention: If True, the decoder will perform self-attention.
+            geo_attn_mode: The geometry-aware attention mode ("additive", "tetnp", or "vanilla"). Defaults to "additive".
             device: The device to place the model on. Defaults to None.
             dtype: The desired data type of the model parameters. Defaults to None.
         """
@@ -71,6 +73,7 @@ class ObservationAssimilationTransformer(nn.Module):
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
             sparse_attn=sparse_attn,
+            geo_attn_mode=geo_attn_mode,
             bias=bias,
             device=device,
             dtype=dtype,
@@ -94,6 +97,7 @@ class ObservationAssimilationTransformer(nn.Module):
             dim_geo_bias_feedforward=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
             sparse_attn=sparse_attn,
+            geo_attn_mode=geo_attn_mode,
             bias=bias,
             self_attention=decoder_self_attention,
             device=device,
@@ -301,6 +305,7 @@ class GeometryAwareEncoderLayer(nn.Module):
         dim_geo_bias_feedforward: int = 64,
         activation_geo_bias: str = "GELU",
         sparse_attn: bool = False,
+        geo_attn_mode: str = "additive",
         bias: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
@@ -319,13 +324,14 @@ class GeometryAwareEncoderLayer(nn.Module):
             dim_geo_bias_feedforward: The hidden dimension for the geometric bias feedforward network.
             activation_geo_bias: The activation function for the geometry bias feedforward network.
             sparse_attn: Whether to use sparse attention.
+            geo_attn_mode: The geometry-aware attention mode ("additive", "tetnp", or "vanilla"). Defaults to "additive".
             bias: Whether to use bias in linear layers and layer normalization.
             device: The device to place the parameters on.
             dtype: The data type for the parameters.
         """
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
-        
+
         self.self_attn = GeometryAwareMHA(
             embed_dim=d_model,
             num_heads=nhead,
@@ -334,6 +340,7 @@ class GeometryAwareEncoderLayer(nn.Module):
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
             sparse_attn=sparse_attn,
+            geo_attn_mode=geo_attn_mode,
             device=device,
             dtype=dtype,
         )
@@ -341,13 +348,13 @@ class GeometryAwareEncoderLayer(nn.Module):
         self.linear1 = nn.Linear(d_model, dim_feedforward, bias=bias, **factory_kwargs)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model, bias=bias, **factory_kwargs)
-        
+
         self.norm_first = norm_first
         self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
         self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps, bias=bias, **factory_kwargs)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-        
+
         self.activation = get_activation(activation)
         
     def forward(
@@ -413,6 +420,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         dim_geo_bias_feedforward: int = 64,
         activation_geo_bias: str = "GELU",
         sparse_attn: bool = False,
+        geo_attn_mode: str = "additive",
         bias: bool = True,
         self_attention: bool = False,
         device: Optional[torch.device] = None,
@@ -432,6 +440,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             dim_geo_bias_feedforward: Hidden dimension for geometric bias feedforward network.
             activation_geo_bias: The activation function for the geometry bias feedforward network.
             sparse_attn: Whether to use sparse attention.
+            geo_attn_mode: The geometry-aware attention mode ("additive", "tetnp", or "vanilla"). Defaults to "additive".
             bias: Whether to use bias in linear layers and layer normalization.
             self_attention: whether self-attention is performed.
             device: The device to place the parameters on.
@@ -439,7 +448,7 @@ class GeometryAwareDecoderLayer(nn.Module):
         """
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
-        
+
         self.perform_self_attention = self_attention
         if self_attention:
             self.self_attn = GeometryAwareMHA(
@@ -450,6 +459,7 @@ class GeometryAwareDecoderLayer(nn.Module):
                 geo_bias_hidden_dim=dim_geo_bias_feedforward,
                 activation_geo_bias=activation_geo_bias,
                 sparse_attn=sparse_attn,
+                geo_attn_mode=geo_attn_mode,
                 device=device,
                 dtype=dtype,
             )
@@ -461,6 +471,7 @@ class GeometryAwareDecoderLayer(nn.Module):
             geo_bias_hidden_dim=dim_geo_bias_feedforward,
             activation_geo_bias=activation_geo_bias,
             sparse_attn=sparse_attn,
+            geo_attn_mode=geo_attn_mode,
             device=device,
             dtype=dtype,
         )

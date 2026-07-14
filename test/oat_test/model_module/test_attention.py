@@ -1,4 +1,5 @@
 from oat.model_module import attention
+from oat.model_module import transformer
 import torch
 import pytest
 from typing import Dict, Any
@@ -243,3 +244,25 @@ def test_tetnp_sparse_matches_dense(setup_data: Dict[str, Any]) -> None:
                      attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
     assert sparse.shape == (d["B"], d["N_q"], d["D"])
     assert torch.allclose(dense, sparse, atol=1e-5)
+
+
+def test_geo_attn_mode_threads_through_layers() -> None:
+    enc = transformer.GeometryAwareEncoderLayer(
+        d_model=16, nhead=4, d_geo_bias=8, geo_attn_mode="tetnp",
+    )
+    assert enc.self_attn.geo_attn_mode == "tetnp"
+    assert enc.self_attn.geo_kernel is not None
+
+    dec = transformer.GeometryAwareDecoderLayer(
+        d_model=16, nhead=4, d_geo_bias=8,
+        self_attention=True, geo_attn_mode="tetnp",
+    )
+    assert dec.multihead_attn.geo_attn_mode == "tetnp"
+    assert dec.self_attn.geo_attn_mode == "tetnp"
+
+    oat = transformer.ObservationAssimilationTransformer(
+        d_model=16, nhead=4, num_encoder_layers=1, num_decoder_layers=1,
+        d_geo_bias=8, geo_attn_mode="tetnp",
+    )
+    assert oat.encoder.layers[0].self_attn.geo_attn_mode == "tetnp"
+    assert oat.decoder.layers[0].multihead_attn.geo_attn_mode == "tetnp"
