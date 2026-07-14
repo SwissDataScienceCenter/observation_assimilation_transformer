@@ -225,3 +225,21 @@ def test_tetnp_dense_forward(setup_data: Dict[str, Any]) -> None:
     out.sum().backward()
     assert attn.geo_kernel[0].weight.grad is not None
     assert not torch.all(attn.geo_kernel[0].weight.grad == 0)
+
+
+def test_tetnp_sparse_matches_dense(setup_data: Dict[str, Any]) -> None:
+    d = setup_data
+    if d["dropout"] != 0.0:
+        pytest.skip("parity requires dropout=0")
+    attn = attention.GeometryAwareMHA(
+        embed_dim=d["D"], num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="tetnp",
+    )
+    attn.sparse_attn = False
+    dense, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
+                    attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    attn.sparse_attn = True
+    sparse, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
+                     attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+    assert sparse.shape == (d["B"], d["N_q"], d["D"])
+    assert torch.allclose(dense, sparse, atol=1e-5)

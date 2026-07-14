@@ -224,16 +224,29 @@ class GeometryAwareMHA(nn.Module):
         edge_V = V_flat[attn_edges[1]]  # [E, H, d_k]
         
         # Equation 20: Scaled dot-product attention
-        attn_logits = (edge_Q * edge_K).sum(dim=-1) / (d_k ** 0.5)  # [E, H]
-        
-        # Equation 15: Geometry bias
-        if self.f_geo is not None and geo_k is not None and geo_q is not None:
+        token_dots = (edge_Q * edge_K).sum(dim=-1) / (d_k ** 0.5)  # [E, H]
+
+        if self.geo_attn_mode == "tetnp" and self.geo_kernel is not None \
+                and geo_q is not None and geo_k is not None:
+            # TE-TNP content-dependent kernel: concat([diff, QK]) -> logits
             geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
             geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
-            
-            dist_qk = self._dist_function(geo_q_flat[attn_edges[0]], geo_k_flat[attn_edges[1]])  # [E, d_geo]
-            b_attn = self.f_geo(dist_qk)  # [E, H]
-            attn_logits = attn_logits + b_attn
+            dist_qk = self._dist_function(
+                geo_q_flat[attn_edges[0]], geo_k_flat[attn_edges[1]]
+            )  # [E, d_geo]
+            kernel_in = torch.cat([dist_qk, token_dots], dim=-1)  # [E, d_geo+H]
+            attn_logits = self.geo_kernel(kernel_in)  # [E, H]
+        else:
+            attn_logits = token_dots
+            # Equation 15: additive geometry bias
+            if self.f_geo is not None and geo_k is not None and geo_q is not None:
+                geo_q_flat = geo_q.reshape(B * N_q, -1)  # [B*N_q, d_geo]
+                geo_k_flat = geo_k.reshape(B * N_k, -1)  # [B*N_k, d_geo]
+                dist_qk = self._dist_function(
+                    geo_q_flat[attn_edges[0]], geo_k_flat[attn_edges[1]]
+                )  # [E, d_geo]
+                b_attn = self.f_geo(dist_qk)  # [E, H]
+                attn_logits = attn_logits + b_attn
         
         # Equation 22: Softmax per query node
         attn_weights = pyg_softmax(attn_logits, attn_edges[0], num_nodes=B * N_q)  # [E, H]
