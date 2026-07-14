@@ -18,6 +18,7 @@ class GeometryAwareMHA(nn.Module):
         geo_bias_hidden_dim: int = 64,
         activation_geo_bias: str = "GELU",
         sparse_attn: bool = False,
+        geo_attn_mode: str = "additive",
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -31,6 +32,10 @@ class GeometryAwareMHA(nn.Module):
             geo_bias_hidden_dim: Hidden dimension for the geometric bias network. Defaults to 64.
             activation_geo_bias: Activation function for the geometric bias network. Defaults to "GELU".
             sparse_attn: Whether to use sparse attention. Checks also if mask is defined. Defaults to False.
+            geo_attn_mode: How geometry enters the attention scores. One of
+                "additive" (Eq. 15, plain per-head bias), "tetnp" (TE-TNP
+                content-dependent kernel), or "vanilla" (plain dot-product,
+                geometry ignored). Defaults to "additive".
             device: Device to place tensors on.
             dtype: Data type for tensors.
         Raises:
@@ -62,9 +67,22 @@ class GeometryAwareMHA(nn.Module):
         self.W_K = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
         self.W_V = nn.Linear(embed_dim, embed_dim, **factory_kwargs)
         
-        # Geometry bias network (equation 15)
-        # Maps geometric features to per-head attention biases
-        if d_geo_bias:
+        # Attention-score geometry mode: plain dot-product ("vanilla"),
+        # additive bias (Eq. 15, "additive"), or TE-TNP kernel ("tetnp").
+        if geo_attn_mode not in ("additive", "tetnp", "vanilla"):
+            raise ValueError(
+                "geo_attn_mode must be 'additive', 'tetnp', or 'vanilla', "
+                f"got {geo_attn_mode!r}"
+            )
+        if geo_attn_mode == "tetnp" and not d_geo_bias:
+            raise ValueError(
+                "geo_attn_mode='tetnp' requires d_geo_bias > 0 "
+                "(the kernel consumes relative-position features)"
+            )
+        self.geo_attn_mode = geo_attn_mode
+
+        # Additive geometry bias network (equation 15): diff -> per-head bias
+        if d_geo_bias and geo_attn_mode == "additive":
             self.f_geo = nn.Sequential(
                 nn.Linear(d_geo_bias, num_heads * geo_bias_hidden_dim, **factory_kwargs),
                 get_activation(activation_geo_bias),
@@ -72,7 +90,17 @@ class GeometryAwareMHA(nn.Module):
             )
         else:
             self.f_geo = None
-        
+
+        # TE-TNP content-dependent kernel: concat([diff, per-head QK]) -> per-head logits
+        if d_geo_bias and geo_attn_mode == "tetnp":
+            self.geo_kernel = nn.Sequential(
+                nn.Linear(d_geo_bias + num_heads, num_heads * geo_bias_hidden_dim, **factory_kwargs),
+                get_activation(activation_geo_bias),
+                nn.Linear(num_heads * geo_bias_hidden_dim, num_heads, **factory_kwargs)
+            )
+        else:
+            self.geo_kernel = None
+
         self.dropout = nn.Dropout(dropout)
         # Output projection layer for combining attention heads
         self.W_O = nn.Linear(embed_dim, embed_dim, **factory_kwargs)

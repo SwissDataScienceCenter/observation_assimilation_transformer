@@ -132,14 +132,78 @@ def test_transformer_gradient(setup_data: Dict[str, Any]) -> None:
     Z_q_tilde_sparse, _ = attn_module(Z_q, Z_kv, Z_kv, attn_edges=edges_memory, geo_k=g_src, geo_q=g_tgt)
     loss_sparse = Z_q_tilde_sparse.sum()
     loss_sparse.backward()
-    
+
     assert Z_q.grad is not None
     assert Z_kv.grad is not None
     assert Z_q.grad.shape == Z_q.shape
     assert Z_kv.grad.shape == Z_kv.shape
-    
+
     # gradients of parameters
     for param in attn_module.parameters():
         assert param.grad is not None
         assert param.grad.shape == param.shape
         assert not torch.all(param.grad == 0)
+
+
+def test_geo_attn_mode_construction() -> None:
+    add = attention.GeometryAwareMHA(
+        embed_dim=16, num_heads=4, d_geo_bias=8, geo_attn_mode="additive"
+    )
+    assert add.geo_attn_mode == "additive"
+    assert add.f_geo is not None
+    assert add.geo_kernel is None
+
+    te = attention.GeometryAwareMHA(
+        embed_dim=16, num_heads=4, d_geo_bias=8, geo_attn_mode="tetnp"
+    )
+    assert te.geo_attn_mode == "tetnp"
+    assert te.f_geo is None
+    assert te.geo_kernel is not None
+    # kernel maps (d_geo_bias + num_heads) -> num_heads
+    first = te.geo_kernel[0]
+    last = te.geo_kernel[-1]
+    assert first.in_features == 8 + 4
+    assert last.out_features == 4
+
+    van = attention.GeometryAwareMHA(
+        embed_dim=16, num_heads=4, d_geo_bias=8, geo_attn_mode="vanilla"
+    )
+    assert van.geo_attn_mode == "vanilla"
+    assert van.f_geo is None
+    assert van.geo_kernel is None
+
+
+def test_geo_attn_mode_validation() -> None:
+    with pytest.raises(ValueError):
+        attention.GeometryAwareMHA(
+            embed_dim=16, num_heads=4, d_geo_bias=8, geo_attn_mode="bogus"
+        )
+    # tetnp with no geometry has nothing to consume -> error
+    with pytest.raises(ValueError):
+        attention.GeometryAwareMHA(
+            embed_dim=16, num_heads=4, d_geo_bias=None, geo_attn_mode="tetnp"
+        )
+    # vanilla needs no geometry -> must NOT raise
+    attention.GeometryAwareMHA(
+        embed_dim=16, num_heads=4, d_geo_bias=None, geo_attn_mode="vanilla"
+    )
+
+
+def test_vanilla_ignores_geometry(setup_data: Dict[str, Any]) -> None:
+    d = setup_data
+    if d["dropout"] != 0.0:
+        pytest.skip("determinism check only needed once")
+    attn = attention.GeometryAwareMHA(
+        embed_dim=d["D"], num_heads=d["num_heads"],
+        d_geo_bias=d["d_geo_bias"], dropout=0.0, geo_attn_mode="vanilla",
+    )
+    for sparse in (False, True):
+        attn.sparse_attn = sparse
+        out_a, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
+                        attn_edges=d["edges_memory"], geo_k=d["g_src"], geo_q=d["g_tgt"])
+        # different geometry, identical everything else -> identical output
+        out_b, _ = attn(d["Z_q"], d["Z_kv"], d["Z_kv"],
+                        attn_edges=d["edges_memory"],
+                        geo_k=d["g_src"] + 3.0, geo_q=d["g_tgt"] - 1.0)
+        assert torch.isfinite(out_a).all()
+        assert torch.allclose(out_a, out_b, atol=1e-6)
