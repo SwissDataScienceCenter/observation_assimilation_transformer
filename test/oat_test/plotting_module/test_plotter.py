@@ -821,6 +821,13 @@ class TestOverlayStations:
         assert obs_scatter is not None
         plt.close(fig)
 
+    def test_public_overlay_stations_draws_observed(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        fig, ax = plt.subplots()
+        plotter.overlay_stations(ax, time_idx=0, var_idx=0)
+        assert any(c.get_label() == "observed" for c in ax.collections)
+        plt.close(fig)
+
 
 # ── plot_domain_overview ───────────────────────────────────────────────────
 

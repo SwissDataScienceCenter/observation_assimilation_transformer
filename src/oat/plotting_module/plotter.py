@@ -139,6 +139,22 @@ class OATPlotter:
             time_idx, query_coords, predictor=predictor, stage=stage
         )
 
+    def overlay_stations(
+        self,
+        ax: Any,
+        time_idx: int,
+        var_idx: int,
+        mesh: Any = None,
+        color_by: dict[int, float] | None = None,
+    ) -> None:
+        """Public wrapper around :meth:`_overlay_stations`.
+
+        Observed context stations are drawn as circles and evaluation stations
+        as squares, coloured by observed value (or by *color_by*) when *mesh*
+        is given. See :meth:`_overlay_stations` for details.
+        """
+        self._overlay_stations(ax, time_idx, var_idx, mesh=mesh, color_by=color_by)
+
     def _overlay_stations(
         self,
         ax: Any,
