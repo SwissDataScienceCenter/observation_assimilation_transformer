@@ -1,5 +1,9 @@
 #!/bin/bash
 #
+# DEPRECATED: use the central dispatcher instead, e.g.
+#   python -m scripts.train --model ootg --dataset cosmo_peakweather/temp --submit
+# See scripts/submit_training.sh / scripts/train.py.
+#
 # Usage:
 #   sbatch scripts/submit_ootg_training.sh                                      # COSMO temp (default)
 #   sbatch scripts/submit_ootg_training.sh dataset=cosmo_peakweather/temp_precip

@@ -164,7 +164,8 @@ def main(cfg: DictConfig) -> None:
         "_nwponly" if ablate_obs else "_obsonly" if ablate_grid else ""
     )
     dataset_tag = f"{full_ds.config.dataset_type}_{'_'.join(obs_vars)}"
-    run_name = f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
+    default_run_name = f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
+    run_name = cfg.get("run_name", default_run_name)
     group = cfg.logging.get("group", "ootg_baseline")
 
     checkpoint_dir = f"checkpoints/{group}/{run_name}"

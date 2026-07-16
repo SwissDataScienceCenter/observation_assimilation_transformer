@@ -214,6 +214,7 @@ def setup_gp_predictor(
         gp_topography_kwargs = {
             **dict(model_cfg.topographic_encoder),
             "in_channels": len(data_cfg.topo_vars),
+            "out_channels": int(model_cfg.d_model) // 2,
         }
 
     gp_config = GPBaselineConfig(
