@@ -1,6 +1,7 @@
 defaults:
   - dataset: cosmo_peakweather/temp
   - split: default
+  - dataloader: default   # unused in training; persisted so evaluate_test_set.py can load this run
   - logging: default
   - _self_
 

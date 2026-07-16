@@ -24,14 +24,36 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
+from oat.predictor_module.checkpoint_utils import (
+    _DEFAULT_REGISTRY,
+    load_checkpoint,
+    resolve_checkpoint,
+)
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
+
+# Weightless NWP-interpolation baseline: no checkpoint of its own, so it borrows
+# the data config from any sibling checkpoint of the same dataset.
+INTERPOLATOR_MODEL = "interpolator"
+
+
+def _sibling_checkpoint(dataset: str) -> str:
+    """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
+    registry = OmegaConf.load(_DEFAULT_REGISTRY)
+    models = registry.get(dataset) or {}
+    for model, path in models.items():
+        if model != INTERPOLATOR_MODEL and path is not None:
+            return str(path)
+    raise ValueError(
+        f"No sibling checkpoint to borrow a data config from for the "
+        f"interpolator on dataset={dataset!r}."
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -107,19 +129,34 @@ def main() -> None:
 
     args = _parse_args()
 
-    if args.checkpoint is None:
-        if args.dataset is None or args.model is None:
-            logging.getLogger(__name__).error(
-                "Provide either a checkpoint path or both --dataset and --model."
-            )
-            raise SystemExit(2)
-        args.checkpoint = resolve_checkpoint(args.dataset, args.model)
+    is_interpolator = args.model == INTERPOLATOR_MODEL
 
-    predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
+    if is_interpolator:
+        # Borrow the data config from a sibling checkpoint; build predictor below.
+        cfg = OmegaConf.load(Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml")
+        predictor = None
+    else:
+        if args.checkpoint is None:
+            if args.dataset is None or args.model is None:
+                logging.getLogger(__name__).error(
+                    "Provide either a checkpoint path or both --dataset and --model."
+                )
+                raise SystemExit(2)
+            args.checkpoint = resolve_checkpoint(args.dataset, args.model)
+        predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
+        predictor = predictor.eval()
+
     cfg.dataset.data_points_for_stats = 0
-    predictor = predictor.eval()
 
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
+
+    if is_interpolator:
+        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
+        predictor = NWPInterpolatorPredictor(
+            config=nwp_config,
+            output_var_names=dataset.config.obs_vars,
+            input_transform=dataset.get_baseline_pre_transform(),
+        ).eval()
 
     split_loader = val_loader if args.split == "val" else test_loader
     split_ds = split_loader.dataset  # EvalDataset
@@ -150,7 +187,7 @@ def main() -> None:
     )
 
     nwp_predictor = None
-    if args.baseline:
+    if args.baseline and not is_interpolator:
         nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
         nwp_predictor = NWPInterpolatorPredictor(
             config=nwp_config,
@@ -179,7 +216,11 @@ def main() -> None:
             rows[f"{key}_{var}"] = tensor[:, vi].tolist()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_tag = Path(args.checkpoint).parent.name
+    ckpt_tag = (
+        f"{INTERPOLATOR_MODEL}_{args.dataset}"
+        if is_interpolator
+        else Path(args.checkpoint).parent.name
+    )
     out_path = Path(args.out) if args.out else OUT_DIR / f"{ckpt_tag}_metrics_{args.split}.csv"
     pd.DataFrame(rows).to_csv(out_path, index=False)
     logger.info("Saved → %s", out_path)

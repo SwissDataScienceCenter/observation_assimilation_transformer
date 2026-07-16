@@ -43,11 +43,19 @@ with open("$REGISTRY") as f:
 for dataset, models in (registry or {}).items():
     if "$FILTER_DATASET" and dataset != "$FILTER_DATASET":
         continue
-    for model, path in (models or {}).items():
+    models = models or {}
+    has_ckpt = False
+    for model, path in models.items():
+        if path is not None:
+            has_ckpt = True
         if "$FILTER_MODEL" and model != "$FILTER_MODEL":
             continue
         if path is not None:
             print(f"{dataset}\t{model}")
+    # Weightless interpolator baseline: one job per dataset (needs a sibling
+    # checkpoint to borrow the data config from).
+    if has_ckpt and (not "$FILTER_MODEL" or "$FILTER_MODEL" == "interpolator"):
+        print(f"{dataset}\tinterpolator")
 PYEOF
 )
 
