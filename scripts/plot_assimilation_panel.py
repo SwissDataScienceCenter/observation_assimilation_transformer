@@ -132,6 +132,13 @@ def main() -> None:
     xs, ys = build_domain_grid(
         dataset, resolution=args.resolution, center=center, extent=args.extent
     )
+    if args.resolution is None:
+        # build_domain_grid's default (~100 cells across the width) is too coarse
+        # for a publication figure; refine to ~250 cells across the same extent.
+        fine_res = (xs[-1] - xs[0]) / 250.0
+        xs, ys = build_domain_grid(
+            dataset, resolution=fine_res, center=center, extent=args.extent
+        )
     x_grid, y_grid = np.meshgrid(xs, ys)
     grid_coords = torch.tensor(
         np.stack([x_grid.ravel(), y_grid.ravel()], axis=1), dtype=torch.float32
@@ -152,7 +159,9 @@ def main() -> None:
         )
 
     n_rows = len(variables)
-    fig, axes = plt.subplots(n_rows, 4, figsize=(20, 5 * n_rows), squeeze=False)
+    # Row height tuned to the equal-aspect panel height (domain is wide and short)
+    # so rows sit close together instead of leaving a large vertical gap.
+    fig, axes = plt.subplots(n_rows, 4, figsize=(20, 3.4 * n_rows), squeeze=False)
 
     for row, var in enumerate(variables):
         var_idx = predictor_oat.var_to_indx[var]
@@ -233,6 +242,12 @@ def main() -> None:
         )
         axes[row, 3].set_title(f"pre-OAT - OAT — {var} — {time_iso}", fontsize=9)
         fig.colorbar(mesh_d, ax=axes[row, 3], label=f"Δ{var}", shrink=0.8)
+
+    # Equal aspect so the fields are not horizontally squeezed (LV95 x/y share
+    # units; degrees are shown plate-carrée). Done outside the borders try so it
+    # always applies even if the geo overlay fails.
+    for ax in axes.ravel():
+        ax.set_aspect("equal")
 
     try:
         _add_borders(list(axes.ravel()), xs, ys)
