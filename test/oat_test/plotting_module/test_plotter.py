@@ -1132,3 +1132,17 @@ def test_plot_domain_overview_first_panel_applies_configured_vmin():
     mesh = next(c for c in fig.axes[0].get_children() if hasattr(c, "get_clim"))
     assert mesh.norm.vmin == 0.0
     plt.close(fig)
+
+
+def test_draw_field_returns_mesh_and_sets_limits():
+    plotter = OATPlotter(_make_predictor(), _make_dataset())
+    fig, ax = plt.subplots()
+    xs = np.linspace(0.0, 10.0, 5)
+    ys = np.linspace(0.0, 20.0, 4)
+    field = np.zeros((4, 5))
+    mesh = plotter.draw_field(ax, field, xs, ys, cmap="viridis", vmin=0.0, vmax=1.0)
+    assert mesh is not None
+    assert abs(ax.get_xlim()[1] - 10.0) < 1e-6
+    assert abs(ax.get_ylim()[1] - 20.0) < 1e-6
+    assert mesh.norm.vmin == 0.0 and mesh.norm.vmax == 1.0
+    plt.close(fig)

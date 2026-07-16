@@ -1023,3 +1023,25 @@ class OATPlotter:
 
         fig.tight_layout()
         return fig
+
+    def draw_field(
+        self,
+        ax: Any,
+        field: np.ndarray,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        cmap: Any = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+    ) -> Any:
+        """Draw a precomputed (len(ys), len(xs)) field and return the QuadMesh.
+
+        Clamps the axis limits to the grid span. Colormap/limits are applied
+        as given (the caller may re-scale later via ``mesh.set_clim``).
+        """
+        mesh = ax.pcolormesh(
+            xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
+        )
+        ax.set_xlim(float(xs[0]), float(xs[-1]))
+        ax.set_ylim(float(ys[0]), float(ys[-1]))
+        return mesh
