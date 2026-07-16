@@ -113,6 +113,38 @@ def test_run_inference_with_baseline_predictor():
     assert predictor.predict_step.call_args[1]["n_samples"] == n_samples
 
 
+def test_run_inference_passes_stage_for_pre_oat():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    plotter._run_inference(0, torch.zeros(3, 2), stage="pre_oat")
+    assert predictor.predict_step.call_args.kwargs.get("stage") == "pre_oat"
+
+
+def test_run_inference_omits_stage_for_oat():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    plotter._run_inference(0, torch.zeros(3, 2))
+    assert "stage" not in predictor.predict_step.call_args.kwargs
+
+
+def test_predict_samples_threads_predictor_and_stage():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    other = _make_baseline_predictor(N_q=3, n_samples=10, n_vars=2)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    out = plotter.predict_samples(torch.zeros(3, 2), 0, predictor=other, stage="oat")
+    assert out.shape == (3, 10, 2)
+    other.predict_step.assert_called_once()
+
+
 def test_plot_timeseries_draws_line_and_band():
     predictor = _make_predictor(N_q=1, n_samples=10)
     dataset = _make_dataset(n_stations=5, n_times=4)
