@@ -406,11 +406,19 @@ class OATPredictor(BasePredictor):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None) -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None, stage: Literal['oat', 'pre_oat'] = 'oat') -> torch.Tensor:
         batch = self._normalize_batch(batch)
         if return_as == 'samples':
             with torch.no_grad():
                 y_hat = self(batch, return_loss_and_targets=False, n_samples=n_samples)
+            if stage == 'pre_oat':
+                if 'pre_oat_output' not in y_hat:
+                    raise ValueError(
+                        "stage='pre_oat' requested but the model produced no "
+                        "'pre_oat_output' (only informed OAT models have an "
+                        "assimilation block to ablate)."
+                    )
+                return self.output_transform.inverse(y_hat['pre_oat_output']['samples'])
             return self.output_transform.inverse(y_hat['samples'])
         elif return_as == 'distribution':
             y_hat = self(batch, return_loss_and_targets=False)
