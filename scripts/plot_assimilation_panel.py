@@ -169,9 +169,11 @@ def main() -> None:
         )
 
     n_rows = len(variables)
-    # Row height tuned to the equal-aspect panel height (domain is wide and short)
-    # so rows sit close together instead of leaving a large vertical gap.
-    fig, axes = plt.subplots(n_rows, 4, figsize=(20, 3.4 * n_rows), squeeze=False)
+    # constrained_layout packs the equal-aspect panels and colorbars tightly,
+    # removing the large gaps a plain grid leaves around wide-and-short maps.
+    fig, axes = plt.subplots(
+        n_rows, 4, figsize=(20, 3.4 * n_rows), squeeze=False, layout="constrained"
+    )
 
     for row, var in enumerate(variables):
         var_idx = predictor_oat.var_to_indx[var]
@@ -225,10 +227,13 @@ def main() -> None:
         fig.colorbar(meshes[-1], ax=list(axes[row, :3]), label=clabel, shrink=0.85)
 
         # Column 4: pre_oat - oat difference; stations coloured by pre_oat - obs.
+        # Use a diverging colormap distinct from the field cmaps (temperature is
+        # RdBu_r, precipitation is Blues) so the difference panels are not
+        # confused with the prediction panels.
         diff = pre_field - oat_field
         vmax_d = float(np.nanmax(np.abs(diff))) or 1.0
         mesh_d = plotter.draw_field(
-            axes[row, 3], diff, xs, ys, cmap="RdBu_r", vmin=-vmax_d, vmax=vmax_d
+            axes[row, 3], diff, xs, ys, cmap="PuOr", vmin=-vmax_d, vmax=vmax_d
         )
         colored = [
             s
@@ -273,7 +278,7 @@ def main() -> None:
         ax.set_yticks([])
 
     nice_time = dataset.times[time_idx].strftime("%Y-%m-%d %H:%M UTC")
-    fig.suptitle(nice_time, fontsize=15, y=0.98)
+    fig.suptitle(nice_time, fontsize=15)
 
     try:
         _add_borders(list(axes.ravel()), xs, ys)
