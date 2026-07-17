@@ -1,6 +1,7 @@
 defaults:
   - dataset: cosmo_peakweather/temp
   - split: default
+  - dataloader: default   # unused in training; persisted so evaluate_test_set.py can load this run
   - logging: default
   - _self_
 
@@ -9,6 +10,7 @@ hydra:
     dir: outputs/ootg_baseline/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # Data
+run_name: null             # override the auto-generated checkpoint/W&B run name
 norm_samples: 500          # timesteps sampled to estimate normalization stats
 nwp_stride: null           # grid coarsening; null → 10 for COSMO, 4 for ERA5
 pc_context: 0.8            # fraction of valid stations used as context during training

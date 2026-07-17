@@ -95,6 +95,44 @@ def _load_ootg_predictor(
     return predictor, cfg
 
 
+def _load_gp_predictor(
+    path: Path,
+    cfg: DictConfig,
+    map_location: str | None,
+) -> Tuple[pl.LightningModule, DictConfig]:
+    """Load a GPPredictor from a GP checkpoint.
+
+    ``GPPredictor.__init__`` needs the (weightless) GP model and the
+    input/output transforms, none of which are stored as reconstructable
+    hyperparameters, so ``load_from_checkpoint`` cannot rebuild it. Instead we
+    reconstruct the predictor from the config + dataset and then restore every
+    weight from the checkpoint. The transforms are ``nn.Module`` buffers saved
+    in the state_dict, so we only need correctly-shaped transforms here — the
+    fitted values are overwritten by ``load_state_dict`` — which lets us skip the
+    (slow) normalization-stats gathering.
+    """
+    import logging
+
+    from oat.data_module.setup import setup_data_and_transform
+    from oat.predictor_module.gp_predictor import setup_gp_predictor
+
+    logger = logging.getLogger(__name__)
+    cfg.dataset.data_points_for_stats = 0
+    dataset, _, _, _, _, input_transform, output_transform = setup_data_and_transform(
+        cfg, logger
+    )
+
+    predictor = setup_gp_predictor(
+        cfg=cfg,
+        field_extent={k: v.tolist() for k, v in dataset.nwp_extent.items()},
+        obs_vars=list(dataset.config.obs_vars),
+        transforms=(input_transform, output_transform),
+    )
+    state = torch.load(path, map_location=map_location, weights_only=False)
+    predictor.load_state_dict(state["state_dict"])
+    return predictor, cfg
+
+
 def resolve_checkpoint(
     dataset: str,
     model: str,
@@ -136,6 +174,9 @@ def load_checkpoint(
 
     if (path.parent / "ootg_stats.pt").exists():
         return _load_ootg_predictor(path, cfg, map_location)
+
+    if "GPBaseline" in str((cfg.get("model") or {}).get("model_cls", "")):
+        return _load_gp_predictor(path, cfg, map_location)
 
     if predictor_cls is None:
         predictor_cls = _predictor_cls_from_config(cfg)

@@ -1,5 +1,9 @@
 #!/bin/bash
 #
+# DEPRECATED: use the central dispatcher instead, e.g.
+#   python -m scripts.train --model gp --dataset cosmo_peakweather/temp --submit
+# See scripts/submit_training.sh / scripts/train.py.
+#
 # Usage:
 #   sbatch scripts/submit_gp_training.sh                                  # GP training (default)
 #   sbatch scripts/submit_gp_training.sh --env uv                         # Use uv venv

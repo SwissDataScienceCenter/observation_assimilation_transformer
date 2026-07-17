@@ -15,7 +15,7 @@ import hydra
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
@@ -41,7 +41,9 @@ def main(cfg: DictConfig) -> None:
     full_ds = _instantiate_dataset(cfg)
     splits = create_splits(full_ds, **cfg.split, logger=log)
     train_wrap, val_wrap, _ = splits["datasets"]
-    train_station_indices, val_station_indices, _ = splits["station_indices"]
+    train_station_indices, val_station_indices, test_station_indices = splits[
+        "station_indices"
+    ]
     train_station_indices = np.array(train_station_indices)
     val_station_indices = np.array(val_station_indices)
 
@@ -164,7 +166,8 @@ def main(cfg: DictConfig) -> None:
         "_nwponly" if ablate_obs else "_obsonly" if ablate_grid else ""
     )
     dataset_tag = f"{full_ds.config.dataset_type}_{'_'.join(obs_vars)}"
-    run_name = f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
+    default_run_name = f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
+    run_name = cfg.get("run_name") or default_run_name
     group = cfg.logging.get("group", "ootg_baseline")
 
     checkpoint_dir = f"checkpoints/{group}/{run_name}"
@@ -173,6 +176,15 @@ def main(cfg: DictConfig) -> None:
     # Save config and normalization stats so evaluate_test_set.py can load this checkpoint.
     # Guard to rank 0: torch.save is not atomic, and all ranks have identical content.
     if int(os.environ.get("SLURM_PROCID", 0)) == 0:
+        # Persist the resolved station split (regenerated from the global seed
+        # otherwise) and a `model.transform_type` key so evaluate_test_set.py can
+        # drive setup_data_and_transform from this config alone. `dataloader` is
+        # provided via the config defaults; it is unused during training.
+        with open_dict(cfg):
+            cfg.split.train_station_indices = [int(i) for i in train_station_indices]
+            cfg.split.val_station_indices = [int(i) for i in val_station_indices]
+            cfg.split.test_station_indices = [int(i) for i in test_station_indices]
+            cfg.model = {"transform_type": cfg.get("transform_type", "keep_support")}
         OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
     _coord_fn_name = (
         "lv95_to_latlon"

@@ -1,4 +1,4 @@
 variable_to_distribution: ${dataset.obs_variable_to_distribution}
-observation_assimilation_as: innovation
+observation_assimilation_as: target
 loss_scaling: null
 crps_mc_samples: 50
