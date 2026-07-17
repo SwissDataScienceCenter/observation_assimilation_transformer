@@ -303,11 +303,21 @@ def main() -> None:
             markersize=8,
             label="Evaluation station (held out)",
         ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
+            markerfacecolor="white",
+            markeredgecolor="grey",
+            markersize=8,
+            label="Missing observation",
+        ),
     ]
     fig.legend(
         handles=station_handles,
         loc="outside lower center",
-        ncol=2,
+        ncol=3,
         frameon=False,
         fontsize=12,
     )
