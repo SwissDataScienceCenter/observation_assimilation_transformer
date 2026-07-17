@@ -207,6 +207,9 @@ def main() -> None:
                 vmin=var_cfg.get("vmin"),
                 vmax=var_cfg.get("vmax"),
             )
+            # Rasterize the dense field so PDF output stays small and renders
+            # cleanly; markers, borders and text remain vector.
+            mesh.set_rasterized(True)
             meshes.append(mesh)
             if row == 0:
                 axes[row, col].set_title(name, fontsize=13)
@@ -236,6 +239,7 @@ def main() -> None:
         mesh_d = plotter.draw_field(
             axes[row, 3], diff, xs, ys, cmap="PuOr", vmin=-vmax_d, vmax=vmax_d
         )
+        mesh_d.set_rasterized(True)
         colored = [
             s
             for s in sorted(set(obs_station_indices) | set(eval_indices))
@@ -291,7 +295,7 @@ def main() -> None:
             markerfacecolor="none",
             markeredgecolor="black",
             markersize=8,
-            label="Context station (assimilated)",
+            label="Training/evaluation station (assimilated)",
         ),
         Line2D(
             [0],
@@ -301,7 +305,7 @@ def main() -> None:
             markerfacecolor="none",
             markeredgecolor="black",
             markersize=8,
-            label="Evaluation station (held out)",
+            label="Test station (held out)",
         ),
         Line2D(
             [0],
