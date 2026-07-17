@@ -55,6 +55,15 @@ def _load_plot_config(dataset):
     return None
 
 
+def _load_units(dataset_name: str) -> dict[str, str]:
+    """Map observed-variable name -> unit string from the dataset catalog."""
+    path = _PROJECT_ROOT / f"configs/dataset/{dataset_name}/catalog.yaml"
+    if not path.exists():
+        return {}
+    obs = OmegaConf.load(path).get("obs_vars", {}) or {}
+    return {v: str(obs[v].get("unit", "")) for v in obs}
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dataset", default="cosmo_peakweather")
@@ -63,7 +72,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--center", nargs=2, type=float, default=None, metavar=("E", "N"))
     p.add_argument("--extent", type=float, default=None)
     p.add_argument("--resolution", type=float, default=None)
-    p.add_argument("--n-samples", type=int, default=100)
+    p.add_argument("--n-samples", type=int, default=200)
     p.add_argument("--out", default=None)
     return p.parse_args()
 
@@ -116,6 +125,7 @@ def main() -> None:
 
     variables = args.variables or list(predictor_oat.var_to_indx.keys())
     plot_config = _load_plot_config(dataset)
+    units = _load_units(args.dataset)
     logger.info("Variables (rows): %s at %s", variables, time_iso)
 
     plotter = OATPlotter(
@@ -174,9 +184,12 @@ def main() -> None:
         pre_field = _mean_field(var_idx, stage="pre_oat")
         oat_field = _mean_field(var_idx, stage="oat")
 
+        unit = units.get(var, "")
+        var_label = var.capitalize()
+
         # Columns 1-3: shared colormap + harmonized limits.
         panels = [
-            ("NWP interp.", nwp_field),
+            ("NWP interpolation", nwp_field),
             ("Pre-OAT", pre_field),
             ("OAT", oat_field),
         ]
@@ -192,7 +205,8 @@ def main() -> None:
                 vmax=var_cfg.get("vmax"),
             )
             meshes.append(mesh)
-            axes[row, col].set_title(f"{name} — {var} — {time_iso}", fontsize=9)
+            if row == 0:
+                axes[row, col].set_title(name, fontsize=13)
         vmin = float(
             np.nanmin([np.nanmin(f) for f in (nwp_field, pre_field, oat_field)])
         )
@@ -204,7 +218,11 @@ def main() -> None:
             plotter.overlay_stations(
                 axes[row, col], time_idx, var_idx, mesh=meshes[col]
             )
-        fig.colorbar(meshes[-1], ax=list(axes[row, :3]), label=var, shrink=0.8)
+        axes[row, 0].set_ylabel(
+            f"{var_label} [{unit}]" if unit else var_label, fontsize=13
+        )
+        clabel = f"{var_label} [{unit}]" if unit else var_label
+        fig.colorbar(meshes[-1], ax=list(axes[row, :3]), label=clabel, shrink=0.85)
 
         # Column 4: pre_oat - oat difference; stations coloured by pre_oat - obs.
         diff = pre_field - oat_field
@@ -240,14 +258,22 @@ def main() -> None:
         plotter.overlay_stations(
             axes[row, 3], time_idx, var_idx, mesh=mesh_d, color_by=color_by
         )
-        axes[row, 3].set_title(f"pre-OAT - OAT — {var} — {time_iso}", fontsize=9)
-        fig.colorbar(mesh_d, ax=axes[row, 3], label=f"Δ{var}", shrink=0.8)
+        if row == 0:
+            axes[row, 3].set_title("Pre-OAT − OAT", fontsize=13)  # noqa: RUF001
+        dlabel = f"Δ {var_label} [{unit}]" if unit else f"Δ {var_label}"
+        fig.colorbar(mesh_d, ax=axes[row, 3], label=dlabel, shrink=0.85)
 
     # Equal aspect so the fields are not horizontally squeezed (LV95 x/y share
-    # units; degrees are shown plate-carrée). Done outside the borders try so it
-    # always applies even if the geo overlay fails.
+    # units; degrees are shown plate-carrée). Drop coordinate ticks for clean
+    # map panels — the borders/coastline convey geography. Done outside the
+    # borders try so it always applies even if the geo overlay fails.
     for ax in axes.ravel():
         ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    nice_time = dataset.times[time_idx].strftime("%Y-%m-%d %H:%M UTC")
+    fig.suptitle(nice_time, fontsize=15, y=0.98)
 
     try:
         _add_borders(list(axes.ravel()), xs, ys)
