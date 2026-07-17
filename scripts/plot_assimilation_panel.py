@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+from matplotlib.lines import Line2D
 from omegaconf import OmegaConf
 
 from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
@@ -279,6 +280,37 @@ def main() -> None:
 
     nice_time = dataset.times[time_idx].strftime("%Y-%m-%d %H:%M UTC")
     fig.suptitle(nice_time, fontsize=15)
+
+    # Shape legend for station markers (fill encodes the per-panel value/colorbar).
+    station_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
+            markerfacecolor="none",
+            markeredgecolor="black",
+            markersize=8,
+            label="Context station (assimilated)",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="s",
+            linestyle="none",
+            markerfacecolor="none",
+            markeredgecolor="black",
+            markersize=8,
+            label="Evaluation station (held out)",
+        ),
+    ]
+    fig.legend(
+        handles=station_handles,
+        loc="outside lower center",
+        ncol=2,
+        frameon=False,
+        fontsize=12,
+    )
 
     try:
         _add_borders(list(axes.ravel()), xs, ys)
