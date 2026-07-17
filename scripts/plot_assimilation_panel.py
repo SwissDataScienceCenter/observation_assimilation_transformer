@@ -273,6 +273,14 @@ def main() -> None:
         dlabel = f"Δ {var_label} [{unit}]" if unit else f"Δ {var_label}"
         fig.colorbar(mesh_d, ax=axes[row, 3], label=dlabel, shrink=0.85)
 
+    # Drop the grey "missing" evaluation-station squares (test stations with no
+    # observation at this timestep) for a cleaner figure. The legend uses proxy
+    # handles, so removing these collections does not affect it.
+    for ax in axes.ravel():
+        for coll in list(ax.collections):
+            if coll.get_label() == "eval missing":
+                coll.remove()
+
     # Equal aspect so the fields are not horizontally squeezed (LV95 x/y share
     # units; degrees are shown plate-carrée). Drop coordinate ticks for clean
     # map panels — the borders/coastline convey geography. Done outside the
