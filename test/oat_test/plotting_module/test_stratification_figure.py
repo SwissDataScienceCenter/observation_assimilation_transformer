@@ -2,8 +2,10 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.container
 import numpy as np
 import pandas as pd
+from matplotlib.patches import PathPatch
 
 from oat.plotting_module.stratification import (
     STRATIFIERS,
@@ -45,6 +47,15 @@ def test_figure_grid_shape():
     # rows = 2 variables, cols = 5 stratifiers
     assert len(fig.axes) >= 2 * len(STRATIFIERS)
     assert STRATIFIERS == ["season", "elevation", "nearest_obs_dist", "lon", "lat"]
+
+    # Panels must draw boxplot boxes (PathPatch, since patch_artist=True), not bars.
+    assert any(isinstance(p, PathPatch) for ax in fig.axes for p in ax.patches)
+    assert not any(
+        isinstance(c, matplotlib.container.BarContainer)
+        for ax in fig.axes
+        for c in ax.containers
+    )
+
     import matplotlib.pyplot as plt
 
     plt.close(fig)

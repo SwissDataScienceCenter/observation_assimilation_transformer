@@ -145,6 +145,40 @@ def _bin_label(edges: NDArray, i: int) -> str:
     return fmt.format(lo, hi)
 
 
+def _bin_keys(
+    df: pd.DataFrame, stratifier: str, nbins: int
+) -> tuple[NDArray, list[Any], dict[Any, str], dict[Any, int]]:
+    """Return (keys, present, label_for, order_for) for a stratifier column.
+
+    keys: per-row bin key aligned to df rows (season string, or int bin index).
+    present: ordered list of bin keys that occur.
+    label_for: bin key -> display label.
+    order_for: bin key -> integer sort order.
+    """
+    keys: NDArray
+    present: list[Any]
+    label_for: dict[Any, str]
+    order_for: dict[Any, int]
+
+    if stratifier == "season":
+        keys = df["season"].to_numpy()
+        present = [s for s in SEASONS if s in set(keys)]
+        label_for = {s: s for s in present}
+        order_for = {s: i for i, s in enumerate(present)}
+        return keys, present, label_for, order_for
+
+    values = df[stratifier].to_numpy(dtype=float)
+    # Guard against all-NaN stratifier
+    if np.isfinite(values).sum() == 0:
+        return np.array([]), [], {}, {}
+    idx, edges = _assign_fixed_width_bins(values, nbins)
+    keys = idx.astype(int)
+    present = sorted(set(int(i) for i in idx))
+    label_for = {i: _bin_label(edges, i) for i in present}
+    order_for = {i: i for i in present}
+    return keys, present, label_for, order_for
+
+
 def stratified_bar_stats(
     df: pd.DataFrame,
     stratifier: str,
@@ -163,28 +197,9 @@ def stratified_bar_stats(
     if len(df) == 0:
         return pd.DataFrame(columns=["bin", "bin_order", "model", "mean", "se", "n"])
 
-    keys: NDArray
-    present: list[Any]
-    label_for: dict[Any, str]
-    order_for: dict[Any, int]
-
-    if stratifier == "season":
-        keys = df["season"].to_numpy()
-        present = [s for s in SEASONS if s in set(keys)]
-        label_for = {s: s for s in present}
-        order_for = {s: i for i, s in enumerate(present)}
-    else:
-        values = df[stratifier].to_numpy(dtype=float)
-        # Guard against all-NaN stratifier
-        if np.isfinite(values).sum() == 0:
-            return pd.DataFrame(
-                columns=["bin", "bin_order", "model", "mean", "se", "n"]
-            )
-        idx, edges = _assign_fixed_width_bins(values, nbins)
-        keys = idx.astype(int)
-        present = sorted(set(int(i) for i in idx))
-        label_for = {i: _bin_label(edges, i) for i in present}
-        order_for = {i: i for i in present}
+    keys, present, label_for, order_for = _bin_keys(df, stratifier, nbins)
+    if len(present) == 0:
+        return pd.DataFrame(columns=["bin", "bin_order", "model", "mean", "se", "n"])
 
     models = list(df[model_col].unique())
     records: list[dict[str, Any]] = []
@@ -230,8 +245,9 @@ def make_stratification_figure(
     model_order: list[str],
     nbins: int = 5,
 ) -> Any:
-    """Build the rows=variables x cols=stratifiers grouped-bar figure."""
+    """Build the rows=variables x cols=stratifiers grouped-boxplot figure."""
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     nrows = len(var_names)
     ncols = len(STRATIFIERS)
@@ -246,34 +262,38 @@ def make_stratification_figure(
         metric_col = f"{metric}_{var}"
         for c, strat in enumerate(STRATIFIERS):
             ax = axes[r][c]
-            stats = stratified_bar_stats(df, strat, metric_col, nbins=nbins)
-            order_rows = (
-                stats[["bin_order", "bin"]].drop_duplicates().sort_values("bin_order")
-            )
-            bins = order_rows["bin"].tolist()
-            bin_orders = order_rows["bin_order"].tolist()
-            x = np.arange(len(order_rows))
-            for k, model in enumerate(model_order):
-                sub = stats[stats["model"] == model].set_index("bin_order")
-                means_dict = sub["mean"].to_dict()
-                ses_dict = sub["se"].to_dict()
-                means = [means_dict.get(bo, np.nan) for bo in bin_orders]
-                ses = [ses_dict.get(bo, 0.0) for bo in bin_orders]
-                ax.bar(
-                    x + (k - (len(model_order) - 1) / 2) * width,
-                    means,
-                    width=width,
-                    yerr=ses,
-                    capsize=2,
-                    color=color_of[model],
-                    label=model if (r == 0 and c == 0) else None,
-                )
+            keys, present, label_for, _order_for = _bin_keys(df, strat, nbins)
+            x = np.arange(len(present))
+            model_arr = df["model"].to_numpy()
+            metric_arr = df[metric_col].to_numpy(dtype=float)
+            for i, b in enumerate(present):
+                sel = keys == b
+                for k, model in enumerate(model_order):
+                    m = sel & (model_arr == model)
+                    vals = metric_arr[m]
+                    vals = vals[np.isfinite(vals)]
+                    if vals.size == 0:
+                        continue
+                    pos = x[i] + (k - (len(model_order) - 1) / 2) * width
+                    bp = ax.boxplot(
+                        vals,
+                        positions=[pos],
+                        widths=width * 0.9,
+                        patch_artist=True,
+                        showfliers=False,
+                        manage_ticks=False,
+                    )
+                    for box in bp["boxes"]:
+                        box.set_facecolor(color_of[model])
             ax.set_xticks(x)
-            ax.set_xticklabels(bins, rotation=45, ha="right", fontsize=8)
+            ax.set_xticklabels(
+                [label_for[b] for b in present], rotation=45, ha="right", fontsize=8
+            )
             if r == 0:
                 ax.set_title(_STRATIFIER_LABEL[strat])
             if c == 0:
                 ax.set_ylabel(f"{metric.upper()} — {var}")
-    fig.legend(loc="upper right", ncol=len(model_order))
+    proxies = [Patch(facecolor=color_of[m], label=m) for m in model_order]
+    fig.legend(handles=proxies, loc="upper right", ncol=len(model_order))
     fig.tight_layout()
     return fig
