@@ -201,3 +201,66 @@ def stratified_bar_stats(
     return (
         pd.DataFrame(records).sort_values(["bin_order", "model"]).reset_index(drop=True)
     )
+
+
+STRATIFIERS = ["season", "elevation", "nearest_obs_dist", "lon", "lat"]
+
+_STRATIFIER_LABEL = {
+    "season": "season",
+    "elevation": "elevation [m]",
+    "nearest_obs_dist": "dist. to nearest obs",
+    "lon": "longitude",
+    "lat": "latitude",
+}
+
+
+def make_stratification_figure(
+    df: pd.DataFrame,
+    var_names: list[str],
+    metric: str,
+    model_order: list[str],
+    nbins: int = 5,
+) -> Any:
+    """Build the rows=variables x cols=stratifiers grouped-bar figure."""
+    import matplotlib.pyplot as plt
+
+    nrows = len(var_names)
+    ncols = len(STRATIFIERS)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4 * ncols, 3.2 * nrows), squeeze=False
+    )
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    color_of = {m: colors[i % len(colors)] for i, m in enumerate(model_order)}
+    width = 0.8 / max(1, len(model_order))
+
+    for r, var in enumerate(var_names):
+        metric_col = f"{metric}_{var}"
+        for c, strat in enumerate(STRATIFIERS):
+            ax = axes[r][c]
+            stats = stratified_bar_stats(df, strat, metric_col, nbins=nbins)
+            bins = list(stats.sort_values("bin_order")["bin"].unique())
+            x = np.arange(len(bins))
+            for k, model in enumerate(model_order):
+                sub = stats[stats["model"] == model].set_index("bin")
+                means_dict = sub["mean"].to_dict()
+                ses_dict = sub["se"].to_dict()
+                means = [means_dict.get(b, np.nan) for b in bins]
+                ses = [ses_dict.get(b, 0.0) for b in bins]
+                ax.bar(
+                    x + (k - (len(model_order) - 1) / 2) * width,
+                    means,
+                    width=width,
+                    yerr=ses,
+                    capsize=2,
+                    color=color_of[model],
+                    label=model if (r == 0 and c == 0) else None,
+                )
+            ax.set_xticks(x)
+            ax.set_xticklabels(bins, rotation=45, ha="right", fontsize=8)
+            if r == 0:
+                ax.set_title(_STRATIFIER_LABEL[strat])
+            if c == 0:
+                ax.set_ylabel(f"{metric.upper()} — {var}")
+    fig.legend(loc="upper right", ncol=len(model_order))
+    fig.tight_layout()
+    return fig
