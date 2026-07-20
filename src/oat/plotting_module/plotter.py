@@ -853,6 +853,72 @@ class OATPlotter:
 
         return result
 
+    def compute_station_time_metrics(
+        self,
+        time_indices: list[int],
+        eval_station_indices: list[int],
+        batch_size: int = 32,
+    ) -> dict[str, torch.Tensor]:
+        """Per-(time, station, variable) CRPS and MAE (no time aggregation).
+
+        Args:
+            time_indices: Dataset time indices to evaluate over.
+            eval_station_indices: Station indices to treat as query targets.
+            batch_size: Timesteps to log progress over (inference is per-step).
+
+        Returns:
+            Dict with keys "crps" and "mae", each a tensor of shape
+            [T, S, V] with T = len(time_indices). Entries are NaN where the
+            observation mask is 0.
+        """
+        import logging
+        from itertools import batched
+
+        from oat.predictor_module.functional_metrics import mc_crps, point_mae
+
+        logger = logging.getLogger(__name__)
+
+        eval_coords = torch.stack(
+            [self.dataset.station_coords[s] for s in eval_station_indices]
+        )  # [S, 2]
+        T = len(time_indices)
+        S = len(eval_station_indices)
+        V = self.dataset.obs_tensor.shape[-1]
+        crps_out = torch.full((T, S, V), float("nan"))
+        mae_out = torch.full((T, S, V), float("nan"))
+
+        pos = 0
+        for chunk in batched(time_indices, batch_size):
+            for t in chunk:
+                y_hat = self._run_inference(t, eval_coords).unsqueeze(0)  # [1,S,n,V]
+                y_obs = (
+                    torch.stack(
+                        [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
+                    )
+                    .unsqueeze(0)
+                    .to(self.device)
+                )  # [1, S, V]
+                mask = (
+                    torch.stack(
+                        [
+                            self.dataset.obs_mask_tensor[t, s]
+                            for s in eval_station_indices
+                        ]
+                    )
+                    .float()
+                    .unsqueeze(0)
+                    .to(self.device)
+                )  # [1, S, V]
+                crps_sv = mc_crps(y_obs, y_hat, mask, aggregation="station")  # [S,V]
+                mae_sv = point_mae(y_obs, y_hat, mask, aggregation="station")  # [S,V]
+                no_obs = mask[0] == 0
+                crps_out[pos] = crps_sv.masked_fill(no_obs, float("nan")).cpu()
+                mae_out[pos] = mae_sv.masked_fill(no_obs, float("nan")).cpu()
+                pos += 1
+            logger.info("processed %d/%d timesteps", pos, T)
+
+        return {"crps": crps_out, "mae": mae_out}
+
     def plot_domain_overview(
         self,
         other: BasePredictor,
