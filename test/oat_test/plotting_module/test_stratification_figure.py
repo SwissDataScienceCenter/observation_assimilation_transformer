@@ -9,8 +9,8 @@ from matplotlib.patches import PathPatch
 
 from oat.plotting_module.stratification import (
     STRATIFIERS,
+    _bin_keys,
     make_stratification_figure,
-    stratified_bar_stats,
 )
 
 
@@ -85,10 +85,10 @@ def _narrow_lat_df():
 
 def test_narrow_range_binning_does_not_drop_bars():
     df = _narrow_lat_df()
-    stats = stratified_bar_stats(df, "lat", "crps_temperature", nbins=5)
-    # Distinct bin_order values must all get distinct labels (no silent merge).
-    assert stats["bin_order"].nunique() == 5
-    assert stats["bin"].nunique() == 5
+    _keys, present, label_for, _order = _bin_keys(df, "lat", nbins=5)
+    # Distinct bins must all get distinct labels (no silent merge to one bar).
+    assert len(present) == 5
+    assert len({label_for[b] for b in present}) == 5
 
     fig = make_stratification_figure(
         df,

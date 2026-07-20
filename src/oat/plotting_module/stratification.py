@@ -168,63 +168,20 @@ def _bin_keys(
         return keys, present, label_for, order_for
 
     values = df[stratifier].to_numpy(dtype=float)
+    finite = np.isfinite(values)
     # Guard against all-NaN stratifier
-    if np.isfinite(values).sum() == 0:
+    if finite.sum() == 0:
         return np.array([]), [], {}, {}
     idx, edges = _assign_fixed_width_bins(values, nbins)
     keys = idx.astype(int)
-    present = sorted(set(int(i) for i in idx))
+    # NaN covariate values (e.g. a station outside the topo extent) must NOT be
+    # folded into the last bin by np.digitize's clip — assign them a sentinel
+    # key so they are excluded from every real bin.
+    keys[~finite] = -1
+    present = sorted({int(i) for i in keys[finite]})
     label_for = {i: _bin_label(edges, i) for i in present}
     order_for = {i: i for i in present}
     return keys, present, label_for, order_for
-
-
-def stratified_bar_stats(
-    df: pd.DataFrame,
-    stratifier: str,
-    metric_col: str,
-    model_col: str = "model",
-    nbins: int = 5,
-) -> pd.DataFrame:
-    """Aggregate a metric into grouped-bar statistics per (bin, model).
-
-    For ``stratifier == "season"`` the bins are the canonical DJF/MAM/JJA/SON
-    categories (only those present). Otherwise the stratifier column is split
-    into ``nbins`` fixed-width bins. Bar height is the NaN-ignoring mean of
-    ``metric_col``; ``se`` is its standard error across the samples in the bin.
-    """
-    # Guard against empty input
-    if len(df) == 0:
-        return pd.DataFrame(columns=["bin", "bin_order", "model", "mean", "se", "n"])
-
-    keys, present, label_for, order_for = _bin_keys(df, stratifier, nbins)
-    if len(present) == 0:
-        return pd.DataFrame(columns=["bin", "bin_order", "model", "mean", "se", "n"])
-
-    models = list(df[model_col].unique())
-    records: list[dict[str, Any]] = []
-    for b in present:
-        sel = keys == b
-        for model in models:
-            m = sel & (df[model_col].to_numpy() == model)
-            vals = df.loc[m, metric_col].to_numpy(dtype=float)
-            vals = vals[np.isfinite(vals)]
-            if vals.size == 0:
-                continue
-            se = float(vals.std(ddof=1) / np.sqrt(vals.size)) if vals.size > 1 else 0.0
-            records.append(
-                {
-                    "bin": label_for[b],
-                    "bin_order": order_for[b],
-                    "model": model,
-                    "mean": float(vals.mean()),
-                    "se": se,
-                    "n": int(vals.size),
-                }
-            )
-    return (
-        pd.DataFrame(records).sort_values(["bin_order", "model"]).reset_index(drop=True)
-    )
 
 
 STRATIFIERS = ["season", "elevation", "nearest_obs_dist", "lon", "lat"]
