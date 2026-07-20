@@ -294,6 +294,13 @@ def make_stratification_figure(
             if c == 0:
                 ax.set_ylabel(f"{metric.upper()} — {var}")
     proxies = [Patch(facecolor=color_of[m], label=m) for m in model_order]
-    fig.legend(handles=proxies, loc="upper right", ncol=len(model_order))
-    fig.tight_layout()
+    # Reserve a top band for the legend so it never overlaps column titles.
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.legend(
+        handles=proxies,
+        loc="upper center",
+        ncol=len(model_order),
+        bbox_to_anchor=(0.5, 1.0),
+        frameon=False,
+    )
     return fig
