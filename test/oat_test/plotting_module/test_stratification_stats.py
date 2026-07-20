@@ -42,3 +42,16 @@ def test_nan_metric_ignored():
     stats = stratified_bar_stats(df, "season", "crps_t", nbins=5)
     row = stats[(stats["bin"] == "DJF") & (stats["model"] == "oat")]
     assert row["n"].iloc[0] == 1  # one NaN dropped
+
+
+def test_empty_dataframe_returns_empty_stats():
+    empty = pd.DataFrame(
+        columns=["model", "elevation", "season", "crps_t"]
+    )
+    out = stratified_bar_stats(empty, "elevation", "crps_t", nbins=5)
+    assert len(out) == 0
+    assert list(out.columns) == ["bin", "bin_order", "model", "mean", "se", "n"]
+
+    out2 = stratified_bar_stats(empty, "season", "crps_t", nbins=5)
+    assert len(out2) == 0
+    assert list(out2.columns) == ["bin", "bin_order", "model", "mean", "se", "n"]

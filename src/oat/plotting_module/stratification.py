@@ -150,6 +150,10 @@ def stratified_bar_stats(
     into ``nbins`` fixed-width bins. Bar height is the NaN-ignoring mean of
     ``metric_col``; ``se`` is its standard error across the samples in the bin.
     """
+    # Guard against empty input
+    if len(df) == 0:
+        return pd.DataFrame(columns=["bin", "bin_order", "model", "mean", "se", "n"])
+
     keys: NDArray
     present: list[Any]
     label_for: dict[Any, str]
@@ -161,9 +165,13 @@ def stratified_bar_stats(
         label_for = {s: s for s in present}
         order_for = {s: i for i, s in enumerate(present)}
     else:
-        idx, edges = _assign_fixed_width_bins(
-            df[stratifier].to_numpy(dtype=float), nbins
-        )
+        values = df[stratifier].to_numpy(dtype=float)
+        # Guard against all-NaN stratifier
+        if np.isfinite(values).sum() == 0:
+            return pd.DataFrame(
+                columns=["bin", "bin_order", "model", "mean", "se", "n"]
+            )
+        idx, edges = _assign_fixed_width_bins(values, nbins)
         keys = idx.astype(int)
         present = sorted(set(int(i) for i in idx))
         label_for = {i: _bin_label(edges, i) for i in present}
