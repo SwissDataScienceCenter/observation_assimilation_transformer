@@ -117,3 +117,79 @@ def build_long_dataframe(
         data[f"crps_{var}"] = crps[:, :, vi].reshape(-1)
         data[f"mae_{var}"] = mae[:, :, vi].reshape(-1)
     return pd.DataFrame(data)
+
+
+def _assign_fixed_width_bins(values: NDArray, nbins: int) -> tuple[NDArray, NDArray]:
+    """Assign fixed-width bin indices; return (bin_idx, edges)."""
+    finite = values[np.isfinite(values)]
+    lo, hi = float(finite.min()), float(finite.max())
+    if lo == hi:
+        edges = np.array([lo, lo + 1.0])
+    else:
+        edges = np.linspace(lo, hi, nbins + 1)
+    # digitize on interior edges; clip to valid bin range
+    idx = np.clip(np.digitize(values, edges[1:-1]), 0, len(edges) - 2)
+    return idx, edges
+
+
+def _bin_label(edges: NDArray, i: int) -> str:
+    return f"{edges[i]:.0f}-{edges[i + 1]:.0f}"
+
+
+def stratified_bar_stats(
+    df: pd.DataFrame,
+    stratifier: str,
+    metric_col: str,
+    model_col: str = "model",
+    nbins: int = 5,
+) -> pd.DataFrame:
+    """Aggregate a metric into grouped-bar statistics per (bin, model).
+
+    For ``stratifier == "season"`` the bins are the canonical DJF/MAM/JJA/SON
+    categories (only those present). Otherwise the stratifier column is split
+    into ``nbins`` fixed-width bins. Bar height is the NaN-ignoring mean of
+    ``metric_col``; ``se`` is its standard error across the samples in the bin.
+    """
+    keys: NDArray
+    present: list[Any]
+    label_for: dict[Any, str]
+    order_for: dict[Any, int]
+
+    if stratifier == "season":
+        keys = df["season"].to_numpy()
+        present = [s for s in SEASONS if s in set(keys)]
+        label_for = {s: s for s in present}
+        order_for = {s: i for i, s in enumerate(present)}
+    else:
+        idx, edges = _assign_fixed_width_bins(
+            df[stratifier].to_numpy(dtype=float), nbins
+        )
+        keys = idx.astype(int)
+        present = sorted(set(int(i) for i in idx))
+        label_for = {i: _bin_label(edges, i) for i in present}
+        order_for = {i: i for i in present}
+
+    models = list(df[model_col].unique())
+    records: list[dict[str, Any]] = []
+    for b in present:
+        sel = keys == b
+        for model in models:
+            m = sel & (df[model_col].to_numpy() == model)
+            vals = df.loc[m, metric_col].to_numpy(dtype=float)
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
+                continue
+            se = float(vals.std(ddof=1) / np.sqrt(vals.size)) if vals.size > 1 else 0.0
+            records.append(
+                {
+                    "bin": label_for[b],
+                    "bin_order": order_for[b],
+                    "model": model,
+                    "mean": float(vals.mean()),
+                    "se": se,
+                    "n": int(vals.size),
+                }
+            )
+    return (
+        pd.DataFrame(records).sort_values(["bin_order", "model"]).reset_index(drop=True)
+    )
