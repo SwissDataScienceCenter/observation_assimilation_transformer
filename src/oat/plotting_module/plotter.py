@@ -890,7 +890,6 @@ class OATPlotter:
         pos = 0
         for chunk in batched(time_indices, batch_size):
             for t in chunk:
-                y_hat = self._run_inference(t, eval_coords).unsqueeze(0)  # [1,S,n,V]
                 y_obs = (
                     torch.stack(
                         [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
@@ -909,6 +908,10 @@ class OATPlotter:
                     .unsqueeze(0)
                     .to(self.device)
                 )  # [1, S, V]
+                if float(mask.sum()) == 0:
+                    pos += 1
+                    continue
+                y_hat = self._run_inference(t, eval_coords).unsqueeze(0)  # [1,S,n,V]
                 crps_sv = mc_crps(y_obs, y_hat, mask, aggregation="station")  # [S,V]
                 mae_sv = point_mae(y_obs, y_hat, mask, aggregation="station")  # [S,V]
                 no_obs = mask[0] == 0

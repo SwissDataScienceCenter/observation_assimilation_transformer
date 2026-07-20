@@ -133,7 +133,16 @@ def _assign_fixed_width_bins(values: NDArray, nbins: int) -> tuple[NDArray, NDAr
 
 
 def _bin_label(edges: NDArray, i: int) -> str:
-    return f"{edges[i]:.0f}-{edges[i + 1]:.0f}"
+    lo, hi = edges[i], edges[i + 1]
+    width = abs(hi - lo)
+    # choose decimals so adjacent edges are distinguishable
+    if width >= 100:
+        fmt = "{:.0f}-{:.0f}"
+    elif width >= 1:
+        fmt = "{:.1f}-{:.1f}"
+    else:
+        fmt = "{:.2f}-{:.2f}"
+    return fmt.format(lo, hi)
 
 
 def stratified_bar_stats(
@@ -238,14 +247,18 @@ def make_stratification_figure(
         for c, strat in enumerate(STRATIFIERS):
             ax = axes[r][c]
             stats = stratified_bar_stats(df, strat, metric_col, nbins=nbins)
-            bins = list(stats.sort_values("bin_order")["bin"].unique())
-            x = np.arange(len(bins))
+            order_rows = (
+                stats[["bin_order", "bin"]].drop_duplicates().sort_values("bin_order")
+            )
+            bins = order_rows["bin"].tolist()
+            bin_orders = order_rows["bin_order"].tolist()
+            x = np.arange(len(order_rows))
             for k, model in enumerate(model_order):
-                sub = stats[stats["model"] == model].set_index("bin")
+                sub = stats[stats["model"] == model].set_index("bin_order")
                 means_dict = sub["mean"].to_dict()
                 ses_dict = sub["se"].to_dict()
-                means = [means_dict.get(b, np.nan) for b in bins]
-                ses = [ses_dict.get(b, 0.0) for b in bins]
+                means = [means_dict.get(bo, np.nan) for bo in bin_orders]
+                ses = [ses_dict.get(bo, 0.0) for bo in bin_orders]
                 ax.bar(
                     x + (k - (len(model_order) - 1) / 2) * width,
                     means,

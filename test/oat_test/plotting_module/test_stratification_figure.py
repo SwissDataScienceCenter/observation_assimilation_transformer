@@ -8,6 +8,7 @@ import pandas as pd
 from oat.plotting_module.stratification import (
     STRATIFIERS,
     make_stratification_figure,
+    stratified_bar_stats,
 )
 
 
@@ -46,4 +47,47 @@ def test_figure_grid_shape():
     assert STRATIFIERS == ["season", "elevation", "nearest_obs_dist", "lon", "lat"]
     import matplotlib.pyplot as plt
 
+    plt.close(fig)
+
+
+def _narrow_lat_df():
+    # Latitude over Switzerland spans ~45.8-47.8: a sub-2-unit range that, with
+    # `:.0f` bin-label formatting, would collapse to duplicate integer labels.
+    rng = np.random.default_rng(1)
+    seasons = ["DJF", "MAM", "JJA", "SON"]
+    rows = []
+    for model in ["oat", "gp"]:
+        for i in range(100):
+            rows.append(
+                {
+                    "model": model,
+                    "season": seasons[i % 4],
+                    "elevation": 100.0 + 10.0 * (i % 50),
+                    "nearest_obs_dist": 1.0 + 0.1 * (i % 30),
+                    "lon": 6.0 + 0.01 * (i % 40),
+                    "lat": 45.8 + 2.0 * (i / 99),
+                    "crps_temperature": float(rng.random()),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_narrow_range_binning_does_not_drop_bars():
+    df = _narrow_lat_df()
+    stats = stratified_bar_stats(df, "lat", "crps_temperature", nbins=5)
+    # Distinct bin_order values must all get distinct labels (no silent merge).
+    assert stats["bin_order"].nunique() == 5
+    assert stats["bin"].nunique() == 5
+
+    fig = make_stratification_figure(
+        df,
+        var_names=["temperature"],
+        metric="crps",
+        model_order=["oat", "gp"],
+        nbins=5,
+    )
+    import matplotlib.pyplot as plt
+
+    lat_ax = fig.axes[STRATIFIERS.index("lat")]
+    assert len(lat_ax.get_xticks()) == 5
     plt.close(fig)
