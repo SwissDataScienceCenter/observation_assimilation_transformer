@@ -211,7 +211,8 @@ def make_stratification_figure(
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(4 * ncols, 3.2 * nrows), squeeze=False
     )
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    # Method colours in plot order (C2 skipped by request).
+    colors = ["C0", "C1", "C3", "C4"]
     color_of = {m: colors[i % len(colors)] for i, m in enumerate(model_order)}
     width = 0.8 / max(1, len(model_order))
 
