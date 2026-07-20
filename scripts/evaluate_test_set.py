@@ -105,6 +105,12 @@ def _parse_args() -> argparse.Namespace:
         metavar="B",
         help="Timesteps per inference batch (default: 32)",
     )
+    p.add_argument(
+        "--long",
+        action="store_true",
+        help="Write a per-(station, timestep) Parquet dump for stratification "
+        "plots instead of the aggregate CSV.",
+    )
     return p.parse_args()
 
 
@@ -185,6 +191,41 @@ def main() -> None:
         n_samples=args.n_samples,
         device=args.device,
     )
+
+    if args.long:
+        from oat.plotting_module.stratification import (
+            build_long_dataframe,
+            collect_station_covariates,
+        )
+
+        tm = plotter.compute_station_time_metrics(
+            time_indices=time_indices,
+            eval_station_indices=eval_indices,
+            batch_size=args.batch_timesteps,
+        )
+        covariates = collect_station_covariates(dataset, eval_indices, obs_indices)
+        var_names = list(predictor.var_to_indx.keys())
+        df = build_long_dataframe(
+            crps=tm["crps"].numpy(),
+            mae=tm["mae"].numpy(),
+            times=[dataset.times[t] for t in time_indices],
+            covariates=covariates,
+            var_names=var_names,
+        )
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        ckpt_tag = (
+            f"{INTERPOLATOR_MODEL}_{args.dataset}"
+            if is_interpolator
+            else Path(args.checkpoint).parent.name
+        )
+        out_path = (
+            Path(args.out)
+            if args.out
+            else OUT_DIR / f"{ckpt_tag}_long_{args.split}.parquet"
+        )
+        df.to_parquet(out_path, index=False)
+        logger.info("Saved long dump (%d rows) → %s", len(df), out_path)
+        return
 
     nwp_predictor = None
     if args.baseline and not is_interpolator:
