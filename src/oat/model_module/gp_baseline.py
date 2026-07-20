@@ -11,14 +11,16 @@ from obsweatherscale.kernels.scaled_rbf_kernel import ScaledRBFKernel
 from obsweatherscale.means.neural_mean import NeuralMean
 from obsweatherscale.models.gp_model import GPModel
 from obsweatherscale.models.mlp import MLP
+
 # from obsweatherscale.training.losses import crps_normal
 import torch.distributions as dist
 
 from oat.model_module.baseline import NWPInterpolator, NWPInterpolatorConfig
+from oat.model_module.distributions import LogNormalOAT
 from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
-
 _VALID_LOSS_FNS = ("mll", "crps")
+
 
 def crps_normal(
     obs: torch.Tensor,
@@ -51,7 +53,7 @@ def crps_normal(
     distribution and the empirical CDF of the observation.
 
     For a normal distribution, the CRPS has the closed form:
-    CRPS(N(μ, σ), y) = 
+    CRPS(N(μ, σ), y) =
         σ * [y_norm * (2*Φ(y_norm) - 1) + 2*φ(y_norm) - 1/√π]
     where y_norm = (y - μ)/σ, Φ is the CDF and φ is the PDF of the
     standard normal.
@@ -61,7 +63,11 @@ def crps_normal(
 
     Phi = normal.cdf(scaled)
     phi = torch.exp(normal.log_prob(scaled))
-    crps = sigma * (scaled * (2 * Phi - 1) + 2 * phi - (1 / torch.sqrt(torch.tensor(torch.pi, device=sigma.device))))
+    crps = sigma * (
+        scaled * (2 * Phi - 1)
+        + 2 * phi
+        - (1 / torch.sqrt(torch.tensor(torch.pi, device=sigma.device)))
+    )
 
     return crps.mean()
 
@@ -79,8 +85,14 @@ class GPBaselineConfig:
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
     mean_groups: List[str] = field(default_factory=lambda: ["nwp", "topo"])
-    stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", ])
-    non_stationary_cov_groups: List[str] = field(default_factory=lambda: ["geo", "nwp", "topo"])
+    stationary_cov_groups: List[str] = field(
+        default_factory=lambda: [
+            "geo",
+        ]
+    )
+    non_stationary_cov_groups: List[str] = field(
+        default_factory=lambda: ["geo", "nwp", "topo"]
+    )
 
     d_model: int = 64
     mean_n_hidden_layers: int = 1
@@ -93,6 +105,12 @@ class GPBaselineConfig:
 
 class GPBaseline(nn.Module):
     requires_observation: bool = True
+
+    # Registered as buffers in __init__; annotated here so type checkers know
+    # their type through set_output_normalization / _crps_loss.
+    output_loc: torch.Tensor
+    output_scale: torch.Tensor
+    output_is_log: torch.Tensor
 
     def __init__(self, config: GPBaselineConfig) -> None:
         super().__init__()
@@ -177,13 +195,21 @@ class GPBaseline(nn.Module):
         self.non_stationary_covar_indices = tuple(non_stationary_covar_indices)
 
         # Mean function
-        mean_net = MLP(dimensions=[len(self.mean_indices), *config.mean_hidden_dims, 1],
-                       active_dims=mean_indices)
+        mean_net = MLP(
+            dimensions=[len(self.mean_indices), *config.mean_hidden_dims, 1],
+            active_dims=mean_indices,
+        )
         mean_function = NeuralMean(net=mean_net)
-        
-        # Stationary kernel on specified groups
-        rbf_kernel = ScaledRBFKernel(eps=config.eps, active_dims=stationary_covar_indices)
-        
+
+        # Stationary kernel on specified groups. ard_num_dims gives each active
+        # dimension its own learned lengthscale (ARD) instead of a single shared
+        # one, so e.g. easting/northing/elevation can decorrelate at different rates.
+        rbf_kernel = ScaledRBFKernel(
+            eps=config.eps,
+            active_dims=stationary_covar_indices,
+            ard_num_dims=len(stationary_covar_indices) or None,
+        )
+
         # Non-stationary kernel on specified groups (optional)
         if non_stationary_covar_indices:
             kernel_net = MLP(
@@ -192,9 +218,11 @@ class GPBaseline(nn.Module):
                     *config.kernel_hidden_dims,
                     config.kernel_embed_dim,
                 ],
-                active_dims=non_stationary_covar_indices
+                active_dims=non_stationary_covar_indices,
             )
-            non_stationary_kernel = NeuralKernel(net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps))
+            non_stationary_kernel = NeuralKernel(
+                net=kernel_net, kernel=ScaledRBFKernel(eps=config.eps)
+            )
             kernel_function = rbf_kernel * non_stationary_kernel
         else:
             kernel_function = rbf_kernel
@@ -205,17 +233,68 @@ class GPBaseline(nn.Module):
 
         dummy_x = torch.zeros(2, self.feature_dim)
         dummy_y = torch.zeros(2)
-        
-        
+
         self.gp = GPModel(
             train_x=dummy_x,
             train_y=dummy_y,
             likelihood=likelihood,
             mean_module=mean_function,
             covar_module=kernel_function,
-        
         )
-        self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.gp.likelihood, self.gp)
+        self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(
+            self.gp.likelihood, self.gp
+        )
+
+        # Output normalization for the data-space CRPS loss. The GP fits a
+        # Gaussian in standardized(-log) space; these buffers map its posterior
+        # back to raw-log space so the CRPS loss can be computed in data space
+        # (see _crps_loss). Set by the predictor via set_output_normalization
+        # once the fitted transform exists; saved/restored with the checkpoint.
+        self.register_buffer("output_loc", torch.zeros(1))
+        self.register_buffer("output_scale", torch.ones(1))
+        self.register_buffer("output_is_log", torch.tensor(False))
+
+    def set_output_normalization(
+        self, loc: torch.Tensor, scale: torch.Tensor, is_log: bool
+    ) -> None:
+        """Register the affine map from standardized space back to raw-log space
+        for the (single) obs variable: ``log(y + offset) = mu * scale + loc``.
+
+        When ``is_log`` is False the target is not log-transformed (e.g.
+        temperature) and the CRPS loss stays a plain Gaussian CRPS in
+        standardized space, which is equivalent to the data-space metric under
+        an affine transform (CRPS is scale-equivariant).
+        """
+        self.output_loc = loc.reshape(1).to(self.output_loc.device)
+        self.output_scale = scale.reshape(1).to(self.output_scale.device)
+        self.output_is_log = torch.tensor(
+            bool(is_log), device=self.output_is_log.device
+        )
+
+    def _crps_loss(
+        self, target: torch.Tensor, mu: torch.Tensor, sigma: torch.Tensor
+    ) -> torch.Tensor:
+        """Mean CRPS between the GP posterior predictive ``N(mu, sigma)`` and
+        ``target``, computed in *data space*.
+
+        For a log-transformed target the data-space predictive is a LogNormal,
+        whose CRPS has a closed form (``LogNormalOAT.crps``). Computing the loss
+        here keeps it aligned with the reported data-space CRPS; minimizing the
+        log-space Gaussian CRPS instead diverges from the data-space objective
+        (the log-normal mean/tail blows up as log-space variance grows).
+
+        ``(y + offset) = exp(mu * scale + loc)`` is strictly positive, so there
+        is no ``log(0)``; and because CRPS is shift-invariant the ``+offset``
+        shared by forecast and target cancels against the metric.
+        """
+        if bool(self.output_is_log):
+            loc = self.output_loc.to(mu.device)
+            scale = self.output_scale.to(mu.device)
+            mu_log = mu * scale + loc
+            sigma_log = sigma * scale
+            target_data = torch.exp(target * scale + loc)
+            return LogNormalOAT(mu_log, sigma_log).crps(target_data).mean()
+        return crps_normal(target, mu, sigma)
 
     def _extract_features(
         self,
@@ -355,8 +434,9 @@ class GPBaseline(nn.Module):
                 sigma = lik_pred.stddev
 
                 if valid_tgt.any():
-                    crps = crps_normal(ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt])
-                    total_loss = total_loss + crps.mean()
+                    total_loss = total_loss + self._crps_loss(
+                        ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt]
+                    )
                     n_terms += 1
 
                 with torch.no_grad():

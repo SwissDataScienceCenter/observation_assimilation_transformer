@@ -151,6 +151,14 @@ class TestGPBaselineFeatureSlicing:
         assert type(model.gp.mean_module).__name__ == "NeuralMean"
         assert type(model.gp.covar_module).__name__ == "ProductKernel"
 
+    def test_stationary_kernel_has_per_dimension_lengthscale(self):
+        # stationary_cov_groups defaults to ["geo"] -> 3 dims, each with its own
+        # learned lengthscale (ARD), so lengthscale is a length-3 vector.
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True, use_topography=False))
+        stationary_kernel = model.gp.covar_module.kernels[0]
+        lengthscale = stationary_kernel.kernel.base_kernel.lengthscale
+        assert lengthscale.shape[-1] == len(model.stationary_covar_indices) == 3
+
 
 class TestGPBaselineFeatureExtraction:
     def test_shape_full_features(self):
@@ -254,6 +262,72 @@ class TestGPBaselineForwardWithLossCRPS:
             global_data, obs_data, query_data, target_obs, target_mask, num_samples=3
         )
         assert torch.isfinite(loss)
+
+
+class TestGPBaselineDataSpaceCRPS:
+    def test_default_is_not_log(self):
+        """Without set_output_normalization the loss stays plain Gaussian CRPS."""
+        model = GPBaseline(make_config(loss_fn="crps"))
+        assert bool(model.output_is_log) is False
+
+    def test_set_output_normalization_registers_log_flag(self):
+        model = GPBaseline(make_config(loss_fn="crps"))
+        model.set_output_normalization(
+            loc=torch.tensor([0.5]), scale=torch.tensor([2.0]), is_log=True
+        )
+        assert bool(model.output_is_log) is True
+        assert torch.allclose(model.output_loc, torch.tensor([0.5]))
+        assert torch.allclose(model.output_scale, torch.tensor([2.0]))
+
+    def test_lognormal_crps_loss_matches_closed_form(self):
+        """_crps_loss with is_log=True must equal LogNormalOAT.crps in data space."""
+        from oat.model_module.distributions import LogNormalOAT
+
+        model = GPBaseline(make_config(loss_fn="crps"))
+        loc, scale = torch.tensor([0.3]), torch.tensor([1.7])
+        model.set_output_normalization(loc=loc, scale=scale, is_log=True)
+
+        mu = torch.tensor([0.1, -0.4, 0.8])
+        sigma = torch.tensor([0.5, 0.9, 0.3])
+        target = torch.tensor([-0.2, 0.6, 0.05])  # standardized-log target
+
+        got = model._crps_loss(target, mu, sigma)
+        expected = (
+            LogNormalOAT(mu * scale + loc, sigma * scale)
+            .crps(torch.exp(target * scale + loc))
+            .mean()
+        )
+        assert torch.allclose(got, expected)
+
+    def test_lognormal_crps_differs_from_logspace_crps(self):
+        """The data-space loss must differ from the log-space Gaussian CRPS."""
+        model = GPBaseline(make_config(loss_fn="crps"))
+        mu = torch.tensor([0.1, -0.4, 0.8])
+        sigma = torch.tensor([0.5, 0.9, 0.3])
+        target = torch.tensor([-0.2, 0.6, 0.05])
+
+        logspace = model._crps_loss(target, mu, sigma)  # is_log=False default
+        model.set_output_normalization(
+            loc=torch.tensor([0.3]), scale=torch.tensor([1.7]), is_log=True
+        )
+        dataspace = model._crps_loss(target, mu, sigma)
+        assert not torch.allclose(logspace, dataspace)
+
+    def test_lognormal_crps_loss_is_finite_with_zero_target(self):
+        """Standardized target maps to a strictly positive data-space value, so a
+        raw zero (offset only) stays finite and differentiable."""
+        model = GPBaseline(make_config(loss_fn="crps"))
+        model.set_output_normalization(
+            loc=torch.tensor([0.0]), scale=torch.tensor([1.0]), is_log=True
+        )
+        mu = torch.tensor([0.0], requires_grad=True)
+        sigma = torch.tensor([0.5])
+        # log(0 + offset) with offset=1e-3 -> ~-6.9 in raw-log space
+        target = torch.tensor([-6.9])
+        loss = model._crps_loss(target, mu, sigma)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert mu.grad is not None and torch.isfinite(mu.grad).all()
 
 
 class TestGPBaselineForwardWithLossMLL:

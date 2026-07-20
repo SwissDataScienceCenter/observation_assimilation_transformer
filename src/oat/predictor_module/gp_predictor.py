@@ -7,7 +7,7 @@ import torch
 from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig
 
-from oat.data_module.transform import Transform
+from oat.data_module.transform import LogTransform, Transform, TranslateScaleTransform
 from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
 from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
@@ -95,7 +95,9 @@ class GPPredictor(BasePredictor):
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -122,7 +124,9 @@ class GPPredictor(BasePredictor):
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -149,7 +153,9 @@ class GPPredictor(BasePredictor):
         self.log("test_loss", loss)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -184,7 +190,9 @@ class GPPredictor(BasePredictor):
         )
 
     def configure_optimizers(self) -> Optimizer | dict:
-        optimizer = self.optimizer_class(self.model.parameters(), **self.optimizer_params)
+        optimizer = self.optimizer_class(
+            self.model.parameters(), **self.optimizer_params
+        )
         if self.scheduler_class is not None:
             scheduler = self.scheduler_class(optimizer, **self.scheduler_params)
             return {
@@ -198,6 +206,34 @@ class GPPredictor(BasePredictor):
                 },
             }
         return optimizer
+
+
+def extract_output_normalization(
+    output_transform: Any, var_index: int = 0
+) -> Tuple[torch.Tensor, torch.Tensor, bool]:
+    """Recover ``(loc, scale, is_log)`` mapping the GP's standardized-space
+    posterior back to raw-log space for one obs variable.
+
+    The obs transform is typically ``ComposedTransform([LogTransform, standardize])``.
+    An affine standardize applies ``z_std = (z_log + translate) * scale``, so the
+    inverse is ``z_log = z_std / scale - translate`` — i.e. ``loc = -translate`` and
+    ``scale_out = 1 / scale``. ``is_log`` is True iff a ``LogTransform`` actually
+    applies to this variable. Returns defaults ``(0, 1, False)`` when no such
+    components are found (e.g. an identity transform), which makes the GP fall
+    back to plain Gaussian CRPS.
+    """
+    loc = torch.zeros(1)
+    scale = torch.ones(1)
+    is_log = False
+    subtransforms = getattr(output_transform, "transforms", [output_transform])
+    for t in subtransforms:
+        if isinstance(t, TranslateScaleTransform):
+            loc = (-t.translate[var_index]).reshape(1)
+            scale = (1.0 / t.scale[var_index]).reshape(1)
+        elif isinstance(t, LogTransform):
+            apply_to = getattr(t, "apply_to", None)
+            is_log = apply_to is None or int(var_index) in apply_to.tolist()
+    return loc, scale, is_log
 
 
 def setup_gp_predictor(
@@ -228,8 +264,12 @@ def setup_gp_predictor(
         d_model=int(model_cfg.d_model),
         mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
         kernel_n_hidden_layers=int(model_cfg.get("kernel_n_hidden_layers", 2)),
-        mean_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))),
-        kernel_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))),
+        mean_hidden_dims=tuple(
+            [int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))
+        ),
+        kernel_hidden_dims=tuple(
+            [int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))
+        ),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),
         mean_groups=model_cfg.get("mean_groups"),
         stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
@@ -240,6 +280,12 @@ def setup_gp_predictor(
         num_samples=int(model_cfg.num_samples),
     )
     gp_model = GPBaseline(gp_config)
+
+    # Map the fitted output transform back to raw-log space so the CRPS loss is
+    # computed in data space (aligned with the reported metric). Overwritten by
+    # load_state_dict when restoring a checkpoint.
+    loc, scale, is_log = extract_output_normalization(transforms[1], var_index=0)
+    gp_model.set_output_normalization(loc, scale, is_log)
 
     module_path, class_name = cfg.predictor.kwargs.optimizer_class.rsplit(".", 1)
     optim_cls = getattr(import_module(module_path), class_name)

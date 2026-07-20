@@ -1,8 +1,13 @@
 import pytest
 import torch
 
+from oat.data_module.transform import (
+    ComposedTransform,
+    LogTransform,
+    StandardNormalizeTransform,
+)
 from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
-from oat.predictor_module.gp_predictor import GPPredictor
+from oat.predictor_module.gp_predictor import GPPredictor, extract_output_normalization
 
 
 FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
@@ -58,6 +63,44 @@ def make_batch(B=2, N_obs=8, N_q=5, n_nwp=3, n_topo=5, H=32, W=32):
             "mask_obs": torch.ones(B, N_q, 1),
         },
     }
+
+
+class TestExtractOutputNormalization:
+    def test_log_plus_standardize(self):
+        """Precip-style: log then standardize -> is_log True, loc/scale recovered."""
+        mean, std = torch.tensor([1.5]), torch.tensor([0.7])
+        ot = ComposedTransform(
+            [
+                LogTransform(offset=1e-3, apply_to=[0]),
+                StandardNormalizeTransform(mean=mean, std=std),
+            ]
+        )
+        loc, scale, is_log = extract_output_normalization(ot, var_index=0)
+        assert is_log is True
+        # z_log = z_std * std + mean  ->  loc = mean, scale = std
+        assert torch.allclose(loc, mean)
+        assert torch.allclose(scale, std)
+
+    def test_standardize_only_is_not_log(self):
+        """Temperature-style: log applies to no index -> is_log False."""
+        mean, std = torch.tensor([2.0]), torch.tensor([3.0])
+        ot = ComposedTransform(
+            [
+                LogTransform(offset=1e-3, apply_to=[]),
+                StandardNormalizeTransform(mean=mean, std=std),
+            ]
+        )
+        loc, scale, is_log = extract_output_normalization(ot, var_index=0)
+        assert is_log is False
+        assert torch.allclose(loc, mean)
+        assert torch.allclose(scale, std)
+
+    def test_identity_transform_defaults(self):
+        """A transform without recognizable components -> safe defaults."""
+        loc, scale, is_log = extract_output_normalization(IdentityTransform())
+        assert is_log is False
+        assert torch.allclose(loc, torch.zeros(1))
+        assert torch.allclose(scale, torch.ones(1))
 
 
 class TestGPPredictorInit:
