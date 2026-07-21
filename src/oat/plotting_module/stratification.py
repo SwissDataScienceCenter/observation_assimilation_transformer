@@ -47,10 +47,14 @@ def nearest_obs_distance(eval_coords: NDArray, obs_coords: NDArray) -> NDArray:
     """Min Euclidean distance from each eval station to any observed station.
 
     Distances are in the native coordinate units (metres for LV95, degrees for
-    WGS84).
+    WGS84). Returns all-NaN when there are no observed stations (e.g. the
+    uninformed baseline), where the covariate is undefined; such rows are then
+    excluded from the nearest-obs-distance stratification.
     """
     eval_coords = np.asarray(eval_coords, dtype=np.float64)
     obs_coords = np.asarray(obs_coords, dtype=np.float64)
+    if obs_coords.shape[0] == 0:
+        return np.full(eval_coords.shape[0], np.nan, dtype=np.float64)
     dists = np.linalg.norm(eval_coords[:, None, :] - obs_coords[None, :, :], axis=-1)
     return np.asarray(dists.min(axis=1))
 
@@ -240,6 +244,7 @@ def make_stratification_figure(
                         patch_artist=True,
                         showfliers=False,
                         manage_ticks=False,
+                        medianprops=dict(color="black"),
                     )
                     for box in bp["boxes"]:
                         box.set_facecolor(color_of[model])

@@ -32,10 +32,30 @@ def long_parquet_path(dataset: str, model: str, split: str) -> Path:
     return OUT_DIR / f"{tag}_long_{split}.parquet"
 
 
+def group_name(key: str) -> str:
+    """Collapse a per-variable registry key onto its model name.
+
+    Per-variable checkpoints (e.g. ``gp_temp``/``gp_precip``,
+    ``deep_gp_temp``/``deep_gp_precip``) are trained one variable each; they
+    are treated as a single model in the plot. The combined ``*_temp_precip``
+    keys map to the same bare model name. Each frame only carries finite values
+    for its own variable, so concatenating them under one model name yields the
+    full-variable model without further merging.
+    """
+    for suffix in ("_temp_precip", "_temp", "_precip"):
+        if key.endswith(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
 def load_model_frames(
     dataset: str, model: str, baselines: list[str], split: str
 ) -> pd.DataFrame:
-    """Load + concatenate long frames for the OAT model and its baselines."""
+    """Load + concatenate long frames for the OAT model and its baselines.
+
+    Keys sharing a model name (see ``group_name``) are relabelled to that name
+    so per-variable checkpoints appear as a single model.
+    """
     frames = []
     for key in [model, *baselines]:
         path = long_parquet_path(dataset, key, split)
@@ -46,7 +66,7 @@ def load_model_frames(
                 f"--model {key} --split {split} --long"
             )
         df = pd.read_parquet(path)
-        df["model"] = key
+        df["model"] = group_name(key)
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
 
@@ -81,7 +101,9 @@ def main() -> None:
 
     baselines = [b for b in args.baselines.split(",") if b]
     df = load_model_frames(args.dataset, args.model, baselines, args.split)
-    model_order = [args.model, *baselines]
+    # Dedup group names while preserving first-seen order (per-variable keys
+    # collapse onto a single model, e.g. gp_temp + gp_precip -> gp).
+    model_order = list(dict.fromkeys(group_name(k) for k in [args.model, *baselines]))
     var_names = _var_names(df, args.metric)
 
     fig = make_stratification_figure(
