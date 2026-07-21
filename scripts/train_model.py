@@ -26,6 +26,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from pytorch_lightning.loggers import WandbLogger
+import wandb
 from pytorch_lightning.profilers import SimpleProfiler
 from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
@@ -55,13 +56,14 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
-    run_name = f"{base_name}_{now_str}_job{slurm_job_id}"
+    run_name = cfg.get("run_name") or f"{base_name}_{now_str}_job{slurm_job_id}"
     checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
     wandb_logger = WandbLogger(name=run_name,
                          project=cfg.logging.project,
                          group=cfg.logging.group,
                          entity=cfg.logging.entity,
-                         log_model=False)
+                         log_model=False,
+                         settings=wandb.Settings(init_timeout=300))
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
     
@@ -169,7 +171,7 @@ def main(cfg: DictConfig) -> None:
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
-    elif model_type == "gp_baseline":
+    elif model_type in ("gp_baseline", "deep_gp_baseline"):
         predictor = setup_gp_predictor(
             cfg=cfg,
             field_extent=field_extent,

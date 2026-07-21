@@ -1,28 +1,85 @@
 #!/bin/bash
 #
-# Usage:
-#   sbatch scripts/submit_evaluate_test_set.sh <checkpoint> [options]
+# Submits one SLURM evaluation job per entry in configs/checkpoints.yaml.
 #
-# All arguments are forwarded to scripts.evaluate_test_set.
-# Example:
-#   sbatch scripts/submit_evaluate_test_set.sh \
-#       checkpoints/debugging/oat_training_.../best-model.ckpt \
-#       --split test --baseline --n-samples 100
+# Usage:
+#   bash scripts/submit_evaluate_test_set.sh
+#   bash scripts/submit_evaluate_test_set.sh --dataset cosmo_peakweather
+#   bash scripts/submit_evaluate_test_set.sh --dataset cosmo_peakweather --model oat_temp_precip
+#   bash scripts/submit_evaluate_test_set.sh --env uv
+#
+# Any unknown flags (e.g. --split val, --n-samples 50) are forwarded to
+# evaluate_test_set.py for every submitted job.
 
-#SBATCH --job-name="evaluate_test_set"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REGISTRY="$PROJECT_ROOT/configs/checkpoints.yaml"
 
-### HARDWARE ###
-#SBATCH --partition=normal
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=02:00:00
+FILTER_DATASET=""
+FILTER_MODEL=""
+ENV="poetry"
+EVAL_ARGS=()
 
-### OUTPUT ###
-#SBATCH --output=slurm_logs/evaluate_test_set_%j.log
-#SBATCH --error=slurm_logs/evaluate_test_set_%j.err
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dataset) FILTER_DATASET="$2"; shift 2 ;;
+        --model)   FILTER_MODEL="$2";   shift 2 ;;
+        --env)     ENV="$2";            shift 2 ;;
+        *)         EVAL_ARGS+=("$1");   shift ;;
+    esac
+done
 
-source .venv/bin/activate
+if [ "$ENV" = "poetry" ]; then
+    VENV_PATH=$(cd "$PROJECT_ROOT" && poetry env info --path)
+elif [ "$ENV" = "uv" ]; then
+    VENV_PATH="$PROJECT_ROOT/.venv"
+else
+    echo "Unknown environment: $ENV" >&2; exit 1
+fi
 
-python -m scripts.evaluate_test_set "$@"
+PAIRS=$(python3 - <<PYEOF
+import yaml
+with open("$REGISTRY") as f:
+    registry = yaml.safe_load(f)
+for dataset, models in (registry or {}).items():
+    if "$FILTER_DATASET" and dataset != "$FILTER_DATASET":
+        continue
+    models = models or {}
+    has_ckpt = False
+    for model, path in models.items():
+        if path is not None:
+            has_ckpt = True
+        if "$FILTER_MODEL" and model != "$FILTER_MODEL":
+            continue
+        if path is not None:
+            print(f"{dataset}\t{model}")
+    # Weightless interpolator baseline: one job per dataset (needs a sibling
+    # checkpoint to borrow the data config from).
+    if has_ckpt and (not "$FILTER_MODEL" or "$FILTER_MODEL" == "interpolator"):
+        print(f"{dataset}\tinterpolator")
+PYEOF
+)
+
+if [[ -z "$PAIRS" ]]; then
+    echo "No checkpoints to submit (check filters and null entries in $REGISTRY)" >&2
+    exit 1
+fi
+
+mkdir -p "$PROJECT_ROOT/slurm_logs/evaluation"
+
+EXTRA="${EVAL_ARGS[*]}"
+
+while IFS=$'\t' read -r dataset model; do
+    log_prefix="$PROJECT_ROOT/slurm_logs/evaluation/${dataset}_${model}"
+    job_id=$(sbatch --parsable \
+        --job-name="eval_${dataset}_${model}" \
+        --partition=debug \
+        --nodes=1 \
+        --ntasks=1 \
+        --cpus-per-task=8 \
+        --mem=64G \
+        --time=0:30:00 \
+        --output="${log_prefix}_%j.log" \
+        --error="${log_prefix}_%j.err" \
+        --wrap="source '${VENV_PATH}/bin/activate' && cd '${PROJECT_ROOT}' && python -m scripts.evaluate_test_set --dataset '${dataset}' --model '${model}' ${EXTRA}")
+    echo "Submitted job ${job_id}: ${dataset} / ${model}"
+done <<< "$PAIRS"

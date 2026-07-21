@@ -1,0 +1,24 @@
+defaults:
+  - topographic_encoder: default
+
+model_cls: oat.model_module.gp_baseline.GPBaseline
+
+use_nwp: true
+use_time_emb: true
+use_topography: true
+
+d_model: 64
+mean_n_hidden_layers: 1
+kernel_n_hidden_layers: 2
+# mean_hidden_dims: derived from (d_model,) * mean_n_hidden_layers at runtime
+# kernel_hidden_dims: derived from (d_model,) * kernel_n_hidden_layers at runtime
+kernel_embed_dim: 4
+mean_groups: [nwp, time_emb, topo]
+stationary_cov_groups: [geo]
+non_stationary_cov_groups: [nwp, topo, time_emb]
+
+noise_variance: 1.0
+eps: 0.001
+loss_fn: crps
+num_samples: 100
+transform_type: real

@@ -1,5 +1,5 @@
 defaults:
-  - dataset: cosmo_peakweather/temperature
+  - dataset: cosmo_peakweather/temp
   - split: default
   - dataloader: default
   - model: oat
@@ -11,6 +11,7 @@ defaults:
 seed: 42
 
 resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)
+run_name: null  # override the auto-generated checkpoint/W&B run name
 
 hydra:
   run:

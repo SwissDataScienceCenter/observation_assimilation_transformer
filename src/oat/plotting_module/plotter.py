@@ -831,8 +831,9 @@ class OATPlotter:
             logger.info("processed %d/%d timesteps", processed, total)
 
         denom = mask_count.clamp(min=1e-8)
-        crps_per_station = crps_sum / denom   # [S, V]
-        mae_per_station = mae_sum / denom     # [S, V]
+        no_obs = mask_count == 0  # [S, V] — station has no valid obs for this variable
+        crps_per_station = (crps_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
+        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))    # [S, V]
         crps_global = crps_sum.sum() / mask_count.sum().clamp(min=1e-8)
         mae_global = mae_sum.sum() / mask_count.sum().clamp(min=1e-8)
 
@@ -844,9 +845,10 @@ class OATPlotter:
         }
 
         if reference is not None:
-            ref_crps_per_station = ref_crps_sum / denom  # type: ignore[operator]
+            ref_crps_per_station = (ref_crps_sum / denom).masked_fill(no_obs, float("nan"))  # type: ignore[operator]
             ref_crps_global = ref_crps_sum.sum() / mask_count.sum().clamp(min=1e-8)  # type: ignore[union-attr]
-            result["crpss"] = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
+            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
+            result["crpss"] = crpss_per_station.masked_fill(no_obs, float("nan"))
             result["crpss_global"] = 1.0 - crps_global / ref_crps_global.clamp(min=1e-8)
 
         return result

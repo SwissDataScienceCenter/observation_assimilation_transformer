@@ -18,26 +18,51 @@ Options
 """
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
 import pandas as pd
+import torch
+from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.oat_predictor import OATPredictor
-from oat.predictor_module.checkpoint_utils import load_checkpoint
+from oat.predictor_module.checkpoint_utils import (
+    _DEFAULT_REGISTRY,
+    load_checkpoint,
+    resolve_checkpoint,
+)
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
+
+# Weightless NWP-interpolation baseline: no checkpoint of its own, so it borrows
+# the data config from any sibling checkpoint of the same dataset.
+INTERPOLATOR_MODEL = "interpolator"
+
+
+def _sibling_checkpoint(dataset: str) -> str:
+    """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
+    registry = OmegaConf.load(_DEFAULT_REGISTRY)
+    models = registry.get(dataset) or {}
+    for model, path in models.items():
+        if model != INTERPOLATOR_MODEL and path is not None:
+            return str(path)
+    raise ValueError(
+        f"No sibling checkpoint to borrow a data config from for the "
+        f"interpolator on dataset={dataset!r}."
+    )
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Aggregate test-set metrics for an OAT checkpoint."
     )
-    p.add_argument("checkpoint", help="Path to .ckpt file")
+    p.add_argument("checkpoint", nargs="?", default=None, help="Path to .ckpt file")
+    p.add_argument("--dataset", default=None, help="Dataset key in configs/checkpoints.yaml")
+    p.add_argument("--model", default=None, help="Model key in configs/checkpoints.yaml")
     p.add_argument(
         "--split",
         choices=["val", "test"],
@@ -93,7 +118,7 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         global_key = f"{key}_global"
         if global_key not in metrics:
             continue
-        per_var = metrics[key].mean(dim=0)  # average over stations → [V]
+        per_var = torch.nanmean(metrics[key], dim=0)  # average over stations, ignoring NaN → [V]
         vals = "".join(f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names)))
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
@@ -104,11 +129,34 @@ def main() -> None:
 
     args = _parse_args()
 
-    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
+    is_interpolator = args.model == INTERPOLATOR_MODEL
+
+    if is_interpolator:
+        # Borrow the data config from a sibling checkpoint; build predictor below.
+        cfg = OmegaConf.load(Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml")
+        predictor = None
+    else:
+        if args.checkpoint is None:
+            if args.dataset is None or args.model is None:
+                logging.getLogger(__name__).error(
+                    "Provide either a checkpoint path or both --dataset and --model."
+                )
+                raise SystemExit(2)
+            args.checkpoint = resolve_checkpoint(args.dataset, args.model)
+        predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
+        predictor = predictor.eval()
+
     cfg.dataset.data_points_for_stats = 0
-    predictor = predictor.eval()
 
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
+
+    if is_interpolator:
+        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
+        predictor = NWPInterpolatorPredictor(
+            config=nwp_config,
+            output_var_names=dataset.config.obs_vars,
+            input_transform=dataset.get_baseline_pre_transform(),
+        ).eval()
 
     split_loader = val_loader if args.split == "val" else test_loader
     split_ds = split_loader.dataset  # EvalDataset
@@ -139,7 +187,7 @@ def main() -> None:
     )
 
     nwp_predictor = None
-    if args.baseline:
+    if args.baseline and not is_interpolator:
         nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
         nwp_predictor = NWPInterpolatorPredictor(
             config=nwp_config,
@@ -168,10 +216,26 @@ def main() -> None:
             rows[f"{key}_{var}"] = tensor[:, vi].tolist()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_tag = Path(args.checkpoint).parent.name
+    ckpt_tag = (
+        f"{INTERPOLATOR_MODEL}_{args.dataset}"
+        if is_interpolator
+        else Path(args.checkpoint).parent.name
+    )
     out_path = Path(args.out) if args.out else OUT_DIR / f"{ckpt_tag}_metrics_{args.split}.csv"
     pd.DataFrame(rows).to_csv(out_path, index=False)
     logger.info("Saved → %s", out_path)
+
+    summary: dict = {}
+    for key in ("crps", "mae", "crpss"):
+        global_key = f"{key}_global"
+        if global_key not in metrics:
+            continue
+        summary[global_key] = metrics[global_key].item()
+        per_var = {var: torch.nanmean(metrics[key][:, vi]).item() for vi, var in enumerate(var_names)}
+        summary[key] = per_var
+    summary_path = out_path.with_suffix(".summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2))
+    logger.info("Saved summary → %s", summary_path)
 
 
 if __name__ == "__main__":

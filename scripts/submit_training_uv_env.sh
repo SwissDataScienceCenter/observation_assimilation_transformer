@@ -1,5 +1,9 @@
 #!/bin/bash
 #
+# DEPRECATED: use the central dispatcher instead, e.g.
+#   python -m scripts.train --model oat --dataset cosmo_peakweather/temp --submit
+# See scripts/submit_training.sh / scripts/train.py.
+#
 # Usage:
 #   sbatch scripts/submit_training_uv_env.sh                                    # OAT training (default)
 #   sbatch scripts/submit_training_uv_env.sh model=baseline logging=baseline    # Baseline evaluation

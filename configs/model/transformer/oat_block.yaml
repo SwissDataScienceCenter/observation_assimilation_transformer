@@ -1,8 +1,8 @@
-# d_model: 64 defined higher
+# d_model: defined at model level
 nhead: 4
 num_encoder_layers: 3
 num_decoder_layers: 3
-dim_feedforward: 32
+# dim_feedforward: derived from 2 * d_model at runtime
 dropout: 0.1
 activation: GELU
 sparse_attn: true
@@ -10,3 +10,4 @@ decoder_self_attention: false
 # d_geo_bias: int = 3   # data dependent
 dim_geo_bias_feedforward: 32
 activation_geo_bias: GELU
+geo_attn_mode: additive  # "additive" (current bias) | "tetnp" (content-dependent kernel) | "vanilla" (no geometry)
