@@ -52,7 +52,28 @@ def setup_profiler(cfg: DictConfig) -> Profiler | None:
     raise ValueError(f"Profiler type {cfg.profiler.type} unknown.")
 
 
-def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
+def _resolve_checkpoint_monitor(cfg: DictConfig, model_type: str) -> Tuple[str, str]:
+    """Metric + mode for best-checkpoint selection / early stopping.
+
+    An explicit ``checkpoint_monitor`` in the config wins. Otherwise it is
+    derived from the model: GP baselines train a CRPS in log space, which
+    diverges from the reported data-space CRPS, so they select on the
+    data-space metric ``val_crps_<obs_var>`` (the GP is univariate); every other
+    model selects on its training loss ``val_loss``.
+    """
+    monitor = cfg.get("checkpoint_monitor", None)
+    mode = cfg.get("checkpoint_monitor_mode", "min")
+    if monitor:
+        return monitor, mode
+    if model_type in ("gp_baseline", "deep_gp_baseline"):
+        obs_var = list(cfg.dataset.obs_vars)[0]
+        return f"val_crps_{obs_var}", "min"
+    return "val_loss", mode
+
+
+def setup_logger_and_callbacks(
+    cfg: DictConfig, model_type: str = "oat"
+) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
@@ -71,13 +92,10 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     # Callbacks
-    # Metric used to select the best checkpoint / early-stop. Defaults to the
-    # training loss ("val_loss"), but models whose training loss lives in a
-    # different space than the reported metric (e.g. the GP baseline trains a
-    # log-space CRPS while precip is scored by data-space CRPS) should select on
-    # the data-space metric, e.g. "val_crps_precipitation". mode follows suit.
-    monitor = cfg.get("checkpoint_monitor", "val_loss")
-    monitor_mode = cfg.get("checkpoint_monitor_mode", "min")
+    # Metric used to select the best checkpoint / early-stop. See
+    # _resolve_checkpoint_monitor: GP baselines auto-select on the data-space
+    # CRPS metric; other models on "val_loss". Overridable via checkpoint_monitor.
+    monitor, monitor_mode = _resolve_checkpoint_monitor(cfg, model_type)
     checkpoint_callback = ModelCheckpoint(
         monitor=monitor,
         mode=monitor_mode,
@@ -178,7 +196,7 @@ def main(cfg: DictConfig) -> None:
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
+    wandb_logger, callbacks = setup_logger_and_callbacks(cfg, model_type)
 
     # print config
     logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
