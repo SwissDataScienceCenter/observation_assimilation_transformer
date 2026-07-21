@@ -14,12 +14,35 @@ def test_season_keys_canonical_order():
 
 
 def test_continuous_fixed_width_bins():
-    df = pd.DataFrame({"elevation": [100.0, 150.0, 900.0, 950.0]})
-    keys, present, label_for, _order = _bin_keys(df, "elevation", nbins=2)
-    # Two fixed-width bins: {100,150} -> bin 0, {900,950} -> bin 1.
+    df = pd.DataFrame({"nearest_obs_dist": [1.0, 1.5, 9.0, 9.5]})
+    keys, present, label_for, _order = _bin_keys(df, "nearest_obs_dist", nbins=2)
+    # Two fixed-width bins: {1.0,1.5} -> bin 0, {9.0,9.5} -> bin 1.
     assert present == [0, 1]
     assert list(keys) == [0, 0, 1, 1]
     assert len({label_for[b] for b in present}) == 2
+
+
+def test_lonlat_bins_snap_to_integers():
+    df = pd.DataFrame({"lon": [6.2, 6.9, 7.4, 8.8]})
+    keys, present, label_for, _order = _bin_keys(df, "lon", nbins=3)
+    # Whole-degree edges 6..9: bins [6-7], [7-8], [8-9].
+    assert list(keys) == [0, 0, 1, 2]
+    assert present == [0, 1, 2]
+    assert [label_for[b] for b in present] == ["6-7", "7-8", "8-9"]
+
+
+def test_elevation_custom_bins():
+    # Fixed, hand-chosen bins: <750, 750-1250, 1250-2000, >2000.
+    df = pd.DataFrame({"elevation": [500.0, 1000.0, 1800.0, 2500.0]})
+    keys, present, label_for, _order = _bin_keys(df, "elevation", nbins=5)
+    assert present == [0, 1, 2, 3]
+    assert list(keys) == [0, 1, 2, 3]
+    assert [label_for[b] for b in present] == [
+        "<750",
+        "750-1250",
+        "1250-2000",
+        ">2000",
+    ]
 
 
 def test_empty_dataframe_returns_empty():

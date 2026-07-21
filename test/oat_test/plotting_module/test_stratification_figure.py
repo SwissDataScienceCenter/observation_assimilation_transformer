@@ -26,6 +26,7 @@ def _long_df():
                     "season": seasons[i % 4],
                     "elevation": 100.0 + 10.0 * (i % 50),
                     "nearest_obs_dist": 1.0 + 0.1 * (i % 30),
+                    "station_x": 6.0 + 0.01 * (i % 40),
                     "lon": 6.0 + 0.01 * (i % 40),
                     "lat": 46.0 + 0.01 * (i % 40),
                     "crps_temperature": float(rng.random()),
@@ -62,8 +63,8 @@ def test_figure_grid_shape():
 
 
 def _narrow_lat_df():
-    # Latitude over Switzerland spans ~45.8-47.8: a sub-2-unit range that, with
-    # `:.0f` bin-label formatting, would collapse to duplicate integer labels.
+    # Latitude over Switzerland spans ~45.8-47.8, which snaps to whole-degree
+    # bins [45-46], [46-47], [47-48].
     rng = np.random.default_rng(1)
     seasons = ["DJF", "MAM", "JJA", "SON"]
     rows = []
@@ -75,6 +76,7 @@ def _narrow_lat_df():
                     "season": seasons[i % 4],
                     "elevation": 100.0 + 10.0 * (i % 50),
                     "nearest_obs_dist": 1.0 + 0.1 * (i % 30),
+                    "station_x": 6.0 + 0.01 * (i % 40),
                     "lon": 6.0 + 0.01 * (i % 40),
                     "lat": 45.8 + 2.0 * (i / 99),
                     "crps_temperature": float(rng.random()),
@@ -86,9 +88,9 @@ def _narrow_lat_df():
 def test_narrow_range_binning_does_not_drop_bars():
     df = _narrow_lat_df()
     _keys, present, label_for, _order = _bin_keys(df, "lat", nbins=5)
-    # Distinct bins must all get distinct labels (no silent merge to one bar).
-    assert len(present) == 5
-    assert len({label_for[b] for b in present}) == 5
+    # Whole-degree bins over 45.8-47.8: [45-46], [46-47], [47-48], all distinct.
+    assert len(present) == 3
+    assert [label_for[b] for b in present] == ["45-46", "46-47", "47-48"]
 
     fig = make_stratification_figure(
         df,
@@ -100,5 +102,5 @@ def test_narrow_range_binning_does_not_drop_bars():
     import matplotlib.pyplot as plt
 
     lat_ax = fig.axes[STRATIFIERS.index("lat")]
-    assert len(lat_ax.get_xticks()) == 5
+    assert len(lat_ax.get_xticks()) == 3
     plt.close(fig)

@@ -30,10 +30,13 @@ def test_detect_lonlat_wgs84_passthrough():
 
 
 def test_nearest_obs_distance():
-    eval_coords = np.array([[0.0, 0.0], [10.0, 0.0]])
-    obs_coords = np.array([[3.0, 4.0], [10.0, 5.0]])
+    # Inputs are WGS84 [lon, lat]; distances are geodesic km. Along a meridian
+    # one degree of latitude is ~111.2 km.
+    eval_coords = np.array([[0.0, 0.0], [0.0, 10.0]])
+    obs_coords = np.array([[0.0, 1.0]])
     d = nearest_obs_distance(eval_coords, obs_coords)
-    np.testing.assert_allclose(d, [5.0, 5.0])
+    # eval0 is 1 deg (~111 km) from obs; eval1 is 9 deg (~1001 km).
+    np.testing.assert_allclose(d, [111.19, 1000.75], rtol=1e-3)
 
 
 def test_season_labels():
@@ -48,9 +51,7 @@ def test_collect_station_covariates():
     import torch
 
     dataset = types.SimpleNamespace(
-        station_coords=torch.tensor(
-            [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]
-        ),
+        station_coords=torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]),
         station_geo=torch.tensor(
             [[0.0, 0.0, 100.0], [10.0, 0.0, 200.0], [0.0, 10.0, 300.0]]
         ),
@@ -58,7 +59,9 @@ def test_collect_station_covariates():
     cov = collect_station_covariates(dataset, eval_indices=[1, 2], obs_indices=[0])
     np.testing.assert_array_equal(cov["station_idx"], [1, 2])
     np.testing.assert_allclose(cov["elevation"], [200.0, 300.0])
-    np.testing.assert_allclose(cov["nearest_obs_dist"], [10.0, 10.0])
+    # Both eval stations lie 10 deg from the obs at (0,0): ~1112 km geodesic
+    # (10 deg along the equator / a meridian).
+    np.testing.assert_allclose(cov["nearest_obs_dist"], [1111.95, 1111.95], rtol=1e-3)
     # WGS84 passthrough (small magnitudes)
     np.testing.assert_allclose(cov["lon"], [10.0, 0.0])
     np.testing.assert_allclose(cov["lat"], [0.0, 10.0])
@@ -75,12 +78,13 @@ def test_build_long_dataframe_shape_and_nan():
         "elevation": np.array([100.0, 200.0]),
         "nearest_obs_dist": np.array([1.0, 2.0]),
     }
-    crps = np.array(
-        [[[0.1], [np.nan]], [[0.2], [0.3]]]
-    )  # [T=2, S=2, V=1]
+    crps = np.array([[[0.1], [np.nan]], [[0.2], [0.3]]])  # [T=2, S=2, V=1]
     mae = crps * 2
     df = build_long_dataframe(
-        crps=crps, mae=mae, times=times, covariates=covariates,
+        crps=crps,
+        mae=mae,
+        times=times,
+        covariates=covariates,
         var_names=["temperature"],
     )
     assert len(df) == 4  # T*S
