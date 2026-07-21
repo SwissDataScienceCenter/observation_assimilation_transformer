@@ -13,6 +13,13 @@ seed: 42
 resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)
 run_name: null  # override the auto-generated checkpoint/W&B run name
 
+# Metric for best-checkpoint selection + early stopping. Default is the training
+# loss; models whose loss is in a different space than the reported metric select
+# on the data-space metric instead (e.g. GP precip: val_crps_precipitation /
+# val_crps_prcp for era5). mode is "min" (loss/CRPS) or "max".
+checkpoint_monitor: val_loss
+checkpoint_monitor_mode: min
+
 hydra:
   run:
     dir: outputs/${hydra:runtime.choices.model}/${now:%Y-%m-%d}/${now:%H-%M-%S}

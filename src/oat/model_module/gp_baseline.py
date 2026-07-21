@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -105,12 +104,6 @@ class GPBaselineConfig:
 
 class GPBaseline(nn.Module):
     requires_observation: bool = True
-
-    # Registered as buffers in __init__; annotated here so type checkers know
-    # their type through set_output_normalization / _crps_loss.
-    output_loc: torch.Tensor
-    output_scale: torch.Tensor
-    output_is_log: torch.Tensor
 
     def __init__(self, config: GPBaselineConfig) -> None:
         super().__init__()
@@ -244,73 +237,6 @@ class GPBaseline(nn.Module):
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(
             self.gp.likelihood, self.gp
         )
-
-        # Output normalization for the data-space CRPS loss. The GP fits a
-        # Gaussian in standardized(-log) space; these buffers map its posterior
-        # back to raw-log space so the CRPS loss can be computed in data space
-        # (see _crps_loss). Set by the predictor via set_output_normalization
-        # once the fitted transform exists; saved/restored with the checkpoint.
-        self.register_buffer("output_loc", torch.zeros(1))
-        self.register_buffer("output_scale", torch.ones(1))
-        self.register_buffer("output_is_log", torch.tensor(False))
-
-    def set_output_normalization(
-        self, loc: torch.Tensor, scale: torch.Tensor, is_log: bool
-    ) -> None:
-        """Register the affine map from standardized space back to raw-log space
-        for the (single) obs variable: ``log(y + offset) = mu * scale + loc``.
-
-        When ``is_log`` is False the target is not log-transformed (e.g.
-        temperature) and the CRPS loss stays a plain Gaussian CRPS in
-        standardized space, which is equivalent to the data-space metric under
-        an affine transform (CRPS is scale-equivariant).
-        """
-        self.output_loc = loc.reshape(1).to(self.output_loc.device)
-        self.output_scale = scale.reshape(1).to(self.output_scale.device)
-        self.output_is_log = torch.tensor(
-            bool(is_log), device=self.output_is_log.device
-        )
-
-    def _crps_loss(
-        self, target: torch.Tensor, mu: torch.Tensor, sigma: torch.Tensor
-    ) -> torch.Tensor:
-        """Mean CRPS between the GP posterior predictive ``N(mu, sigma)`` and
-        ``target``, computed in *data space*.
-
-        For a log-transformed target the data-space predictive is a LogNormal;
-        its closed-form CRPS is
-        ``y·(2Φ(z)−1) − 2m·(Φ(z−σ) − Φ(−σ/√2))`` with ``z = (log y − μ)/σ`` and
-        ``m = exp(μ + σ²/2)``. Computing the loss here keeps it aligned with the
-        reported data-space CRPS; minimizing the log-space Gaussian CRPS instead
-        diverges from the data-space objective (the log-normal tail blows up as
-        log-space variance grows).
-
-        Numerical care: the ``m·Φ(·)`` products are evaluated as
-        ``exp(log m + log Φ)`` (``log_ndtr``) so a large ``sigma_log`` stays
-        finite/differentiable — computing ``m`` directly overflows fp32 and then
-        ``m·Φ → ∞·0 = NaN`` (surfaces as NaN loss/grads early in training).
-        ``sigma_log`` is floored to avoid a divide-by-zero if the scale
-        collapses. ``(y + offset) = exp(mu·scale + loc)`` is strictly positive
-        (no ``log(0)``) and, because CRPS is shift-invariant, the shared
-        ``+offset`` cancels against the metric.
-        """
-        if not bool(self.output_is_log):
-            return crps_normal(target, mu, sigma)
-
-        loc = self.output_loc.to(mu.device)
-        scale = self.output_scale.to(mu.device)
-        eps = torch.finfo(mu.dtype).eps
-        mu_log = mu * scale + loc
-        sigma_log = (sigma * scale).clamp(min=eps)
-        y_log = target * scale + loc  # = log(precip + offset)
-        y = torch.exp(y_log)  # data-space target (precip + offset) > 0
-        z = (y_log - mu_log) / sigma_log
-        log_m = mu_log + 0.5 * sigma_log**2
-        std_normal = dist.Normal(torch.zeros_like(mu_log), torch.ones_like(sigma_log))
-        m_cdf_z = torch.exp(log_m + torch.special.log_ndtr(z - sigma_log))
-        m_cdf_ref = torch.exp(log_m + torch.special.log_ndtr(-sigma_log / math.sqrt(2)))
-        crps = y * (2 * std_normal.cdf(z) - 1) - 2 * (m_cdf_z - m_cdf_ref)
-        return crps.mean()
 
     def _extract_features(
         self,
@@ -450,9 +376,8 @@ class GPBaseline(nn.Module):
                 sigma = lik_pred.stddev
 
                 if valid_tgt.any():
-                    total_loss = total_loss + self._crps_loss(
-                        ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt]
-                    )
+                    crps = crps_normal(ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt])
+                    total_loss = total_loss + crps.mean()
                     n_terms += 1
 
                 with torch.no_grad():
