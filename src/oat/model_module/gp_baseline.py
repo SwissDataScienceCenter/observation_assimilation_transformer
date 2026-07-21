@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,7 +17,6 @@ from obsweatherscale.models.mlp import MLP
 import torch.distributions as dist
 
 from oat.model_module.baseline import NWPInterpolator, NWPInterpolatorConfig
-from oat.model_module.distributions import LogNormalOAT
 from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 _VALID_LOSS_FNS = ("mll", "crps")
@@ -277,24 +277,40 @@ class GPBaseline(nn.Module):
         """Mean CRPS between the GP posterior predictive ``N(mu, sigma)`` and
         ``target``, computed in *data space*.
 
-        For a log-transformed target the data-space predictive is a LogNormal,
-        whose CRPS has a closed form (``LogNormalOAT.crps``). Computing the loss
-        here keeps it aligned with the reported data-space CRPS; minimizing the
-        log-space Gaussian CRPS instead diverges from the data-space objective
-        (the log-normal mean/tail blows up as log-space variance grows).
+        For a log-transformed target the data-space predictive is a LogNormal;
+        its closed-form CRPS is
+        ``y·(2Φ(z)−1) − 2m·(Φ(z−σ) − Φ(−σ/√2))`` with ``z = (log y − μ)/σ`` and
+        ``m = exp(μ + σ²/2)``. Computing the loss here keeps it aligned with the
+        reported data-space CRPS; minimizing the log-space Gaussian CRPS instead
+        diverges from the data-space objective (the log-normal tail blows up as
+        log-space variance grows).
 
-        ``(y + offset) = exp(mu * scale + loc)`` is strictly positive, so there
-        is no ``log(0)``; and because CRPS is shift-invariant the ``+offset``
-        shared by forecast and target cancels against the metric.
+        Numerical care: the ``m·Φ(·)`` products are evaluated as
+        ``exp(log m + log Φ)`` (``log_ndtr``) so a large ``sigma_log`` stays
+        finite/differentiable — computing ``m`` directly overflows fp32 and then
+        ``m·Φ → ∞·0 = NaN`` (surfaces as NaN loss/grads early in training).
+        ``sigma_log`` is floored to avoid a divide-by-zero if the scale
+        collapses. ``(y + offset) = exp(mu·scale + loc)`` is strictly positive
+        (no ``log(0)``) and, because CRPS is shift-invariant, the shared
+        ``+offset`` cancels against the metric.
         """
-        if bool(self.output_is_log):
-            loc = self.output_loc.to(mu.device)
-            scale = self.output_scale.to(mu.device)
-            mu_log = mu * scale + loc
-            sigma_log = sigma * scale
-            target_data = torch.exp(target * scale + loc)
-            return LogNormalOAT(mu_log, sigma_log).crps(target_data).mean()
-        return crps_normal(target, mu, sigma)
+        if not bool(self.output_is_log):
+            return crps_normal(target, mu, sigma)
+
+        loc = self.output_loc.to(mu.device)
+        scale = self.output_scale.to(mu.device)
+        eps = torch.finfo(mu.dtype).eps
+        mu_log = mu * scale + loc
+        sigma_log = (sigma * scale).clamp(min=eps)
+        y_log = target * scale + loc  # = log(precip + offset)
+        y = torch.exp(y_log)  # data-space target (precip + offset) > 0
+        z = (y_log - mu_log) / sigma_log
+        log_m = mu_log + 0.5 * sigma_log**2
+        std_normal = dist.Normal(torch.zeros_like(mu_log), torch.ones_like(sigma_log))
+        m_cdf_z = torch.exp(log_m + torch.special.log_ndtr(z - sigma_log))
+        m_cdf_ref = torch.exp(log_m + torch.special.log_ndtr(-sigma_log / math.sqrt(2)))
+        crps = y * (2 * std_normal.cdf(z) - 1) - 2 * (m_cdf_z - m_cdf_ref)
+        return crps.mean()
 
     def _extract_features(
         self,
