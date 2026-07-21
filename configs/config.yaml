@@ -13,6 +13,13 @@ seed: 42
 resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)
 run_name: null  # override the auto-generated checkpoint/W&B run name
 
+# Metric for best-checkpoint selection + early stopping. null = auto-derive per
+# model (GP baselines -> data-space "val_crps_<obs_var>"; others -> "val_loss"),
+# see scripts/train_model.py::_resolve_checkpoint_monitor. Set explicitly to
+# override, e.g. checkpoint_monitor=val_loss. mode is "min" (loss/CRPS) or "max".
+checkpoint_monitor: null
+checkpoint_monitor_mode: min
+
 hydra:
   run:
     dir: outputs/${hydra:runtime.choices.model}/${now:%Y-%m-%d}/${now:%H-%M-%S}
