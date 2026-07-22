@@ -19,6 +19,7 @@ import logging
 import sys
 from pathlib import Path
 
+import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -211,17 +212,15 @@ def main() -> None:
 
     # Batched inference
     N = len(query_coords)
-    means, stds = [], []
+    means = []
     for start in range(0, N, args.batch_size):
         end = min(start + args.batch_size, N)
         samples = plotter._run_inference(snap_idx, query_coords[start:end])  # [B, n_samples, n_vars]
         var_samples = samples[:, :, var_idx]
         means.append(var_samples.mean(dim=1).detach().cpu().numpy())
-        stds.append(var_samples.std(dim=1).detach().cpu().numpy())
         logger.info("Inference: %d / %d", end, N)
 
     mean_field = np.concatenate(means).reshape(grid_shape)
-    std_field = np.concatenate(stds).reshape(grid_shape)
     lon_grid = lons.reshape(grid_shape)
     lat_grid = lats.reshape(grid_shape)
 
@@ -307,81 +306,70 @@ def main() -> None:
     all_vals = np.concatenate([f.ravel() for f in all_fields])
     cfg_vmin = var_cfg.get("vmin")
     cfg_vmax = var_cfg.get("vmax")
-    shared_vmin = float(cfg_vmin if cfg_vmin is not None else np.nanpercentile(all_vals, 2))
-    shared_vmax = float(cfg_vmax if cfg_vmax is not None else np.nanpercentile(all_vals, 98))
+    shared_vmin = float(cfg_vmin if cfg_vmin is not None else np.nanpercentile(all_vals, 1.0))
+    shared_vmax = float(cfg_vmax if cfg_vmax is not None else np.nanpercentile(all_vals, 99))
     if shared_vmax - shared_vmin < 1e-6:
         shared_vmax = shared_vmin + 1.0
     logger.info("Shared colour range: %.4g – %.4g", shared_vmin, shared_vmax)
     shared_norm = mcolors.Normalize(vmin=shared_vmin, vmax=shared_vmax)
     cb_label = "°C" if (args.nwp_var in _KELVIN_VARS or args.era5_var in _KELVIN_VARS) else var
 
-    # 3-row layout: row 0 = OAT (mean + std), row 1 = COSMO, row 2 = ERA5
-    fig, axs = plt.subplots(3, 2, figsize=(16, 18), layout="constrained")
-    fig.suptitle(f"{ckpt_tag} — {var}  ({snap_time_iso})")
-    ax_mean, ax_std = axs[0, 0], axs[0, 1]
-    ax_cosmo = axs[1, 0]
-    ax_era5 = axs[2, 0]
-    axs[1, 1].axis("off")
-    axs[2, 1].axis("off")
-
-    mesh_mean = ax_mean.pcolormesh(
-        lon_grid, lat_grid, mean_field,
-        cmap=cmap, norm=shared_norm, shading="auto",
-    )
-    plt.colorbar(mesh_mean, ax=ax_mean, label=cb_label)
-    ax_mean.set_title("OAT — predictive mean")
-    ax_mean.set_xlabel("Longitude")
-    ax_mean.set_ylabel("Latitude")
-
-    mesh_std = ax_std.pcolormesh(lon_grid, lat_grid, std_field, shading="auto")
-    plt.colorbar(mesh_std, ax=ax_std, label=f"{var} std")
-    ax_std.set_title("OAT — predictive std")
-    ax_std.set_xlabel("Longitude")
-
-    if cosmo_field is not None:
-        mesh_cosmo = ax_cosmo.pcolormesh(
-            lon_grid, lat_grid, cosmo_field,
-            cmap=cmap, norm=shared_norm, shading="auto",
-        )
-        plt.colorbar(mesh_cosmo, ax=ax_cosmo, label=cb_label)
-        ax_cosmo.set_title(f"COSMO {args.nwp_var}")
-        ax_cosmo.set_xlabel("Longitude")
-        ax_cosmo.set_ylabel("Latitude")
-    else:
-        ax_cosmo.axis("off")
-
+    # Single-row layout: ERA5 | OAT | COSMO, sharing one colorbar.
+    proj = ccrs.PlateCarree()
+    panels = []
     if era5_field_2d is not None:
-        mesh_era5 = ax_era5.pcolormesh(
-            era5_lon_grid, era5_lat_grid, era5_field_2d,
-            cmap=cmap, norm=shared_norm, shading="auto",
+        panels.append(
+            (era5_lon_grid, era5_lat_grid, era5_field_2d, f"ERA5 {args.era5_var}", False)
         )
-        plt.colorbar(mesh_era5, ax=ax_era5, label=cb_label)
-        ax_era5.set_title(f"ERA5 {args.era5_var}")
-        ax_era5.set_xlabel("Longitude")
-        ax_era5.set_ylabel("Latitude")
-    else:
-        ax_era5.axis("off")
+    panels.append((lon_grid, lat_grid, mean_field, "OAT — predictive mean", True))
+    if cosmo_field is not None:
+        panels.append((lon_grid, lat_grid, cosmo_field, f"COSMO {args.nwp_var}", False))
 
-    if not args.no_stations:
-        for ax, mesh in [(ax_mean, mesh_mean), (ax_std, None)]:
-            plotter._overlay_stations(ax, snap_idx, var_idx, mesh=mesh)
-            ax.legend(fontsize=7)
+    fig, axs = plt.subplots(
+        1, len(panels), figsize=(6 * len(panels), 5), layout="constrained",
+        subplot_kw={"projection": proj}, squeeze=False,
+    )
+    axs = list(axs[0])
+    # fig.suptitle(f"{ckpt_tag} — {var}  ({snap_time_iso})")
 
-    active_axes = [ax for ax in [ax_mean, ax_std, ax_cosmo, ax_era5]
-                   if ax.get_visible()]
-    for ax in active_axes:
-        ax.set_xlim(lon_min, lon_max)
-        ax.set_ylim(lat_min, lat_max)
+    mesh = None
+    for ax, (xg, yg, field, title, is_oat) in zip(axs, panels):
+        m = ax.pcolormesh(
+            xg, yg, field, cmap=cmap, norm=shared_norm, shading="auto",
+            transform=proj, rasterized=True,  # keep PDF small; vector axes/text stay crisp
+        )
+        ax.set_title(title)
+        if is_oat:
+            mesh = m
+            if not args.no_stations:
+                plotter._overlay_stations(ax, snap_idx, var_idx, mesh=m)
+                ax.legend(fontsize=7)
+
+    # cos(lat) aspect: 1° lon is shorter than 1° lat at mid-latitudes, so equal-
+    # degree PlateCarree over-widens the map. This restores faithful proportions.
+    mean_lat = 0.5 * (lat_min + lat_max)
+    for i, ax in enumerate(axs):
+        ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=proj)
+        ax.set_aspect(1.0 / np.cos(np.deg2rad(mean_lat)))
+        gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.5)
+        gl.top_labels = False
+        gl.right_labels = False
+        gl.left_labels = i == 0
+
+    # One shared colorbar for all panels (identical norm + cmap).
+    fig.colorbar(mesh, ax=axs, location="right", shrink=0.8, label=cb_label)
 
     try:
-        _add_borders(active_axes, lon_grid[0], lat_grid[:, 0])
+        _add_borders(axs, lon_grid[0], lat_grid[:, 0])
     except Exception as exc:
         logger.warning("Geo overlays skipped: %s", exc)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"{ckpt_tag}_{var}_{snap_time_iso}_nwp_grid.png"
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    logger.info("Saved → %s", out_path)
+    stem = f"{ckpt_tag}_{var}_{snap_time_iso}_nwp_grid"
+    for ext in ("png", "pdf"):
+        out_path = OUT_DIR / f"{stem}.{ext}"
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        logger.info("Saved → %s", out_path)
     plt.close(fig)
 
 
