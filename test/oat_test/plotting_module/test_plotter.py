@@ -113,6 +113,38 @@ def test_run_inference_with_baseline_predictor():
     assert predictor.predict_step.call_args[1]["n_samples"] == n_samples
 
 
+def test_run_inference_passes_stage_for_pre_oat():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    plotter._run_inference(0, torch.zeros(3, 2), stage="pre_oat")
+    assert predictor.predict_step.call_args.kwargs.get("stage") == "pre_oat"
+
+
+def test_run_inference_omits_stage_for_oat():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    plotter._run_inference(0, torch.zeros(3, 2))
+    assert "stage" not in predictor.predict_step.call_args.kwargs
+
+
+def test_predict_samples_threads_predictor_and_stage():
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    dataset = _make_dataset()
+    other = _make_baseline_predictor(N_q=3, n_samples=10, n_vars=2)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    out = plotter.predict_samples(torch.zeros(3, 2), 0, predictor=other, stage="oat")
+    assert out.shape == (3, 10, 2)
+    other.predict_step.assert_called_once()
+
+
 def test_plot_timeseries_draws_line_and_band():
     predictor = _make_predictor(N_q=1, n_samples=10)
     dataset = _make_dataset(n_stations=5, n_times=4)
@@ -789,6 +821,13 @@ class TestOverlayStations:
         assert obs_scatter is not None
         plt.close(fig)
 
+    def test_public_overlay_stations_draws_observed(self):
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        fig, ax = plt.subplots()
+        plotter.overlay_stations(ax, time_idx=0, var_idx=0)
+        assert any(c.get_label() == "observed" for c in ax.collections)
+        plt.close(fig)
+
 
 # ── plot_domain_overview ───────────────────────────────────────────────────
 
@@ -1099,4 +1138,18 @@ def test_plot_domain_overview_first_panel_applies_configured_vmin():
         fig = plotter.plot_domain_overview(other, "temp", 0, xs, ys)
     mesh = next(c for c in fig.axes[0].get_children() if hasattr(c, "get_clim"))
     assert mesh.norm.vmin == 0.0
+    plt.close(fig)
+
+
+def test_draw_field_returns_mesh_and_sets_limits():
+    plotter = OATPlotter(_make_predictor(), _make_dataset())
+    fig, ax = plt.subplots()
+    xs = np.linspace(0.0, 10.0, 5)
+    ys = np.linspace(0.0, 20.0, 4)
+    field = np.zeros((4, 5))
+    mesh = plotter.draw_field(ax, field, xs, ys, cmap="viridis", vmin=0.0, vmax=1.0)
+    assert mesh is not None
+    assert abs(ax.get_xlim()[1] - 10.0) < 1e-6
+    assert abs(ax.get_ylim()[1] - 20.0) < 1e-6
+    assert mesh.norm.vmin == 0.0 and mesh.norm.vmax == 1.0
     plt.close(fig)
