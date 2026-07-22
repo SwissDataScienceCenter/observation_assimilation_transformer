@@ -23,14 +23,13 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import (
     ModelCheckpoint,
     EarlyStopping,
-    LearningRateMonitor
+    LearningRateMonitor,
 )
 from pytorch_lightning.loggers import WandbLogger
 import wandb
 from pytorch_lightning.profilers import SimpleProfiler
 from pytorch_lightning.profilers import Profiler
 from torch.utils.data import DataLoader
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,67 +38,104 @@ logger = logging.getLogger(__name__)
 def setup_profiler(cfg: DictConfig) -> Profiler | None:
     if cfg.profiler.type == "simple":
         dirpath = os.path.join("profiler_outputs", cfg.logging.group)
-        
+
         now_str = datetime.now().strftime("%Y%m%d")
         slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
-    
+
         filename = f"{cfg.logging.run_name_prefix}_{now_str}_job{slurm_job_id}"
-        
+
         return SimpleProfiler(dirpath=dirpath, filename=filename)
 
     if cfg.profiler.type == "none" or cfg.profiler.type is None:
         return None
 
     raise ValueError(f"Profiler type {cfg.profiler.type} unknown.")
-        
-def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
+
+
+def _resolve_checkpoint_monitor(cfg: DictConfig, model_type: str) -> Tuple[str, str]:
+    """Metric + mode for best-checkpoint selection / early stopping.
+
+    An explicit ``checkpoint_monitor`` in the config wins. Otherwise it is
+    derived from the model: GP baselines train a CRPS in log space, which
+    diverges from the reported data-space CRPS, so they select on the
+    data-space metric ``val_crps_<obs_var>`` (the GP is univariate); every other
+    model selects on its training loss ``val_loss``.
+    """
+    monitor = cfg.get("checkpoint_monitor", None)
+    mode = cfg.get("checkpoint_monitor_mode", "min")
+    if monitor:
+        return monitor, mode
+    if model_type in ("gp_baseline", "deep_gp_baseline"):
+        obs_var = list(cfg.dataset.obs_vars)[0]
+        return f"val_crps_{obs_var}", "min"
+    return "val_loss", mode
+
+
+def setup_logger_and_callbacks(
+    cfg: DictConfig, model_type: str = "oat"
+) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
     run_name = cfg.get("run_name") or f"{base_name}_{now_str}_job{slurm_job_id}"
     checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
-    wandb_logger = WandbLogger(name=run_name,
-                         project=cfg.logging.project,
-                         group=cfg.logging.group,
-                         entity=cfg.logging.entity,
-                         log_model=False,
-                         settings=wandb.Settings(init_timeout=300))
+    wandb_logger = WandbLogger(
+        name=run_name,
+        project=cfg.logging.project,
+        group=cfg.logging.group,
+        entity=cfg.logging.entity,
+        log_model=False,
+        settings=wandb.Settings(init_timeout=300),
+    )
 
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
-    
+
     os.makedirs(checkpoint_dir, exist_ok=True)
     # Callbacks
+    # Metric used to select the best checkpoint / early-stop. See
+    # _resolve_checkpoint_monitor: GP baselines auto-select on the data-space
+    # CRPS metric; other models on "val_loss". Overridable via checkpoint_monitor.
+    monitor, monitor_mode = _resolve_checkpoint_monitor(cfg, model_type)
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
-        mode="min",
+        monitor=monitor,
+        mode=monitor_mode,
         save_top_k=1,
         verbose=True,
         dirpath=checkpoint_dir,
-        filename="best-model-{epoch:02d}-{val_loss:.4f}"
+        filename=f"best-model-{{epoch:02d}}-{{{monitor}:.4f}}",
     )
     last_checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_dir,
         monitor=None,
         save_top_k=0,
         save_last=True,
-        every_n_epochs=1, # NOTE is epochs become long, consider saving every n_steps instead.
+        every_n_epochs=1,  # NOTE is epochs become long, consider saving every n_steps instead.
         enable_version_counter=False,
     )
-    
+
     # NOTE maybe use cfg for patience
     early_stop_callback = EarlyStopping(
-        monitor="val_loss",
-        patience=40,
-        mode="min",
-        verbose=True
+        monitor=monitor, patience=40, mode=monitor_mode, verbose=True
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
-    return wandb_logger, [checkpoint_callback, last_checkpoint_callback, early_stop_callback, lr_monitor]
+    return wandb_logger, [
+        checkpoint_callback,
+        last_checkpoint_callback,
+        early_stop_callback,
+        lr_monitor,
+    ]
 
 
-def save_fixtures_for_tests(input_transform: Transform, output_transform: Transform, train_loader: DataLoader, cfg: DictConfig) -> None:
-    assert cfg.dataloader.train.batch_size == 1, "Please use batch size = 1 when saving fixtures."
+def save_fixtures_for_tests(
+    input_transform: Transform,
+    output_transform: Transform,
+    train_loader: DataLoader,
+    cfg: DictConfig,
+) -> None:
+    assert (
+        cfg.dataloader.train.batch_size == 1
+    ), "Please use batch size = 1 when saving fixtures."
 
     logger.info("Saving examples of transforms as fixtures ...")
     ROOT = Path(__file__).resolve().parents[1]
@@ -122,11 +158,10 @@ def save_fixtures_for_tests(input_transform: Transform, output_transform: Transf
     logger.info(f"Saved batch fixture object to {out_file}")
 
 
-
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # set global seed
-    OmegaConf.resolve(cfg) # for referenced fields
+    OmegaConf.resolve(cfg)  # for referenced fields
     torch.manual_seed(cfg.seed)
     model_type = HydraConfig.get().runtime.choices.get("model", "oat")
 
@@ -135,22 +170,34 @@ def main(cfg: DictConfig) -> None:
     # Check that only "informed" models have a train_split_fraction > 0.0
     # and force it to 0.0 otherwise.
     if not model_cls.requires_observation and cfg.split.train_split_fraction > 0.0:
-        warnings.warn(f"Observation fraction = {cfg.split.train_split_fraction} is incompatible with \
-            an uninformed model ({model_cls}). It will be forcibly overridden to 0.0")
+        warnings.warn(
+            f"Observation fraction = {cfg.split.train_split_fraction} is incompatible with \
+            an uninformed model ({model_cls}). It will be forcibly overridden to 0.0"
+        )
         cfg.split.train_split_fraction = 0.0
-        
-    dataset, len_train_dataset, train_loader, val_loader, test_loader, input_transform, output_transform = setup_data_and_transform(cfg, logger)
-    
+
+    (
+        dataset,
+        len_train_dataset,
+        train_loader,
+        val_loader,
+        test_loader,
+        input_transform,
+        output_transform,
+    ) = setup_data_and_transform(cfg, logger)
+
     if cfg.get("save_fixtures", False):
-        save_fixtures_for_tests(input_transform=input_transform,
-                                output_transform=output_transform,
-                                train_loader=train_loader,
-                                cfg=cfg)
+        save_fixtures_for_tests(
+            input_transform=input_transform,
+            output_transform=output_transform,
+            train_loader=train_loader,
+            cfg=cfg,
+        )
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
-    
+    wandb_logger, callbacks = setup_logger_and_callbacks(cfg, model_type)
+
     # print config
     logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
 
@@ -158,10 +205,7 @@ def main(cfg: DictConfig) -> None:
         from oat.model_module.baseline import NWPInterpolatorConfig
         from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-        baseline_config = NWPInterpolatorConfig(
-            field_extent=field_extent,
-            **cfg.model
-        )
+        baseline_config = NWPInterpolatorConfig(field_extent=field_extent, **cfg.model)
         pre_transform = dataset.get_baseline_pre_transform()
         predictor = create_baseline_predictor(
             config=baseline_config,
@@ -200,34 +244,43 @@ def main(cfg: DictConfig) -> None:
         oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
 
         var_names = dataset.config.obs_vars
-        
+
         # Estimate the total number of training steps. Can be used by the OAT loss scheduler if its total_steps is set to None.
         estimated_total_steps = estimate_total_steps(
             dataset_size=len_train_dataset,
             batch_size=cfg.dataloader.train.batch_size,
             max_epochs=cfg.trainer.max_epochs,
             max_steps=OmegaConf.select(cfg.trainer, "max_steps", default=None),
-            accumulate_grad_batches=OmegaConf.select(cfg.trainer, "accumulate_grad_batches", default=1),
+            accumulate_grad_batches=OmegaConf.select(
+                cfg.trainer, "accumulate_grad_batches", default=1
+            ),
             num_nodes=OmegaConf.select(cfg.trainer, "num_nodes", default=1),
             num_gpus_per_node=OmegaConf.select(cfg.trainer, "devices", default=4),
-            limit_train_batches=OmegaConf.select(cfg.trainer, "limit_train_batches", default=1.0),
-            drop_last=OmegaConf.select(cfg.dataloader.train, "drop_last", default=False)
+            limit_train_batches=OmegaConf.select(
+                cfg.trainer, "limit_train_batches", default=1.0
+            ),
+            drop_last=OmegaConf.select(
+                cfg.dataloader.train, "drop_last", default=False
+            ),
         )
         logger.info(f"Manual estimated total optimizer steps: {estimated_total_steps}")
 
-        predictor = setup_oat_predictor(model_cfg=oat_model_cfg,
-                                        estimated_total_step=estimated_total_steps,
-                                        var_names=var_names,
-                                        transforms=[input_transform, output_transform],
-                                        cfg=cfg)
-
+        predictor = setup_oat_predictor(
+            model_cfg=oat_model_cfg,
+            estimated_total_step=estimated_total_steps,
+            var_names=var_names,
+            transforms=[input_transform, output_transform],
+            cfg=cfg,
+        )
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
 
         profiler = setup_profiler(cfg=cfg)
 
-        trainer = Trainer(**cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler)
+        trainer = Trainer(
+            **cfg.trainer, callbacks=callbacks, logger=wandb_logger, profiler=profiler
+        )
         trainer.fit(
             model=predictor,
             train_dataloaders=train_loader,
@@ -237,6 +290,7 @@ def main(cfg: DictConfig) -> None:
 
         if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
+
 
 if __name__ == "__main__":
     # Usage:

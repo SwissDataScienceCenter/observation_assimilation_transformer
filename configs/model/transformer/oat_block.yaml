@@ -10,3 +10,4 @@ decoder_self_attention: false
 # d_geo_bias: int = 3   # data dependent
 dim_geo_bias_feedforward: 32
 activation_geo_bias: GELU
+geo_attn_mode: additive  # "additive" (current bias) | "tetnp" (content-dependent kernel) | "vanilla" (no geometry)
