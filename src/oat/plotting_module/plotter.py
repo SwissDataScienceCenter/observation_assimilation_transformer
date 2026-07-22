@@ -70,6 +70,7 @@ class OATPlotter:
         time_idx: int,
         query_coords: torch.Tensor,
         predictor: BasePredictor | None = None,
+        stage: str = "oat",
     ) -> torch.Tensor:
         """Run one forward pass and return unnormalized samples.
 
@@ -79,6 +80,10 @@ class OATPlotter:
             predictor: If provided, use this predictor instead of self.predictor
                 for normalization and sampling. The dataset and indices from
                 self are always used.
+            stage: "oat" for the full prediction, "pre_oat" for the model's
+                output before the assimilation block (OAT predictor only).
+                Only forwarded to `predict_step` when not "oat", since
+                baseline predictors' `predict_step` has no `stage` parameter.
 
         Returns:
             Samples tensor of shape [N_q, n_samples, n_vars] (unnormalized).
@@ -102,9 +107,53 @@ class OATPlotter:
             "query_data": _add_batch(query_data),
         }
 
-        samples = p.predict_step(batch, batch_idx=0, n_samples=self.n_samples)
+        if stage == "oat":
+            samples = p.predict_step(batch, batch_idx=0, n_samples=self.n_samples)
+        else:
+            samples = p.predict_step(
+                batch, batch_idx=0, n_samples=self.n_samples, stage=stage
+            )
         # samples: [1, N_q, n_samples, n_vars]
         return samples[0]  # [N_q, n_samples, n_vars]
+
+    def predict_samples(
+        self,
+        query_coords: torch.Tensor,
+        time_idx: int,
+        predictor: BasePredictor | None = None,
+        stage: str = "oat",
+    ) -> torch.Tensor:
+        """Public wrapper over :meth:`_run_inference`.
+
+        Args:
+            query_coords: [N_q, 2] coordinates in the dataset frame.
+            time_idx: Index into ``dataset.times``.
+            predictor: Optional predictor override (defaults to self.predictor).
+            stage: "oat" for the full prediction, "pre_oat" for the model's
+                output before the assimilation block (OAT predictor only).
+
+        Returns:
+            Unnormalized samples of shape [N_q, n_samples, n_vars].
+        """
+        return self._run_inference(
+            time_idx, query_coords, predictor=predictor, stage=stage
+        )
+
+    def overlay_stations(
+        self,
+        ax: Any,
+        time_idx: int,
+        var_idx: int,
+        mesh: Any = None,
+        color_by: dict[int, float] | None = None,
+    ) -> None:
+        """Public wrapper around :meth:`_overlay_stations`.
+
+        Observed context stations are drawn as circles and evaluation stations
+        as squares, coloured by observed value (or by *color_by*) when *mesh*
+        is given. See :meth:`_overlay_stations` for details.
+        """
+        self._overlay_stations(ax, time_idx, var_idx, mesh=mesh, color_by=color_by)
 
     def _overlay_stations(
         self,
@@ -1059,3 +1108,25 @@ class OATPlotter:
 
         fig.tight_layout()
         return fig
+
+    def draw_field(
+        self,
+        ax: Any,
+        field: np.ndarray,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        cmap: Any = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+    ) -> Any:
+        """Draw a precomputed (len(ys), len(xs)) field and return the QuadMesh.
+
+        Clamps the axis limits to the grid span. Colormap/limits are applied
+        as given (the caller may re-scale later via ``mesh.set_clim``).
+        """
+        mesh = ax.pcolormesh(
+            xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
+        )
+        ax.set_xlim(float(xs[0]), float(xs[-1]))
+        ax.set_ylim(float(ys[0]), float(ys[-1]))
+        return mesh

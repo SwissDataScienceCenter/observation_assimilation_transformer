@@ -25,7 +25,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
 
 from omegaconf import OmegaConf
 
@@ -53,51 +52,11 @@ def _load_plot_config(dataset: Any) -> Any:
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 
-from oat.plotting_module.geo_overlays import _GEO_CACHE, _add_borders  # noqa: E402
-
-
-def _build_land_mask(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
-    """Return boolean mask (len(ys) × len(xs)), True where the grid point is on land.
-
-    Uses Natural Earth 10 m land polygons minus 10 m lake polygons.
-    """
-    import shapely
-    from cartopy.feature import NaturalEarthFeature
-    from pyproj import Transformer
-
-    x_grid, y_grid = np.meshgrid(xs, ys)
-    is_lv95 = float(np.abs(xs).max()) > 1e5
-
-    if is_lv95:
-        tf = Transformer.from_crs("EPSG:2056", "EPSG:4326", always_xy=True)
-        lons_flat, lats_flat = tf.transform(x_grid.ravel(), y_grid.ravel())
-        lons_flat, lats_flat = np.asarray(lons_flat), np.asarray(lats_flat)
-    else:
-        lons_flat, lats_flat = x_grid.ravel().copy(), y_grid.ravel().copy()
-
-    if "land_geom" not in _GEO_CACHE:
-        land_arr = np.array(
-            list(NaturalEarthFeature("physical", "land", "10m").geometries()),
-            dtype=object,
-        )
-        lakes_arr = np.array(
-            list(NaturalEarthFeature("physical", "lakes", "10m").geometries()),
-            dtype=object,
-        )
-        _GEO_CACHE["land_geom"] = shapely.difference(
-            shapely.union_all(land_arr),
-            shapely.union_all(lakes_arr),
-        )
-
-    clipped = shapely.clip_by_rect(
-        _GEO_CACHE["land_geom"],
-        float(lons_flat.min()) - 1.0,
-        float(lats_flat.min()) - 1.0,
-        float(lons_flat.max()) + 1.0,
-        float(lats_flat.max()) + 1.0,
-    )
-    shapely.prepare(clipped)
-    return shapely.contains_xy(clipped, lons_flat, lats_flat).reshape(x_grid.shape)
+from oat.plotting_module.geo_overlays import (  # noqa: E402
+    _add_borders,
+    build_domain_grid,
+    build_land_mask,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -238,72 +197,12 @@ def main() -> None:
         )
     snap_time_iso = dataset.times[snap_idx].strftime("%Y-%m-%dT%H")
 
-    # Topo validity scan: find the region where all topo channels are finite.
-    # DEM has no NaN; TPI/derivative channels (1+) have NaN at the southern topo
-    # boundary (~rows 0-1600 = ~80 km). Scan row validity within the NWP x-column
-    # range; x only needs the patch half-size inset from the topo edge.
-    ext = dataset.nwp_extent
-    topo_ext = dataset.topo_extent
-    patch_margin = dataset.topo_grid.abs().max().item()
-    H, W = dataset.topo_field.shape[1:]
-    topo_dx = (topo_ext["max"][0].item() - topo_ext["min"][0].item()) / (W - 1)
-    topo_dy = (topo_ext["max"][1].item() - topo_ext["min"][1].item()) / (H - 1)
-    col0 = max(0, int((ext["min"][0].item() - topo_ext["min"][0].item()) / topo_dx))
-    col1 = min(
-        W - 1, int((ext["max"][0].item() - topo_ext["min"][0].item()) / topo_dx) + 1
-    )
-    row0 = max(0, int((ext["min"][1].item() - topo_ext["min"][1].item()) / topo_dy))
-    row1 = min(
-        H - 1, int((ext["max"][1].item() - topo_ext["min"][1].item()) / topo_dy) + 1
-    )
-    stride = 10
-    sub = dataset.topo_field[
-        1:, row0:row1:stride, col0:col1:stride
-    ]  # (C-1, n_rows, n_cols)
-    row_valid = torch.isfinite(sub).all(dim=0).all(dim=1)
-    valid_r = row_valid.nonzero(as_tuple=True)[0]
-    extra = stride * topo_dy + patch_margin
-    if len(valid_r):
-        topo_y_min = (
-            topo_ext["min"][1].item()
-            + (row0 + valid_r[0].item() * stride) * topo_dy
-            + extra
-        )
-        topo_y_max = (
-            topo_ext["min"][1].item()
-            + (row0 + valid_r[-1].item() * stride) * topo_dy
-            - extra
-        )
-    else:
-        topo_y_min, topo_y_max = ext["min"][1].item(), ext["max"][1].item()
-    topo_x_min = topo_ext["min"][0].item() + patch_margin
-    topo_x_max = topo_ext["max"][0].item() - patch_margin
-
-    # Build query grid around station bounding box + fractional margin,
-    # clamped to the valid topo region computed above.
-    st_coords = dataset.station_coords.numpy()  # (N, 2)
-    st_x_min, st_y_min = float(st_coords[:, 0].min()), float(st_coords[:, 1].min())
-    st_x_max, st_y_max = float(st_coords[:, 0].max()), float(st_coords[:, 1].max())
-    margin_x = (st_x_max - st_x_min) * args.margin
-    margin_y = (st_y_max - st_y_min) * args.margin
-    x_min = max(st_x_min - margin_x, topo_x_min)
-    x_max = min(st_x_max + margin_x, topo_x_max)
-    y_min = max(st_y_min - margin_y, topo_y_min)
-    y_max = min(st_y_max + margin_y, topo_y_max)
-
-    domain_width = x_max - x_min
-    resolution: float = (
-        args.resolution if args.resolution is not None else domain_width / 100.0
-    )
-    xs = np.arange(x_min, x_max + 1e-9, resolution)
-    ys = np.arange(y_min, y_max + 1e-9, resolution)
-
+    xs, ys = build_domain_grid(dataset, margin=args.margin, resolution=args.resolution)
     logger.info(
-        "Domain grid: %dx%d (%d query points) at resolution %.4g",
+        "Domain grid: %dx%d (%d query points)",
         len(xs),
         len(ys),
         len(xs) * len(ys),
-        resolution,
     )
     logger.info("Plotting %s at %s", var, snap_time_iso)
 
@@ -340,7 +239,7 @@ def main() -> None:
     try:
         from matplotlib.colors import ListedColormap
 
-        land_mask = _build_land_mask(xs, ys)
+        land_mask = build_land_mask(xs, ys)
         ocean_overlay = np.where(land_mask, np.nan, 1.0)
         data_axes = fig.axes[:4]
         for ax in data_axes:
