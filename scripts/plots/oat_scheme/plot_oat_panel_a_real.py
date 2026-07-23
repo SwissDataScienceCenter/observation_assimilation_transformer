@@ -44,23 +44,49 @@ OUT_PATH = Path(__file__).parents[3] / "data/figures/oat_panel_a_real.png"
 ORANGE = "#E8732A"
 GRAY_STA = "#AAAAAA"
 BLUE_Q = "#3A72C6"
-CMAP_FIELD = "RdBu_r"
+# NWP field colormap — change here to restyle every NWP overlay + colorbar.
+# The field is a normalized anomaly around zero, so a diverging map usually
+# reads best (e.g. "RdBu_r", "coolwarm", "RdYlBu_r", "bwr"), but any cmap works.
+CMAP_FIELD = "RdYlBu_r"
+FIELD_CMAP = plt.get_cmap(CMAP_FIELD)
 FIELD_VLIM = (-3.5, 3.5)
 
-TERRAIN_CMAP = LinearSegmentedColormap.from_list(
-    "terrain_oat",
-    [
-        (0.00, "#3B5E1F"),
-        (0.12, "#5C8A3A"),
-        (0.28, "#8EAA62"),
-        (0.42, "#C8B57A"),
-        (0.55, "#96703C"),
-        (0.68, "#7A6050"),
-        (0.80, "#A09898"),
-        (0.90, "#D2D2D2"),
-        (1.00, "#F4F4F4"),
-    ],
-)
+# TERRAIN_CMAP = LinearSegmentedColormap.from_list(
+#     "terrain_oat",
+#     [
+#         (0.00, "#3B5E1F"),
+#         (0.12, "#5C8A3A"),
+#         (0.28, "#8EAA62"),
+#         (0.42, "#C8B57A"),
+#         (0.55, "#96703C"),
+#         (0.68, "#7A6050"),
+#         (0.80, "#A09898"),
+#         (0.90, "#D2D2D2"),
+#         (1.00, "#F4F4F4"),
+#     ],
+# )
+# TERRAIN_CMAP = plt.cm.terrain
+from matplotlib.colors import ListedColormap
+
+def _mute_cmap(cmap, strength=0.5, toward=(0.9, 0.9, 0.9, 1.0)):
+    """strength=1.0 → original, 0.0 → flat grey."""
+    cmap = plt.get_cmap(cmap)
+    cols = cmap(np.linspace(0, 1, 256))
+    cols = strength * cols + (1 - strength) * np.array(toward)
+    return ListedColormap(cols)
+
+
+def _crop_cmap(cmap, lo=0.0, hi=1.0, n=256):
+    """Use only the [lo, hi] slice of a colormap (0=bottom, 1=top).
+
+    Raise `lo` to trim gist_earth's dark navy "sea level" band so the terrain
+    starts from a paler blue/green instead of the deep blue.
+    """
+    cmap = plt.get_cmap(cmap)
+    return ListedColormap(cmap(np.linspace(lo, hi, n)))
+
+
+TERRAIN_CMAP = _mute_cmap(_crop_cmap("gist_earth", lo=0.15, hi=1.0), strength=0.8)
 
 class _PatchImageHandler(HandlerBase):
     """Render a small raster image as a legend handle.
@@ -91,6 +117,14 @@ SEED = 42
 # Zoom window: Bernese Oberland (Interlaken → Jungfrau), 50×50 km in LV95
 ZOOM_CENTER = (2_637_000.0, 1_163_000.0)
 ZOOM_HALF_KM = 25_000.0  # metres
+
+# Zoom NWP normalization:
+#   False → use full-domain mean/std (colours comparable to the full panel, but
+#           the small window shows little contrast).
+#   True  → standardize with the zoom crop's own mean/std, so local variation
+#           fills the colour range (more visible change, not comparable to full).
+ZOOM_LOCAL_NORM = True
+ZOOM_CONTRAST = 2.0  # gain before clipping to FIELD_VLIM; raise for more contrast
 
 plt.rcParams.update(
     {"font.family": "sans-serif", "font.size": 9, "axes.linewidth": 0.8}
@@ -216,6 +250,7 @@ def _plot_panel_a_with_data(
     # ── Hillshaded terrain
     ls = LightSource(azdeg=310, altdeg=40)
     terrain_rgb = ls.shade(dem, cmap=TERRAIN_CMAP, vert_exag=1.8, blend_mode="soft")
+    terrain_rgb[..., :3] = terrain_rgb[..., :3] * 0.60 + 0.40  # desaturate toward white
     ax.imshow(
         terrain_rgb,
         origin="lower",
@@ -226,7 +261,7 @@ def _plot_panel_a_with_data(
 
     # ── NWP overlay with vignette fade
     nwp_norm = plt.Normalize(vmin=FIELD_VLIM[0], vmax=FIELD_VLIM[1])
-    nwp_rgba = plt.cm.RdBu_r(nwp_norm(t2m_norm)).copy()
+    nwp_rgba = FIELD_CMAP(nwp_norm(t2m_norm)).copy()
     nwp_rgba[:, :, 3] = vignette * 0.68
     ax.imshow(
         nwp_rgba,
@@ -383,9 +418,10 @@ def plot_panel_a_zoom(
 
     t2m_crop, x_nwp_z, y_nwp_z = load_t2m_zoom(t2m_nwp, x_nwp, y_nwp)
 
-    mu = float(np.nanmean(t2m_nwp))
-    sigma = float(np.nanstd(t2m_nwp))
-    t2m_norm = np.clip((t2m_crop - mu) / max(sigma, 1e-6) * 1.5, *FIELD_VLIM)
+    ref_field = t2m_crop if ZOOM_LOCAL_NORM else t2m_nwp
+    mu = float(np.nanmean(ref_field))
+    sigma = float(np.nanstd(ref_field))
+    t2m_norm = np.clip((t2m_crop - mu) / max(sigma, 1e-6) * ZOOM_CONTRAST, *FIELD_VLIM)
 
     xlo, xhi, ylo, yhi = _zoom_bounds()
     ext_topo = [x_topo[0], x_topo[-1], y_topo[0], y_topo[-1]]
@@ -400,6 +436,7 @@ def plot_panel_a_zoom(
     # ── Hillshaded terrain at 100 m resolution
     ls = LightSource(azdeg=310, altdeg=40)
     terrain_rgb = ls.shade(dem, cmap=TERRAIN_CMAP, vert_exag=2.5, blend_mode="soft")
+    terrain_rgb[..., :3] = terrain_rgb[..., :3] * 0.60 + 0.40  # desaturate toward white
     ax.imshow(
         terrain_rgb,
         origin="lower",
@@ -410,7 +447,7 @@ def plot_panel_a_zoom(
 
     # ── NWP overlay — blocky pixels + vignette fade at borders
     nwp_norm_obj = plt.Normalize(vmin=FIELD_VLIM[0], vmax=FIELD_VLIM[1])
-    nwp_rgba = plt.cm.RdBu_r(nwp_norm_obj(t2m_norm)).copy()
+    nwp_rgba = FIELD_CMAP(nwp_norm_obj(t2m_norm)).copy()
     nwp_rgba[:, :, 3] = _make_vignette(*t2m_norm.shape, edge_frac=0.30) * 0.72
     ax.imshow(
         nwp_rgba,
@@ -467,7 +504,7 @@ def plot_panel_a_zoom(
     # ── Resolution patches embedded as legend handles
     # NWP: 4×4 crop from centre — keeps blocky pixel texture clearly visible
     ch, cw = t2m_norm.shape[0] // 2, t2m_norm.shape[1] // 2
-    nwp_patch_rgba = plt.cm.RdBu_r(nwp_norm_obj(t2m_norm[ch - 2 : ch + 2, cw - 2 : cw + 2]))
+    nwp_patch_rgba = FIELD_CMAP(nwp_norm_obj(t2m_norm[ch - 2 : ch + 2, cw - 2 : cw + 2]))
     # Topo: 40×40 crop from centre at 100 m — same 4 km area, fine detail
     th, tw = terrain_rgb.shape[0] // 2, terrain_rgb.shape[1] // 2
     topo_patch = terrain_rgb[th - 20 : th + 20, tw - 20 : tw + 20]
@@ -478,16 +515,19 @@ def plot_panel_a_zoom(
     handles += [nwp_proxy, topo_proxy]
     labels += ["NWP (low res.)", "Topo. (high res.)"]
 
-    ax.legend(
+    leg = ax.legend(
         handles, labels,
         handler_map={
             nwp_proxy: _PatchImageHandler(nwp_patch_rgba, interp="nearest", yoffset=0.9),
             topo_proxy: _PatchImageHandler(topo_patch, interp="bilinear", yoffset=0.9),
         },
-        loc="lower left", fontsize=8.5, framealpha=0.92,
-        handleheight=2.5, handlelength=2.5,
-        markerscale=1.1, edgecolor="#CCCCCC", labelspacing=0.15,
+        loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=3,
+        fontsize=12, framealpha=0.92,
+        handleheight=2.2, handlelength=2.2,
+        markerscale=1.4, edgecolor="#CCCCCC",
+        labelspacing=0.6, columnspacing=1.6, borderpad=0.8,
     )
+    leg.set_zorder(10)
 
 
 # ---------------------------------------------------------------------------
