@@ -6,13 +6,17 @@ bypassing the center+extent approach of plot_oat_example.py.
 
 Usage
 -----
-    python -m scripts.plot_oat_nwp_grid <checkpoint> --var temperature --time 2024-06-21:12
-    python -m scripts.plot_oat_nwp_grid <checkpoint> --batch-size 20000
+    python -m scripts.plot_ERA5_to_COSMO_grid 
+        /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat/oat_era5_meteostat-temp_precip_20260720_job4889366/best-model-epoch=84-val_loss=0.2154.ckpt \
+        --uninformed-checkpoint /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat/uninformed_oat_era5_meteostat-temp_precip_20260715_job4849165/best-model-epoch=51-val_loss=0.2598.ckpt \
+        --var temp --time 2024-06-21:12 --nwp-var T_2M --era5-var 2t --split test
 """
 # Variables stored in Kelvin that need conversion to Celsius for plotting
 _KELVIN_VARS = {"T_G", "T_2M", "2t"}
 # ERA5 variables stored in metres that need conversion to mm for plotting
 _M_TO_MM_VARS = {"tp", "TOT_PREC_1H"}
+# Font size for the subplot titles (bump for paper-sized figures)
+_TITLE_FONTSIZE = 18
 
 import argparse
 import logging
@@ -73,7 +77,17 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Plot OAT predictions at every COSMO-1E grid point."
     )
-    p.add_argument("checkpoint", help="Path to .ckpt file")
+    p.add_argument("checkpoint", help="Path to .ckpt file (the OAT model)")
+    p.add_argument(
+        "--uninformed-checkpoint",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Optional uninformed-model .ckpt (must be the same dataset and variables as "
+            "the main OAT checkpoint). If given, two extra figures are produced: "
+            "ERA5 | Uninformed | COSMO fields, and OAT-Uninformed / OAT-COSMO differences."
+        ),
+    )
     p.add_argument(
         "--anemoi",
         default=DEFAULT_ANEMOI,
@@ -136,13 +150,19 @@ def _parse_args() -> argparse.Namespace:
             "test stations as squares."
         ),
     )
-    p.add_argument(
-        "--no-stations",
-        action="store_true",
-        default=False,
-        help="Suppress station markers.",
-    )
     return p.parse_args()
+
+
+def _predict_grid_mean(plotter, snap_idx, query_coords, var_idx, batch_size, grid_shape, logger):
+    """Batched grid inference → predictive-mean field reshaped to *grid_shape*."""
+    means = []
+    N = len(query_coords)
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        samples = plotter._run_inference(snap_idx, query_coords[start:end])  # [B, n_samples, n_vars]
+        means.append(samples[:, :, var_idx].mean(dim=1).detach().cpu().numpy())
+        logger.info("Inference: %d / %d", end, N)
+    return np.concatenate(means).reshape(grid_shape)
 
 
 def main() -> None:
@@ -210,17 +230,10 @@ def main() -> None:
         plot_config=_load_plot_config(dataset),
     )
 
-    # Batched inference
-    N = len(query_coords)
-    means = []
-    for start in range(0, N, args.batch_size):
-        end = min(start + args.batch_size, N)
-        samples = plotter._run_inference(snap_idx, query_coords[start:end])  # [B, n_samples, n_vars]
-        var_samples = samples[:, :, var_idx]
-        means.append(var_samples.mean(dim=1).detach().cpu().numpy())
-        logger.info("Inference: %d / %d", end, N)
-
-    mean_field = np.concatenate(means).reshape(grid_shape)
+    # Batched inference (OAT)
+    mean_field = _predict_grid_mean(
+        plotter, snap_idx, query_coords, var_idx, args.batch_size, grid_shape, logger
+    )
     lon_grid = lons.reshape(grid_shape)
     lat_grid = lats.reshape(grid_shape)
 
@@ -292,13 +305,46 @@ def main() -> None:
                 args.era5_var, *dataset.nwp_shape,
             )
 
+    # The 3x3 comparison figure requires the uninformed model and eval stations.
+    if args.uninformed_checkpoint is None:
+        logger.error("--uninformed-checkpoint is required for the 3x3 comparison figure.")
+        sys.exit(1)
+    if eval_indices is None:
+        logger.error("--split {val,test} is required (row 3 shows errors at eval stations).")
+        sys.exit(1)
+
+    # Run the uninformed model on the same grid/time (same dataset & vars).
+    logger.info("Loading uninformed checkpoint %s", args.uninformed_checkpoint)
+    u_pred, u_cfg = load_checkpoint(OATPredictor, args.uninformed_checkpoint, map_location="cpu")
+    u_cfg.dataset.data_points_for_stats = 0
+    u_pred = u_pred.eval()
+    if var not in u_pred.var_to_indx:
+        logger.error(
+            "Variable '%s' not in uninformed checkpoint. Available: %s",
+            var, list(u_pred.var_to_indx),
+        )
+        sys.exit(1)
+    u_var_idx = u_pred.var_to_indx[var]
+    u_dataset, *_ = setup_data_and_transform(u_cfg, logger)
+    u_snap_idx = _resolve_time_idx(u_dataset, snap_time_iso)
+    u_plotter = OATPlotter(
+        predictor=u_pred, dataset=u_dataset, n_samples=args.n_samples,
+        device="cpu", plot_config=_load_plot_config(u_dataset),
+    )
+    uninf_field = _predict_grid_mean(
+        u_plotter, u_snap_idx, query_coords, u_var_idx, args.batch_size, grid_shape, logger,
+    )
+
     import matplotlib.colors as mcolors
     var_cfg = plotter._get_var_plot_config(var)
     cmap = var_cfg.get("cmap", "viridis")
     ckpt_tag = Path(args.checkpoint).parent.name
 
-    # Shared colour range across OAT mean, COSMO, ERA5
+    # Shared colour range across every absolute field (OAT, Uninformed, COSMO, ERA5) so
+    # the OAT and Uninformed figures are directly comparable.
     all_fields = [mean_field]
+    if uninf_field is not None:
+        all_fields.append(uninf_field)
     if cosmo_field is not None:
         all_fields.append(cosmo_field)
     if era5_field_2d is not None:
@@ -314,60 +360,181 @@ def main() -> None:
     shared_norm = mcolors.Normalize(vmin=shared_vmin, vmax=shared_vmax)
     cb_label = "°C" if (args.nwp_var in _KELVIN_VARS or args.era5_var in _KELVIN_VARS) else var
 
-    # Single-row layout: ERA5 | OAT | COSMO, sharing one colorbar.
+    if era5_field_2d is None or cosmo_field is None:
+        logger.error("Both --era5-var and --nwp-var are required for the 3x3 figure.")
+        sys.exit(1)
+
     proj = ccrs.PlateCarree()
-    panels = []
-    if era5_field_2d is not None:
-        panels.append(
-            (era5_lon_grid, era5_lat_grid, era5_field_2d, f"ERA5 {args.era5_var}", False)
-        )
-    panels.append((lon_grid, lat_grid, mean_field, "OAT — predictive mean", True))
-    if cosmo_field is not None:
-        panels.append((lon_grid, lat_grid, cosmo_field, f"COSMO {args.nwp_var}", False))
-
-    fig, axs = plt.subplots(
-        1, len(panels), figsize=(6 * len(panels), 5), layout="constrained",
-        subplot_kw={"projection": proj}, squeeze=False,
-    )
-    axs = list(axs[0])
-    # fig.suptitle(f"{ckpt_tag} — {var}  ({snap_time_iso})")
-
-    mesh = None
-    for ax, (xg, yg, field, title, is_oat) in zip(axs, panels):
-        m = ax.pcolormesh(
-            xg, yg, field, cmap=cmap, norm=shared_norm, shading="auto",
-            transform=proj, rasterized=True,  # keep PDF small; vector axes/text stay crisp
-        )
-        ax.set_title(title)
-        if is_oat:
-            mesh = m
-            if not args.no_stations:
-                plotter._overlay_stations(ax, snap_idx, var_idx, mesh=m)
-                ax.legend(fontsize=7)
-
-    # cos(lat) aspect: 1° lon is shorter than 1° lat at mid-latitudes, so equal-
-    # degree PlateCarree over-widens the map. This restores faithful proportions.
     mean_lat = 0.5 * (lat_min + lat_max)
-    for i, ax in enumerate(axs):
-        ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=proj)
-        ax.set_aspect(1.0 / np.cos(np.deg2rad(mean_lat)))
-        gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.5)
-        gl.top_labels = False
-        gl.right_labels = False
-        gl.left_labels = i == 0
 
-    # One shared colorbar for all panels (identical norm + cmap).
-    fig.colorbar(mesh, ax=axs, location="right", shrink=0.8, label=cb_label)
+    # ---- Row 2: field differences vs COSMO (diverging, symmetric about 0) ----
+    diff_cu = cosmo_field - uninf_field
+    diff_co = cosmo_field - mean_field
+    dvals = np.concatenate([diff_cu.ravel(), diff_co.ravel()])
+    dmax = float(np.nanpercentile(np.abs(dvals), 99))
+    if dmax < 1e-6:
+        dmax = 1.0
+    diff_norm = mcolors.Normalize(vmin=-dmax, vmax=dmax)
 
+    # ---- Row 3: prediction − obs at eval (test) stations ----
+    from scipy.spatial import cKDTree
+    eval_coords = dataset.station_coords[eval_indices].to(torch.float32)  # [E, 2] (lon, lat)
+    obs_col = dataset.obs_tensor[snap_idx, eval_indices, var_idx].numpy()
+    obs_valid = dataset.obs_mask_tensor[snap_idx, eval_indices, var_idx].numpy().astype(bool)
+    obs_valid &= np.isfinite(obs_col)
+
+    # Model predictions at the exact station coords (test stations are held out of the
+    # OAT conditioning set, so this is a valid eval).
+    oat_at_st = _predict_grid_mean(
+        plotter, snap_idx, eval_coords, var_idx, args.batch_size, (len(eval_indices),), logger
+    )
+    uninf_at_st = _predict_grid_mean(
+        u_plotter, u_snap_idx, eval_coords, u_var_idx, args.batch_size, (len(eval_indices),), logger
+    )
+    tree = cKDTree(np.column_stack([lon_grid.ravel(), lat_grid.ravel()]))
+    _, nn = tree.query(eval_coords.numpy())
+    cosmo_at_st = cosmo_field.ravel()[nn]
+
+    st_lon = eval_coords[:, 0].numpy()
+    st_lat = eval_coords[:, 1].numpy()
+    # Keep only stations inside the actual COSMO grid footprint — a rotated quadrilateral
+    # with curved lon/lat edges, not a lon/lat box. Otherwise the nearest-cell COSMO lookup
+    # assigns far-away boundary values to out-of-domain stations, unfairly inflating COSMO's
+    # error (and skewing the shared colour range). The outline traces every node along the
+    # outer edge of the structured grid, so its curvature is followed to grid resolution.
+    from matplotlib.path import Path as _MplPath
+    cosmo_boundary = np.vstack([
+        np.column_stack([lon_grid[0, :], lat_grid[0, :]]),         # top edge
+        np.column_stack([lon_grid[:, -1], lat_grid[:, -1]]),       # right edge
+        np.column_stack([lon_grid[-1, ::-1], lat_grid[-1, ::-1]]), # bottom edge (reversed)
+        np.column_stack([lon_grid[::-1, 0], lat_grid[::-1, 0]]),   # left edge (reversed)
+    ])
+    in_domain = _MplPath(cosmo_boundary).contains_points(np.column_stack([st_lon, st_lat]))
+    obs_valid &= in_domain
+    station_err = {
+        "COSMO": cosmo_at_st - obs_col,
+        "Uninformed": uninf_at_st - obs_col,
+        "OAT": oat_at_st - obs_col,
+    }
+    all_err = np.concatenate([station_err[k][obs_valid] for k in station_err])
+    emax = float(np.nanpercentile(np.abs(all_err), 99)) if all_err.size else 1.0
+    if emax < 1e-6:
+        emax = 1.0
+    err_norm = mcolors.Normalize(vmin=-emax, vmax=emax)
+    logger.info(
+        "Diff range ±%.3g | error range ±%.3g | %d valid test stations",
+        dmax, emax, int(obs_valid.sum()),
+    )
+
+    # ---- 3x3 figure ----
+    diff_cmap = "PuOr"
+    plt.rcParams["axes.titlesize"] = _TITLE_FONTSIZE
+    plt.rcParams["axes.labelsize"] = _TITLE_FONTSIZE
+    # Size the figure from the actual displayed map aspect (width:height of one panel
+    # under the cos-lat aspect), so the aspect-locked maps fill their cells in both
+    # directions — no large gaps between rows or next to the colorbars.
+    map_wh = (lon_max - lon_min) * np.cos(np.deg2rad(mean_lat)) / (lat_max - lat_min)
+    _MAP_H_IN = 3.4  # per-panel height in inches (overall size knob)
+    fig_w = 3 * _MAP_H_IN * map_wh + 2.3  # + left tick labels and the colorbar column
+    fig_h = 3 * _MAP_H_IN + 1.4           # + panel titles and top/bottom margins
+    fig, axs = plt.subplots(
+        3, 3, figsize=(fig_w, fig_h), layout="constrained", subplot_kw={"projection": proj}
+    )
+    # Trim inter-row padding so rows sit close.
+    fig.get_layout_engine().set(h_pad=0.03, hspace=0.0)
+
+    # Row 0: absolute fields (sequential, shared colorbar)
+    seq_mesh = axs[0, 0].pcolormesh(
+        era5_lon_grid, era5_lat_grid, era5_field_2d, cmap=cmap, norm=shared_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[0, 0].set_title(f"ERA5 {args.era5_var}")
+    axs[0, 1].pcolormesh(
+        lon_grid, lat_grid, uninf_field, cmap=cmap, norm=shared_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[0, 1].set_title("Uninformed")
+    axs[0, 2].pcolormesh(
+        lon_grid, lat_grid, mean_field, cmap=cmap, norm=shared_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[0, 2].set_title("OAT")
+
+    # Row 1: COSMO (sequential) + differences vs COSMO (diverging, shared)
+    axs[1, 0].pcolormesh(
+        lon_grid, lat_grid, cosmo_field, cmap=cmap, norm=shared_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[1, 0].set_title(f"COSMO {args.nwp_var}")
+    diff_mesh = axs[1, 1].pcolormesh(
+        lon_grid, lat_grid, diff_cu, cmap=diff_cmap, norm=diff_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[1, 1].set_title("Δ = COSMO − Uninformed")
+    axs[1, 2].pcolormesh(
+        lon_grid, lat_grid, diff_co, cmap=diff_cmap, norm=diff_norm,
+        shading="auto", transform=proj, rasterized=True,
+    )
+    axs[1, 2].set_title("Δ = COSMO − OAT")
+
+    # Row 2: base map + eval-station error markers (diverging, shared)
+    err_sc = None
+    for col, key in enumerate(("COSMO", "Uninformed", "OAT")):
+        sc = axs[2, col].scatter(
+            st_lon[obs_valid], st_lat[obs_valid], c=station_err[key][obs_valid],
+            cmap=diff_cmap, norm=err_norm, marker="s", s=25,
+            edgecolor="k", linewidth=0.3, transform=proj, zorder=5,
+        )
+        axs[2, col].plot(
+            cosmo_boundary[:, 0], cosmo_boundary[:, 1], color="0.15",
+            linewidth=1.5, transform=proj, zorder=4,
+        )
+        axs[2, col].set_title(f"Δ = {key} − Obs")
+        mae = float(np.mean(np.abs(station_err[key][obs_valid])))
+        axs[2, col].text(
+            0.02, 0.98, f"MAE = {mae:.2f} {cb_label}",
+            transform=axs[2, col].transAxes, ha="left", va="top", zorder=10,
+            fontsize=14,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="none"),
+        )
+        if err_sc is None:
+            err_sc = sc
+
+    # Extent, cos(lat) aspect, gridlines, borders for every panel
+    for r in range(3):
+        for c in range(3):
+            ax = axs[r, c]
+            ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=proj)
+            ax.set_aspect(1.0 / np.cos(np.deg2rad(mean_lat)))
+            gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.5)
+            gl.top_labels = False
+            gl.right_labels = False
+            gl.left_labels = c == 0
+            gl.bottom_labels = r == 2
     try:
-        _add_borders(axs, lon_grid[0], lat_grid[:, 0])
+        _add_borders(list(axs.ravel()), lon_grid[0], lat_grid[:, 0])
     except Exception as exc:
         logger.warning("Geo overlays skipped: %s", exc)
 
+    # Three colorbars, one per quantity (row). extend="both" draws triangular ends to
+    # signal the limits are percentiles (not true min/max) — data extends beyond them.
+    fig.colorbar(
+        seq_mesh, ax=list(axs[0, :]), location="right", shrink=0.9,
+        label=cb_label, extend="both",
+    )
+    fig.colorbar(
+        diff_mesh, ax=list(axs[1, :]), location="right", shrink=0.9,
+        label=f"Δ {cb_label}", extend="both",
+    )
+    fig.colorbar(
+        err_sc, ax=list(axs[2, :]), location="right", shrink=0.9,
+        label=f"Δ {cb_label}", extend="both",
+    )
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    stem = f"{ckpt_tag}_{var}_{snap_time_iso}_nwp_grid"
+    out_stem = f"{ckpt_tag}_{var}_{snap_time_iso}_comparison_3x3"
     for ext in ("png", "pdf"):
-        out_path = OUT_DIR / f"{stem}.{ext}"
+        out_path = OUT_DIR / f"{out_stem}.{ext}"
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         logger.info("Saved → %s", out_path)
     plt.close(fig)
