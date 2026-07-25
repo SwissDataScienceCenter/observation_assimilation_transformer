@@ -114,3 +114,24 @@ class TestGPPredictorConfigureOptimizers:
             assert "optimizer" in result
         else:
             assert hasattr(result, "step")
+
+
+class TestGPPredictorPredictStep:
+    def test_predict_step_returns_samples_shape(self):
+        p = make_predictor()
+        batch = make_batch(B=1, N_q=5)
+        out = p.predict_step(batch, batch_idx=0)
+        # default: [B, N_q, num_samples, n_vars]
+        assert out.shape == (1, 5, 3, 1)
+
+    def test_predict_step_n_samples_override(self):
+        p = make_predictor()
+        batch = make_batch(B=1, N_q=5)
+        out = p.predict_step(batch, batch_idx=0, n_samples=7)
+        assert out.shape == (1, 5, 7, 1)
+
+    def test_predict_step_distribution_raises(self):
+        p = make_predictor()
+        batch = make_batch(B=1, N_q=5)
+        with pytest.raises(NotImplementedError):
+            p.predict_step(batch, batch_idx=0, return_as="distribution")

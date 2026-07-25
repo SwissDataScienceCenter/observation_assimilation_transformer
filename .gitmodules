@@ -1,0 +1,3 @@
+[submodule "deps/gridded-tnp"]
+	path = deps/gridded-tnp
+	url = https://github.com/cambridge-mlg/gridded-tnp

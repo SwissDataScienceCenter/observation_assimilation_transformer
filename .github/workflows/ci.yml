@@ -40,4 +40,6 @@ jobs:
 
       - name: Run tests
         run: |
-          poetry run pytest --cov=oat --cov-report=term
+          # The OOTG baseline tests depend on the gridded-tnp submodule (and its
+          # extra runtime deps), which isn't installed in CI. Run them locally.
+          poetry run pytest --cov=oat --cov-report=term --ignore=test/oat_test/baselines

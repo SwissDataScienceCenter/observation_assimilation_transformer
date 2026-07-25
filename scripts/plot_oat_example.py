@@ -31,8 +31,7 @@ from oat.data_module.setup import setup_data_and_transform
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.oat_predictor import OATPredictor
-from oat.predictor_module.checkpoint_utils import load_checkpoint
+from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from oat.plotting_module.geo_overlays import _add_borders
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
@@ -54,7 +53,9 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="OATPlotter diagnostic: info mode when only checkpoint is given."
     )
-    p.add_argument("checkpoint", help="Path to .ckpt file")
+    p.add_argument("checkpoint", nargs="?", default=None, help="Path to .ckpt file")
+    p.add_argument("--dataset", default=None, help="Dataset key in configs/checkpoints.yaml")
+    p.add_argument("--model", default=None, help="Model key in configs/checkpoints.yaml")
     loc_group = p.add_mutually_exclusive_group()
     loc_group.add_argument(
         "--center",
@@ -177,6 +178,12 @@ def main() -> None:
 
     args = _parse_args()
 
+    if args.checkpoint is None:
+        if args.dataset is None or args.model is None:
+            logger.error("Provide either a checkpoint path or both --dataset and --model.")
+            raise SystemExit(2)
+        args.checkpoint = resolve_checkpoint(args.dataset, args.model)
+
     info_mode = all(
         v is None
         for v in [
@@ -191,7 +198,7 @@ def main() -> None:
         ]
     ) and not args.no_stations
 
-    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
+    predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
