@@ -15,8 +15,6 @@ Usage
 _KELVIN_VARS = {"T_G", "T_2M", "2t"}
 # ERA5 variables stored in metres that need conversion to mm for plotting
 _M_TO_MM_VARS = {"tp", "TOT_PREC_1H"}
-# Font size for the subplot titles (bump for paper-sized figures)
-_TITLE_FONTSIZE = 18
 
 import argparse
 import logging
@@ -38,6 +36,21 @@ from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import _add_borders
 from oat.predictor_module.checkpoint_utils import load_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
+
+# ---- Figure sizing & fonts (single source of truth; mirror in other paper figures) ----
+# A fixed width makes the output size predictable and lets every figure share one font
+# size: font points are absolute, so identical width + identical rcParams + the same
+# include-width in LaTeX give identical on-page fonts. The figure HEIGHT is derived from
+# the map aspect so the aspect-locked maps still fill their cells; the margins are fixed
+# inches because they track the font size, not the figure size.
+FIG_WIDTH_IN = 16.0   # target figure width (inches) — keep identical across figures
+_MARGIN_W_IN = 2.3    # inches for left tick labels + the right-hand colorbar column
+_MARGIN_H_IN = 1.4    # inches for panel titles + top/bottom margins
+plt.rcParams.update({
+    "font.size": 13,
+    "axes.titlesize": 18,
+    "axes.labelsize": 14,
+})
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
 _PROJECT_ROOT = Path(__file__).parents[1]
@@ -428,17 +441,15 @@ def main() -> None:
 
     # ---- 3x3 figure ----
     diff_cmap = "PuOr"
-    plt.rcParams["axes.titlesize"] = _TITLE_FONTSIZE
-    plt.rcParams["axes.labelsize"] = _TITLE_FONTSIZE
-    # Size the figure from the actual displayed map aspect (width:height of one panel
-    # under the cos-lat aspect), so the aspect-locked maps fill their cells in both
-    # directions — no large gaps between rows or next to the colorbars.
+    # Fixed width → predictable output size and consistent fonts across figures. Height is
+    # derived so the cos(lat)-aspect maps fill their cells (knobs in the config block up top).
     map_wh = (lon_max - lon_min) * np.cos(np.deg2rad(mean_lat)) / (lat_max - lat_min)
-    _MAP_H_IN = 3.4  # per-panel height in inches (overall size knob)
-    fig_w = 3 * _MAP_H_IN * map_wh + 2.3  # + left tick labels and the colorbar column
-    fig_h = 3 * _MAP_H_IN + 1.4           # + panel titles and top/bottom margins
+    map_w_in = (FIG_WIDTH_IN - _MARGIN_W_IN) / 3   # 3 columns
+    map_h_in = map_w_in / map_wh                   # keep the geographic aspect
+    fig_h = 3 * map_h_in + _MARGIN_H_IN            # 3 rows
     fig, axs = plt.subplots(
-        3, 3, figsize=(fig_w, fig_h), layout="constrained", subplot_kw={"projection": proj}
+        3, 3, figsize=(FIG_WIDTH_IN, fig_h), layout="constrained",
+        subplot_kw={"projection": proj},
     )
     # Trim inter-row padding so rows sit close.
     fig.get_layout_engine().set(h_pad=0.03, hspace=0.0)
@@ -535,7 +546,9 @@ def main() -> None:
     out_stem = f"{ckpt_tag}_{var}_{snap_time_iso}_comparison_3x3"
     for ext in ("png", "pdf"):
         out_path = OUT_DIR / f"{out_stem}.{ext}"
-        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        # No bbox_inches="tight": it would crop to content and make the saved size
+        # unpredictable. constrained_layout already fits everything inside FIG_WIDTH_IN.
+        fig.savefig(out_path, dpi=300)
         logger.info("Saved → %s", out_path)
     plt.close(fig)
 
