@@ -6,8 +6,7 @@ PIT values that are uniform on [0, 1] — visible as a flat histogram.
 
 Usage
 -----
-    python -m scripts.plot_pit <checkpoint>
-    python -m scripts.plot_pit <checkpoint> --split val --n-timesteps 500
+    python -m scripts.plot_pit <checkpoint> --split test --n-samples 1000 --n-timesteps 500 --no-title
 """
 import argparse
 import logging
@@ -31,6 +30,11 @@ _PLOT_CONFIG_PATHS = {
     CosmoPeakWeatherDataset: _PROJECT_ROOT / "configs/dataset/cosmo_peakweather/plot_config.yaml",
 }
 
+MODEL_VAR_TO_FULL_VAR_NAME = {
+    "temp": "Temperature",
+    "prcp": "Precipitation",
+}
+
 
 def _load_plot_config(dataset):
     path = _PLOT_CONFIG_PATHS.get(type(dataset))
@@ -49,8 +53,12 @@ def _parse_args():
     p.add_argument("--n-timesteps", type=int, default=None, metavar="N",
                    help="Subsample this many timesteps for speed (default: all)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--no-title", action="store_true", default=False,
+                   help="Suppress the figure title (for paper figures). The metadata "
+                        "(split, timesteps, samples) is encoded in the output filename instead.")
     p.add_argument("--out", default=None, metavar="PATH",
-                   help="Output figure path (default: data/figures/<tag>_pit_<split>.png)")
+                   help="Output path stem (extension ignored; .png and .pdf are both written). "
+                        "Default: data/figures/<tag>_pit_<split>_<T>steps_<S>samples")
     return p.parse_args()
 
 
@@ -79,19 +87,27 @@ def main() -> None:
         args.split, len(obs_station_indices), len(eval_indices),
     )
 
-    # Time indices for this split
-    time_indices: list[int] = (
-        list(split_dataset.indices)
-        if hasattr(split_dataset, "indices")
-        else list(range(len(split_dataset)))
-    )
+    # Evaluate ONLY the split's held-out time window, as positions into the BASE dataset
+    # (which is what compute_pit indexes: self.dataset[time_idx], obs_tensor[time_idx]).
+    # EvalDataset stores this window in `_time_indices`; with test_days>0 it is exactly the
+    # test window. We deliberately do NOT fall back to range(len): that would evaluate the
+    # first N base timesteps (inside the training period) instead of the test window.
+    split_time_indices = getattr(split_dataset, "_time_indices", None)
+    if split_time_indices is None:
+        logger.error(
+            "The '%s' split has no time window (_time_indices is None) — refusing to guess. "
+            "This script requires a temporal split (test_days > 0).", args.split,
+        )
+        return
+    time_indices: list[int] = [int(t) for t in split_time_indices]
+    n_total = len(time_indices)
 
-    if args.n_timesteps is not None and args.n_timesteps < len(time_indices):
+    if args.n_timesteps is not None and args.n_timesteps < n_total:
         rng = np.random.default_rng(args.seed)
         time_indices = sorted(
-            rng.choice(time_indices, size=args.n_timesteps, replace=False).tolist()
+            int(t) for t in rng.choice(time_indices, size=args.n_timesteps, replace=False)
         )
-        logger.info("Subsampled to %d / %d timesteps", len(time_indices), len(time_indices))
+        logger.info("Subsampled to %d / %d timesteps", len(time_indices), n_total)
 
     plotter = OATPlotter(
         predictor=predictor,
@@ -122,11 +138,12 @@ def main() -> None:
     axes = np.atleast_1d(axes)
 
     ckpt_tag = Path(args.checkpoint).parent.name
-    fig.suptitle(
-        f"PIT calibration — {ckpt_tag}\n"
-        f"{args.split} split  |  {len(time_indices)} timesteps  |  {args.n_samples} samples",
-        y=1.03,
-    )
+    if not args.no_title:
+        fig.suptitle(
+            f"PIT calibration — {ckpt_tag}\n"
+            f"{args.split} split  |  {len(time_indices)} timesteps  |  {args.n_samples} samples",
+            y=1.03,
+        )
 
     col = 0
     for var in vars_list:
@@ -135,24 +152,33 @@ def main() -> None:
             ax_rel = axes[col]
             ax_pit = axes[col + 1]
             plotter.plot_zero_reliability(ax_rel, data["gate_pred"], data["is_zero"])
-            ax_rel.set_title(f"{var}\nzero probability", fontsize=9)
+            ax_rel.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nzero probability", fontsize=9)
             # Use pit_nonzero (conditional on non-zero obs); swap for data["pit"] for full PIT.
             n_nz = len(data["pit_nonzero"])
             plotter.plot_pit(ax_pit, data["pit_nonzero"])
-            ax_pit.set_title(f"{var}\nPIT | non-zero  (n={n_nz:,})", fontsize=9)
+            ax_pit.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nPIT | non-zero  (n={n_nz:,})", fontsize=9)
             logger.info("%s: %d non-zero PIT values", var, n_nz)
             col += 2
         else:
             ax = axes[col]
             plotter.plot_pit(ax, data["pit"])
-            ax.set_title(f"{var}\n{ax.get_title()}", fontsize=9)
+            ax.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n{ax.get_title()}", fontsize=9)
             logger.info("%s: %d PIT values", var, len(data["pit"]))
             col += 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = args.out or str(OUT_DIR / f"{ckpt_tag}_pit_{args.split}.png")
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    logger.info("Saved → %s", out_path)
+    # Metadata (split, #timesteps used, #samples) goes in the filename so it's not lost
+    # when the on-figure title is suppressed for the paper.
+    if args.out is not None:
+        stem = Path(args.out).with_suffix("")
+    else:
+        stem = OUT_DIR / (
+            f"{ckpt_tag}_pit_{args.split}_{len(time_indices)}steps_{args.n_samples}samples"
+        )
+    for ext in ("png", "pdf"):
+        out_path = f"{stem}.{ext}"
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        logger.info("Saved → %s", out_path)
     plt.close(fig)
 
 
