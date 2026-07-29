@@ -38,9 +38,11 @@ crps_mc_samples: 50    # MC samples for CRPS loss and metrics (must be >= 2)
 devices: 4             # GPUs per node; set to 1 to disable DDP
 transform_type: keep_support   # matches OAT; disables log-transform
 
-# High-res topography into the decoder (off by default; see
-# docs/superpowers/specs/2026-07-03-ootg-decoder-topo-design.md)
-use_topo: false
+# High-res topography into the decoder (see
+# docs/superpowers/specs/2026-07-03-ootg-decoder-topo-design.md). On by default so
+# the baseline sees the same topographic inputs as OAT; the 20260714 checkpoints
+# predate this and were trained with use_topo=false.
+use_topo: true
 topo_out_channels: 32
 topo_n_layers: 3
 topo_kernel_size: 1
