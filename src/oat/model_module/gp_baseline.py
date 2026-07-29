@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import gpytorch
 import torch
@@ -286,7 +286,7 @@ class GPBaseline(nn.Module):
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(
             self.gp.likelihood, self.gp
         )
-        self._diag: Dict[str, list] = {}
+        self._diag: Dict[str, List[float]] = {}
 
     def _extract_features(
         self,
@@ -323,7 +323,7 @@ class GPBaseline(nn.Module):
                 min_eig = eigvals.min().item()
                 cond_number = eigvals.max().item() / max(min_eig, 1e-12)
                 eig_failed = 0
-            except torch._C._LinAlgError:
+            except torch._C._LinAlgError:  # type: ignore[attr-defined]
                 # Dense eigh itself failing to converge is a stronger signal
                 # than a large condition number: the matrix is degenerate
                 # enough that even a robust solver can't handle it. Record a
@@ -517,7 +517,7 @@ class GPBaseline(nn.Module):
         """
         diag = self._diag
         self._diag = {}
-        reductions = {
+        reductions: Dict[str, Callable[[Iterable[float]], float]] = {
             "min_eig": min,
             "cond_number": max,
             "sigma_min": min,
