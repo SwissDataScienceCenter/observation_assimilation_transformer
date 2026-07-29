@@ -16,17 +16,17 @@ cosmo_peakweather:
   oat_tetnp_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat/oat_cosmo_peakweather-temp_precip_20260721_job4897791/best-model-epoch=48-val_loss=0.1976.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat/uninformed_oat_cosmo_peakweather-temp_precip_20260715_job4849525/best-model-epoch=30-val_loss=0.2488.ckpt
   ootg_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/ootg/ootg_cosmo_peakweather-temp_precip_20260714_job4844935/epoch=17-val_loss=0.1936.ckpt
-  gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_gp_temp_constrained/gp_cosmo_peakweather-temp_20260727_job4952623/best-model-epoch=22-val_crps_temperature=1.0730.ckpt
-  gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_gp_precip_constrained/gp_cosmo_peakweather-precip_20260727_job4952625/best-model-epoch=09-val_crps_precipitation=0.1105.ckpt
-  deep_gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_deepgp_temp_constrained/deep_gp_cosmo_peakweather-temp_20260727_job4952624/best-model-epoch=36-val_crps_temperature=0.9713.ckpt
-  deep_gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_deepgp_precip_constrained/deep_gp_cosmo_peakweather-precip_20260727_job4952626/best-model-epoch=09-val_crps_precipitation=0.0899.ckpt
+  gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp/gp_cosmo_peakweather-temp_20260727_job4952623/best-model-epoch=22-val_crps_temperature=1.0730.ckpt
+  gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp/gp_cosmo_peakweather-precip_20260727_job4952625/best-model-epoch=09-val_crps_precipitation=0.1105.ckpt
+  deep_gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp/deep_gp_cosmo_peakweather-temp_20260727_job4952624/best-model-epoch=36-val_crps_temperature=0.9713.ckpt
+  deep_gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp/deep_gp_cosmo_peakweather-precip_20260727_job4952626/best-model-epoch=09-val_crps_precipitation=0.0899.ckpt
 
 era5_meteostat:
   interpolator: interpolator
   oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat/oat_era5_meteostat-temp_precip_20260720_job4889366/best-model-epoch=84-val_loss=0.2154.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat/uninformed_oat_era5_meteostat-temp_precip_20260715_job4849165/best-model-epoch=51-val_loss=0.2598.ckpt
   ootg_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/ootg/ootg_era5_meteostat-temp_precip_20260714_job4844936/epoch=65-val_loss=0.1327.ckpt
-  gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_gp_temp_constrained/gp_era5_meteostat-temp_20260727_job4951254/best-model-epoch=34-val_crps_temp=1.0349.ckpt
-  gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_gp_precip_constrained/gp_era5_meteostat-precip_20260727_job4950695/best-model-epoch=29-val_crps_prcp=0.0633.ckpt
-  deep_gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_deepgp_temp_constrained/deep_gp_era5_meteostat-temp_20260727_job4951255/best-model-epoch=34-val_crps_temp=1.0350.ckpt
-  deep_gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debug_diagnostics_deepgp_precip_constrained/deep_gp_era5_meteostat-precip_20260727_job4950694/best-model-epoch=01-val_crps_prcp=0.0705.ckpt
+  gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp/gp_era5_meteostat-temp_20260727_job4951254/best-model-epoch=34-val_crps_temp=1.0349.ckpt
+  gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp/gp_era5_meteostat-precip_20260727_job4950695/best-model-epoch=29-val_crps_prcp=0.0633.ckpt
+  deep_gp_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp/deep_gp_era5_meteostat-temp_20260727_job4951255/best-model-epoch=34-val_crps_temp=1.0350.ckpt
+  deep_gp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp/deep_gp_era5_meteostat-precip_20260727_job4950694/best-model-epoch=01-val_crps_prcp=0.0705.ckpt
