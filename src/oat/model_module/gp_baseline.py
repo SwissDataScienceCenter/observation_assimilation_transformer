@@ -359,7 +359,9 @@ class GPBaseline(nn.Module):
                 pred = self.gp(tx)
         return self.gp.likelihood(pred)
 
-    def _mll_loss_for_context(self, cx: torch.Tensor, cy: torch.Tensor) -> Optional[torch.Tensor]:
+    def _mll_loss_for_context(
+        self, cx: torch.Tensor, cy: torch.Tensor
+    ) -> Optional[torch.Tensor]:
         self.gp.set_train_data(inputs=cx, targets=cy, strict=False)
         self.gp.train()
         self.gp.likelihood.train()
@@ -469,8 +471,12 @@ class GPBaseline(nn.Module):
                         lik_pred = self._posterior_predictive(cx, cy, tx)
                         if self.config.debug_diagnostics:
                             sigma = lik_pred.stddev
-                            self._diag.setdefault("sigma_min", []).append(sigma.min().item())
-                            self._diag.setdefault("sigma_max", []).append(sigma.max().item())
+                            self._diag.setdefault("sigma_min", []).append(
+                                sigma.min().item()
+                            )
+                            self._diag.setdefault("sigma_max", []).append(
+                                sigma.max().item()
+                            )
                         sample_values = lik_pred.rsample(torch.Size([num_samples]))
                 else:
                     lik_pred = self._posterior_predictive(cx, cy, tx)
@@ -478,11 +484,17 @@ class GPBaseline(nn.Module):
                     sigma = lik_pred.stddev
 
                     if self.config.debug_diagnostics:
-                        self._diag.setdefault("sigma_min", []).append(sigma.min().item())
-                        self._diag.setdefault("sigma_max", []).append(sigma.max().item())
+                        self._diag.setdefault("sigma_min", []).append(
+                            sigma.min().item()
+                        )
+                        self._diag.setdefault("sigma_max", []).append(
+                            sigma.max().item()
+                        )
 
                     if valid_tgt.any():
-                        crps = crps_normal(ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt])
+                        crps = crps_normal(
+                            ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt]
+                        )
                         total_loss = total_loss + crps.mean()
                         n_terms += 1
 
