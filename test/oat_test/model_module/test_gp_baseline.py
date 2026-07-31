@@ -299,6 +299,26 @@ class TestGPBaselineForwardWithLossCRPS:
         assert torch.isfinite(loss)
 
 
+class TestGPBaselineNoiseLowerBound:
+    """The likelihood noise floor is a modelling choice, not a safety net:
+    it caps how sharp the predictive distribution can get, so the configured
+    value must reach the likelihood unchanged."""
+
+    def test_default_is_1e_3(self):
+        assert GPBaselineConfig.noise_lower_bound == pytest.approx(1e-3)
+
+    @pytest.mark.parametrize("bound", [1e-3, 5e-2])
+    def test_reaches_likelihood_constraint(self, bound):
+        model = GPBaseline(make_config(noise_lower_bound=bound))
+        constraint = model.gp.likelihood.noise_covar.raw_noise_constraint
+        assert constraint.lower_bound.item() == pytest.approx(bound)
+
+    def test_default_config_reaches_likelihood_constraint(self):
+        model = GPBaseline(make_config())
+        constraint = model.gp.likelihood.noise_covar.raw_noise_constraint
+        assert constraint.lower_bound.item() == pytest.approx(1e-3)
+
+
 class TestGPBaselineForwardWithLossMLL:
     def test_returns_samples_and_scalar_loss(self):
         model = GPBaseline(make_config(loss_fn="mll", num_samples=3))

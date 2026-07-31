@@ -278,10 +278,23 @@ def setup_gp_predictor(
         loss_fn=str(model_cfg.loss_fn),
         num_samples=int(model_cfg.num_samples),
         debug_diagnostics=bool(model_cfg.get("debug_diagnostics", False)),
-        noise_lower_bound=float(model_cfg.get("noise_lower_bound", 0.1)),
-        outputscale_lower_bound=float(model_cfg.get("outputscale_lower_bound", 1e-2)),
+        # Fall back to the dataclass defaults rather than restating literals
+        # here; the two drifted apart once already (0.1 vs 1e-2 for the noise
+        # floor), which silently changed what every GP checkpoint was trained
+        # with.
+        noise_lower_bound=float(
+            model_cfg.get("noise_lower_bound", GPBaselineConfig.noise_lower_bound)
+        ),
+        outputscale_lower_bound=float(
+            model_cfg.get(
+                "outputscale_lower_bound", GPBaselineConfig.outputscale_lower_bound
+            )
+        ),
         stationary_lengthscale_lower_bound=float(
-            model_cfg.get("stationary_lengthscale_lower_bound", 1e-2)
+            model_cfg.get(
+                "stationary_lengthscale_lower_bound",
+                GPBaselineConfig.stationary_lengthscale_lower_bound,
+            )
         ),
     )
     gp_model = GPBaseline(gp_config)

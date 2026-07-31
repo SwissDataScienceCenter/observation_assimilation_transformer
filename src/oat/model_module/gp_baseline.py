@@ -112,7 +112,7 @@ class GPBaselineConfig:
     num_samples: int = 100
     eps: float = 1e-3
     debug_diagnostics: bool = False
-    noise_lower_bound: float = 1e-2
+    noise_lower_bound: float = 1e-3
     outputscale_lower_bound: float = 1e-2
     stationary_lengthscale_lower_bound: float = 1e-2
 
