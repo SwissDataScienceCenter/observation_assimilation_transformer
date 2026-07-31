@@ -282,14 +282,11 @@ def _fmt_mean(value: float, decimals: int, latex: bool) -> str:
 
 
 def _fmt_ci(value: float, ci: CI, decimals: int, latex: bool) -> str:
-    if value is None or np.isnan(value):
-        return "NA"
-    v = f"{value:.{decimals}f}"
+    """Interval only -- point estimates live in the means table."""
     lo, hi = ci
-    if np.isnan(lo) or np.isnan(hi):
-        return f"${v}$" if latex else v
-    interval = f"[{lo:.{decimals}f}, {hi:.{decimals}f}]"
-    return f"${v}$ {interval}" if latex else f"{v} {interval}"
+    if value is None or np.isnan(value) or np.isnan(lo) or np.isnan(hi):
+        return "NA"
+    return f"[{lo:.{decimals}f}, {hi:.{decimals}f}]"
 
 
 def _cells(row: dict[str, Any], mode: str, latex: bool) -> list[str]:
