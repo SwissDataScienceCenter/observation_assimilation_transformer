@@ -10,6 +10,7 @@ from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig
 
 from oat.model_module import model
+from oat.model_module.distributions import OATDistribution
 from oat.model_module.model import (
     OATConfig,
     OAT,
@@ -406,7 +407,21 @@ class OATPredictor(BasePredictor):
 
         return loss
 
-    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None, stage: Literal['oat', 'pre_oat'] = 'oat') -> torch.Tensor:
+    def predict_step(self, batch: dict[str, torch.Tensor], batch_idx: int, dataloader_idx: int = 0, return_as: Literal['samples', 'distribution'] = 'samples', n_samples: Optional[int] = None, stage: Literal['oat', 'pre_oat'] = 'oat') -> torch.Tensor | Dict[str, OATDistribution]:
+        """
+        Predict at the batch's query locations.
+
+        Args:
+            return_as: 'samples' returns samples of shape
+                [B, N_q, n_samples, n_vars] in the original data units
+                (output_transform.inverse has been applied); 'distribution'
+                returns a dict mapping variable name -> predicted distribution,
+                still parameterized in the transformed (normalized) space.
+            n_samples: Number of samples to draw. Ignored when
+                return_as='distribution'.
+            stage: 'oat' for the full prediction, 'pre_oat' for the output of
+                the head before the assimilation block (informed models only).
+        """
         batch = self._normalize_batch(batch)
         if return_as == 'samples':
             with torch.no_grad():
@@ -421,9 +436,19 @@ class OATPredictor(BasePredictor):
                 return self.output_transform.inverse(y_hat['pre_oat_output']['samples'])
             return self.output_transform.inverse(y_hat['samples'])
         elif return_as == 'distribution':
-            y_hat = self(batch, return_loss_and_targets=False)
+            # n_samples=1: the drawn samples are discarded below, so there is no
+            # reason to pay for the default sample count on large query grids.
+            y_hat = self(batch, return_loss_and_targets=False, n_samples=1)
+            pre_oat_output = y_hat.pop('pre_oat_output', None)
+            if stage == 'pre_oat':
+                if pre_oat_output is None:
+                    raise ValueError(
+                        "stage='pre_oat' requested but the model produced no "
+                        "'pre_oat_output' (only informed OAT models have an "
+                        "assimilation block to ablate)."
+                    )
+                y_hat = pre_oat_output
             y_hat.pop('samples')
-            y_hat.pop('pre_oat_output', None)
             logger.warning("The returned distributions are still parameterized in the transformed space. Ensure to apply the appropriate inverse transform to the distribution parameters before using them.")
             return y_hat
         else:

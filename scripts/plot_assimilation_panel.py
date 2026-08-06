@@ -9,22 +9,31 @@ A 2x4 grid. Rows are variables. Columns:
 Uses one OAT checkpoint (columns 2, 3, and the column-4 station residuals) plus
 the NWP interpolator.
 
+Rows plot the predictive mean by default.  With ``--prob-above VAR=THRESH`` the
+row for VAR instead plots the exceedance probability P(VAR > THRESH), which is
+the more meaningful summary for precipitation (whose predictive distribution has
+a point mass at zero, so its mean is a poor description of the field).
+
 Usage
 -----
     python -m scripts.plot_assimilation_panel --dataset cosmo_peakweather \\
         --time 2021-08-04:00 --n-samples 100
     python -m scripts.plot_assimilation_panel --center 2660000 1190000 \\
         --extent 40000
+    python -m scripts.plot_assimilation_panel --prob-above precipitation=1.0
 """
 
 import argparse
 import logging
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
 from omegaconf import OmegaConf
 
@@ -74,8 +83,32 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--extent", type=float, default=None)
     p.add_argument("--resolution", type=float, default=None)
     p.add_argument("--n-samples", type=int, default=200)
+    p.add_argument(
+        "--prob-above",
+        nargs="+",
+        default=None,
+        metavar="VAR=THRESH",
+        help="Plot P(VAR > THRESH) instead of the mean for these variables, "
+        "with THRESH in the variable's physical units "
+        "(e.g. --prob-above precipitation=1.0).",
+    )
     p.add_argument("--out", default=None)
     return p.parse_args()
+
+
+def _parse_prob_above(items: list[str] | None) -> dict[str, float]:
+    """Parse ``VAR=THRESH`` pairs into {variable: threshold}."""
+    if not items:
+        return {}
+    out: dict[str, float] = {}
+    for item in items:
+        var, _, raw = item.partition("=")
+        if not var or not raw:
+            raise ValueError(
+                f"--prob-above expects VAR=THRESH pairs, got {item!r}."
+            )
+        out[var] = float(raw)
+    return out
 
 
 def _resolve_time_idx(dataset, time_str: str) -> int:
@@ -127,7 +160,16 @@ def main() -> None:
     variables = args.variables or list(predictor_oat.var_to_indx.keys())
     plot_config = _load_plot_config(dataset)
     units = _load_units(args.dataset)
+    prob_above = _parse_prob_above(args.prob_above)
+    unknown = set(prob_above) - set(variables)
+    if unknown:
+        raise ValueError(
+            f"--prob-above names variables that are not plotted: {sorted(unknown)}. "
+            f"Available: {variables}."
+        )
     logger.info("Variables (rows): %s at %s", variables, time_iso)
+    for var, thresh in prob_above.items():
+        logger.info("%s: plotting P(> %g) instead of the mean", var, thresh)
 
     plotter = OATPlotter(
         predictor=predictor_oat,
@@ -169,6 +211,16 @@ def main() -> None:
             .reshape(y_grid.shape)
         )
 
+    def _prob_field(var, threshold, predictor=None, stage="oat"):
+        return plotter.predict_exceedance_prob(
+            grid_coords,
+            time_idx,
+            var,
+            threshold,
+            predictor=predictor,
+            stage=stage,
+        ).reshape(y_grid.shape)
+
     n_rows = len(variables)
     # constrained_layout packs the equal-aspect panels and colorbars tightly,
     # removing the large gaps a plain grid leaves around wide-and-short maps.
@@ -176,19 +228,42 @@ def main() -> None:
         n_rows, 4, figsize=(20, 3.4 * n_rows), squeeze=False, layout="constrained"
     )
 
+    # (label, colour) of the exceedance ring, one per probability row, for the
+    # figure legend built after the loop.
+    ring_specs: list[tuple[str, Any]] = []
+
     for row, var in enumerate(variables):
         var_idx = predictor_oat.var_to_indx[var]
         var_cfg = (
             plot_config[var] if (plot_config is not None and var in plot_config) else {}
         )
-        cmap = var_cfg.get("cmap", "viridis")
+        amount_cmap = var_cfg.get("cmap", "viridis")
+        threshold = prob_above.get(var)
+        # Probability rows use a colormap distinct from the amount colormap (and
+        # from the PuOr difference panel), so the field, the station fills and
+        # the difference panel are never confused for one another. Its top colour
+        # doubles as the "observed the event" marker edge, so it must stay
+        # visible on white and on a filled marker.
+        cmap = var_cfg.get("prob_cmap", "Greens") if threshold is not None else amount_cmap
 
-        nwp_field = _mean_field(var_idx, predictor=nwp_predictor, stage="oat")
-        pre_field = _mean_field(var_idx, stage="pre_oat")
-        oat_field = _mean_field(var_idx, stage="oat")
+        if threshold is None:
+            nwp_field = _mean_field(var_idx, predictor=nwp_predictor, stage="oat")
+            pre_field = _mean_field(var_idx, stage="pre_oat")
+            oat_field = _mean_field(var_idx, stage="oat")
+        else:
+            # The NWP interpolator is deterministic, so its "probability" is the
+            # 0/1 indicator of its point forecast exceeding the threshold.
+            nwp_field = _prob_field(var, threshold, predictor=nwp_predictor)
+            pre_field = _prob_field(var, threshold, stage="pre_oat")
+            oat_field = _prob_field(var, threshold, stage="oat")
 
         unit = units.get(var, "")
         var_label = var.capitalize()
+        if threshold is None:
+            quantity_label = f"{var_label} [{unit}]" if unit else var_label
+        else:
+            thresh_label = f"{threshold:g} {unit}".strip()
+            quantity_label = f"P({var_label} > {thresh_label})"
 
         # Columns 1-3: shared colormap + harmonized limits.
         panels = [
@@ -204,8 +279,8 @@ def main() -> None:
                 xs,
                 ys,
                 cmap=cmap,
-                vmin=var_cfg.get("vmin"),
-                vmax=var_cfg.get("vmax"),
+                vmin=var_cfg.get("vmin") if threshold is None else 0.0,
+                vmax=var_cfg.get("vmax") if threshold is None else 1.0,
             )
             # Rasterize the dense field so PDF output stays small and renders
             # cleanly; markers, borders and text remain vector.
@@ -213,22 +288,80 @@ def main() -> None:
             meshes.append(mesh)
             if row == 0:
                 axes[row, col].set_title(name, fontsize=13)
-        vmin = float(
-            np.nanmin([np.nanmin(f) for f in (nwp_field, pre_field, oat_field)])
-        )
-        vmax = float(
-            np.nanmax([np.nanmax(f) for f in (nwp_field, pre_field, oat_field)])
-        )
-        for col in range(3):
-            meshes[col].set_clim(vmin, vmax)
-            plotter.overlay_stations(
-                axes[row, col], time_idx, var_idx, mesh=meshes[col]
+        # Probabilities are already on a fixed, comparable [0, 1] scale; only the
+        # physical fields need their shared limits harmonized after the fact.
+        if threshold is None:
+            vmin = float(
+                np.nanmin([np.nanmin(f) for f in (nwp_field, pre_field, oat_field)])
             )
-        axes[row, 0].set_ylabel(
-            f"{var_label} [{unit}]" if unit else var_label, fontsize=13
+            vmax = float(
+                np.nanmax([np.nanmax(f) for f in (nwp_field, pre_field, oat_field)])
+            )
+        # On a mean row the markers share the field's scale, so the field mesh
+        # supplies their colours. On a probability row the field is a probability
+        # but the observation is an amount, so the markers get their own amount
+        # colormap (with its own colorbar) and a coloured edge — the top of the
+        # probability colormap — marks the stations that observed the event.
+        station_mesh: list[Any] = list(meshes)
+        edge_color_by: dict[int, Any] | None = None
+        size_scale = 1.0
+        amount_sm = None
+        if threshold is not None:
+            observed = {
+                s: dataset.obs_tensor[time_idx, s, var_idx].item()
+                for s in sorted(set(obs_station_indices) | set(eval_indices))
+                if dataset.obs_mask_tensor[time_idx, s, var_idx].item()
+            }
+            # Observed amounts are heavily right-skewed, so scaling up to the
+            # maximum lets a single wet station compress every other marker into
+            # the first few percent of the colormap. Mean rows avoid this only by
+            # accident: they inherit the (much narrower) predictive-mean field
+            # range and clip whatever exceeds it. There is no amount field to
+            # inherit from here, so clip explicitly at a robust upper limit,
+            # never below the threshold so it stays on the scale. The colorbar is
+            # drawn with extend="max" to show that the top end is clipped.
+            amounts = np.array(list(observed.values()))
+            positive = amounts[amounts > 0]
+            amount_max = max(
+                threshold,
+                float(np.quantile(positive, 0.98)) if positive.size else threshold,
+            )
+            amount_sm = ScalarMappable(
+                norm=Normalize(vmin=var_cfg.get("vmin", 0.0), vmax=amount_max),
+                cmap=amount_cmap,
+            )
+            station_mesh = [amount_sm] * 3
+            exceed_color = plt.get_cmap(cmap)(1.0)
+            edge_color_by = {
+                s: exceed_color for s, v in observed.items() if v >= threshold
+            }
+            # Both the fill and the ring have to stay readable on one marker.
+            size_scale = 2.5
+            ring_specs.append((f"Observed {var} ≥ {thresh_label}", exceed_color))
+
+        for col in range(3):
+            if threshold is None:
+                meshes[col].set_clim(vmin, vmax)
+            plotter.overlay_stations(
+                axes[row, col],
+                time_idx,
+                var_idx,
+                mesh=station_mesh[col],
+                edge_color_by=edge_color_by,
+                size_scale=size_scale,
+            )
+        axes[row, 0].set_ylabel(quantity_label, fontsize=13)
+        fig.colorbar(
+            meshes[-1], ax=list(axes[row, :3]), label=quantity_label, shrink=0.85
         )
-        clabel = f"{var_label} [{unit}]" if unit else var_label
-        fig.colorbar(meshes[-1], ax=list(axes[row, :3]), label=clabel, shrink=0.85)
+        if amount_sm is not None:
+            fig.colorbar(
+                amount_sm,
+                ax=list(axes[row, :3]),
+                label=f"Observed {var} [{unit}]" if unit else f"Observed {var}",
+                shrink=0.85,
+                extend="max",
+            )
 
         # Column 4: pre_oat - oat difference; stations coloured by pre_oat - obs.
         # Use a diverging colormap distinct from the field cmaps (temperature is
@@ -257,20 +390,40 @@ def main() -> None:
                 ],
                 dtype=torch.float32,
             )
-            pre_at = (
-                plotter.predict_samples(st_xy, time_idx, stage="pre_oat")[:, :, var_idx]
-                .mean(dim=1)
-                .numpy()
-            )
+            if threshold is None:
+                pre_at = (
+                    plotter.predict_samples(st_xy, time_idx, stage="pre_oat")[
+                        :, :, var_idx
+                    ]
+                    .mean(dim=1)
+                    .numpy()
+                )
+            else:
+                pre_at = plotter.predict_exceedance_prob(
+                    st_xy, time_idx, var, threshold, stage="pre_oat"
+                )
             for i, s in enumerate(colored):
                 obs_v = dataset.obs_tensor[time_idx, s, var_idx].item()
+                if threshold is not None:
+                    # Brier-style residual: predicted probability − observed
+                    # 0/1 outcome, matching the units of the Δ-probability field.
+                    obs_v = float(obs_v > threshold)
                 color_by[s] = float(pre_at[i] - obs_v)
+        # Here the fill has to stay the residual (that is the panel's point), but
+        # the exceedance rings carry over so the same stations are identifiable
+        # across all four columns.
         plotter.overlay_stations(
-            axes[row, 3], time_idx, var_idx, mesh=mesh_d, color_by=color_by
+            axes[row, 3],
+            time_idx,
+            var_idx,
+            mesh=mesh_d,
+            color_by=color_by,
+            edge_color_by=edge_color_by,
+            size_scale=size_scale,
         )
         if row == 0:
             axes[row, 3].set_title("Pre-OAT − OAT", fontsize=13)  # noqa: RUF001
-        dlabel = f"Δ {var_label} [{unit}]" if unit else f"Δ {var_label}"
+        dlabel = f"Δ {quantity_label}"
         fig.colorbar(mesh_d, ax=axes[row, 3], label=dlabel, shrink=0.85)
 
     # Drop the grey "missing" evaluation-station squares (test stations with no
@@ -326,10 +479,24 @@ def main() -> None:
             label="Missing observation",
         ),
     ]
+    station_handles += [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
+            markerfacecolor="none",
+            markeredgecolor=color,
+            markeredgewidth=1.6,
+            markersize=8,
+            label=label,
+        )
+        for label, color in ring_specs
+    ]
     fig.legend(
         handles=station_handles,
         loc="outside lower center",
-        ncol=3,
+        ncol=min(4, len(station_handles)),
         frameon=False,
         fontsize=12,
     )
@@ -343,10 +510,13 @@ def main() -> None:
         logger.warning("Geo overlays skipped: %s", exc)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Tag probability figures so they do not overwrite the mean-field figure for
+    # the same dataset and timestep.
+    prob_tag = "".join(f"_p-{v}-gt-{t:g}" for v, t in sorted(prob_above.items()))
     out_path = (
         Path(args.out)
         if args.out is not None
-        else OUT_DIR / f"assimilation_panel_{args.dataset}_{time_iso}.png"
+        else OUT_DIR / f"assimilation_panel_{args.dataset}_{time_iso}{prob_tag}.png"
     )
     fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
     plt.close(fig)

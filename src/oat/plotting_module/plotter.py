@@ -65,6 +65,30 @@ class OATPlotter:
             return {}
         return raw[var]
 
+    def _build_batch(
+        self, time_idx: int, query_coords: torch.Tensor
+    ) -> dict[str, dict[str, torch.Tensor]]:
+        """Assemble a single-timestep, batch-size-1 model input on self.device.
+
+        Observation context is restricted to self.obs_indices; queries are the
+        given coordinates in the dataset's coordinate frame.
+        """
+        raw = self.dataset[time_idx]
+
+        obs_raw = raw["observation_data"]
+        obs_data = {k: v[self.obs_indices] for k, v in obs_raw.items()}
+
+        query_data = self.dataset.get_query(query_coords)
+
+        def _add_batch(d: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+            return {k: v.unsqueeze(0).to(self.device) for k, v in d.items()}
+
+        return {
+            "global_data": _add_batch(raw["global_data"]),
+            "observation_data": _add_batch(obs_data),
+            "query_data": _add_batch(query_data),
+        }
+
     def _run_inference(
         self,
         time_idx: int,
@@ -91,21 +115,7 @@ class OATPlotter:
         p = predictor if predictor is not None else self.predictor
         p = p.to(self.device)
 
-        raw = self.dataset[time_idx]
-
-        obs_raw = raw["observation_data"]
-        obs_data = {k: v[self.obs_indices] for k, v in obs_raw.items()}
-
-        query_data = self.dataset.get_query(query_coords)
-
-        def _add_batch(d: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-            return {k: v.unsqueeze(0).to(self.device) for k, v in d.items()}
-
-        batch = {
-            "global_data": _add_batch(raw["global_data"]),
-            "observation_data": _add_batch(obs_data),
-            "query_data": _add_batch(query_data),
-        }
+        batch = self._build_batch(time_idx, query_coords)
 
         if stage == "oat":
             samples = p.predict_step(batch, batch_idx=0, n_samples=self.n_samples)
@@ -139,6 +149,86 @@ class OATPlotter:
             time_idx, query_coords, predictor=predictor, stage=stage
         )
 
+    def _threshold_in_transformed_space(
+        self, predictor: BasePredictor, var_idx: int, threshold: float
+    ) -> float:
+        """Map a data-space threshold into the space the distributions live in.
+
+        ``predict_step(return_as='distribution')`` returns distributions
+        parameterized in the transformed (normalized) space, so an exceedance
+        probability must compare against the transformed threshold:
+        ``P(X > t) = P(Z > T(t))``.  That identity requires ``T`` to be strictly
+        increasing, which holds for the transforms in use (log, and
+        translate/scale with positive scale) and is checked below.
+        """
+        n_vars = len(predictor.output_var_names)
+        probe = torch.zeros(1, 1, n_vars, device=self.device)
+        probe[..., var_idx] = float(threshold)
+        t = predictor.output_transform(probe)[0, 0, var_idx].item()
+        probe[..., var_idx] = float(threshold) + 1.0
+        t_above = predictor.output_transform(probe)[0, 0, var_idx].item()
+        if not t_above > t:
+            raise ValueError(
+                f"output_transform is not strictly increasing for variable index "
+                f"{var_idx}; exceedance probabilities cannot be obtained by "
+                "transforming the threshold."
+            )
+        return t
+
+    def predict_exceedance_prob(
+        self,
+        query_coords: torch.Tensor,
+        time_idx: int,
+        var: str,
+        threshold: float,
+        predictor: BasePredictor | None = None,
+        stage: str = "oat",
+    ) -> np.ndarray:
+        """P(var > threshold) at each query point, with *threshold* in data units.
+
+        For probabilistic predictors this uses the predictive CDF
+        (``1 - F(T(threshold))``), which is exact and free of Monte-Carlo noise
+        — worth having for a probability map, where sampling noise is otherwise
+        clearly visible.  For deterministic predictors that cannot return
+        distributions (e.g. ``NWPInterpolatorPredictor``) it falls back to the
+        fraction of samples above the threshold, i.e. the 0/1 exceedance
+        indicator of the point forecast.
+
+        Args:
+            query_coords: [N_q, 2] coordinates in the dataset frame.
+            time_idx: Index into ``dataset.times``.
+            var: Variable name (must be in predictor.var_to_indx).
+            threshold: Threshold in the variable's physical units.
+            predictor: Optional predictor override (defaults to self.predictor).
+            stage: "oat" or "pre_oat" (see :meth:`predict_samples`).
+
+        Returns:
+            Probabilities of shape [N_q].
+        """
+        p = predictor if predictor is not None else self.predictor
+        var_idx = self.predictor.var_to_indx[var]
+
+        if not hasattr(p, "output_transform"):
+            samples = self.predict_samples(
+                query_coords, time_idx, predictor=p, stage=stage
+            )  # [N_q, n_samples, n_vars]
+            above = (samples[:, :, var_idx] > threshold).float().mean(dim=1)
+            return above.detach().cpu().numpy()
+
+        p = p.to(self.device)
+        batch = self._build_batch(time_idx, query_coords)
+        with torch.no_grad():
+            distributions = p.predict_step(
+                batch, batch_idx=0, return_as="distribution", stage=stage
+            )
+            dist = distributions[var]
+            t = self._threshold_in_transformed_space(p, var_idx, threshold)
+            value = torch.full(
+                dist.batch_shape, t, dtype=torch.float32, device=self.device
+            )
+            prob = 1.0 - dist.cdf(value)
+        return prob.reshape(-1).detach().cpu().numpy()
+
     def overlay_stations(
         self,
         ax: Any,
@@ -146,6 +236,9 @@ class OATPlotter:
         var_idx: int,
         mesh: Any = None,
         color_by: dict[int, float] | None = None,
+        edge_color_by: dict[int, Any] | None = None,
+        edge_width: float = 1.6,
+        size_scale: float = 1.0,
     ) -> None:
         """Public wrapper around :meth:`_overlay_stations`.
 
@@ -153,7 +246,16 @@ class OATPlotter:
         as squares, coloured by observed value (or by *color_by*) when *mesh*
         is given. See :meth:`_overlay_stations` for details.
         """
-        self._overlay_stations(ax, time_idx, var_idx, mesh=mesh, color_by=color_by)
+        self._overlay_stations(
+            ax,
+            time_idx,
+            var_idx,
+            mesh=mesh,
+            color_by=color_by,
+            edge_color_by=edge_color_by,
+            edge_width=edge_width,
+            size_scale=size_scale,
+        )
 
     def _overlay_stations(
         self,
@@ -162,6 +264,9 @@ class OATPlotter:
         var_idx: int,
         mesh: Any = None,
         color_by: dict[int, float] | None = None,
+        edge_color_by: dict[int, Any] | None = None,
+        edge_width: float = 1.6,
+        size_scale: float = 1.0,
     ) -> None:
         """Overlay station markers on *ax*, optionally colour-coded by a mesh.
 
@@ -169,6 +274,14 @@ class OATPlotter:
         evaluation stations (self.eval_indices) as squares.  Pass *mesh* to derive
         colours from its colormap/norm; pass *color_by* (station_idx → scalar) to
         override the per-station value used for colouring (e.g. obs − NWP).
+
+        Marker *fill* and marker *edge* can encode different things: pass
+        *edge_color_by* (station_idx → any matplotlib colour) to highlight a
+        subset of stations with a coloured, slightly thicker edge (*edge_width*)
+        while the fill keeps encoding the value — e.g. fill = observed amount,
+        edge = "this station observed the event".  Stations absent from
+        *edge_color_by* keep the default black edge.  *size_scale* scales all
+        marker areas, useful when both fill and edge have to stay legible.
         """
         obs_set = set(self.obs_indices)
         eval_set = set(self.eval_indices)
@@ -185,6 +298,16 @@ class OATPlotter:
         missing_eval_y: list[float] = []
         sq_x: list[float] = []
         sq_y: list[float] = []
+        obs_edges: list[Any] = []
+        obs_lws: list[float] = []
+        eval_edges: list[Any] = []
+        eval_lws: list[float] = []
+        default_lw = plt.rcParams["lines.linewidth"]
+
+        def _edge(s: int) -> tuple[Any, float]:
+            if edge_color_by is not None and s in edge_color_by:
+                return edge_color_by[s], edge_width
+            return "black", default_lw
 
         for s in range(n_st):
             sx = self.dataset.station_coords[s, 0].item()
@@ -200,6 +323,9 @@ class OATPlotter:
                         else self.dataset.obs_tensor[time_idx, s, var_idx].item()
                     )
                     obs_vals.append(val)
+                    edge_c, edge_lw = _edge(s)
+                    obs_edges.append(edge_c)
+                    obs_lws.append(edge_lw)
                 elif eval_set:
                     missing_obs_x.append(sx)
                     missing_obs_y.append(sy)
@@ -216,6 +342,9 @@ class OATPlotter:
                         else self.dataset.obs_tensor[time_idx, s, var_idx].item()
                     )
                     eval_vals.append(val)
+                    edge_c, edge_lw = _edge(s)
+                    eval_edges.append(edge_c)
+                    eval_lws.append(edge_lw)
                 else:
                     missing_eval_x.append(sx)
                     missing_eval_y.append(sy)
@@ -243,8 +372,9 @@ class OATPlotter:
                 obs_y,
                 marker="o",
                 c=obs_colors,
-                edgecolors="black",
-                s=10,
+                edgecolors=obs_edges if edge_color_by is not None else "black",
+                linewidths=obs_lws if edge_color_by is not None else None,
+                s=10 * size_scale,
                 zorder=5,
                 label=obs_label,
             )
@@ -255,7 +385,7 @@ class OATPlotter:
                 marker="o",
                 facecolors="white",
                 edgecolors="grey",
-                s=10,
+                s=10 * size_scale,
                 zorder=5,
                 label="missing",
             )
@@ -265,8 +395,9 @@ class OATPlotter:
                 eval_y,
                 marker="s",
                 c=eval_colors,
-                edgecolors="black",
-                s=14,
+                edgecolors=eval_edges if edge_color_by is not None else "black",
+                linewidths=eval_lws if edge_color_by is not None else None,
+                s=14 * size_scale,
                 zorder=5,
                 label=eval_label,
             )
@@ -277,7 +408,7 @@ class OATPlotter:
                 marker="s",
                 facecolors="white",
                 edgecolors="grey",
-                s=14,
+                s=14 * size_scale,
                 zorder=5,
                 label="eval missing",
             )
@@ -288,7 +419,7 @@ class OATPlotter:
                 marker="s",
                 facecolors="white",
                 edgecolors="black",
-                s=10,
+                s=10 * size_scale,
                 zorder=5,
                 label="not observed",
             )
