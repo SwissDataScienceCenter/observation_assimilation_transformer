@@ -129,6 +129,23 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
 
+def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Derive per-station + global CRPS/MAE from the per-(time, station) dump.
+
+    The mask is binary, so ``compute_station_metrics``' count-weighted mean over
+    time is exactly a ``nanmean`` over the time axis of the long tensors — this
+    reproduces the aggregate without a second inference pass. CRPSS is not
+    derivable here (it needs a joint model+baseline pass) and is omitted.
+    """
+    crps, mae = tm["crps"], tm["mae"]  # each [T, S, V], NaN where masked
+    return {
+        "crps": torch.nanmean(crps, dim=0),  # [S, V]
+        "mae": torch.nanmean(mae, dim=0),  # [S, V]
+        "crps_global": torch.nanmean(crps),
+        "mae_global": torch.nanmean(mae),
+    }
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger(__name__)
@@ -192,6 +209,18 @@ def main() -> None:
         device=args.device,
     )
 
+    nwp_predictor = None
+    if args.baseline and not is_interpolator:
+        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
+        nwp_predictor = NWPInterpolatorPredictor(
+            config=nwp_config,
+            output_var_names=dataset.config.obs_vars,
+            input_transform=dataset.get_baseline_pre_transform(),
+        ).eval()
+
+    var_names = list(predictor.var_to_indx.keys())
+
+    tm: dict[str, torch.Tensor] | None = None
     if args.long:
         from oat.plotting_module.stratification import (
             build_long_dataframe,
@@ -204,7 +233,6 @@ def main() -> None:
             batch_size=args.batch_timesteps,
         )
         covariates = collect_station_covariates(dataset, eval_indices, obs_indices)
-        var_names = list(predictor.var_to_indx.keys())
         df = build_long_dataframe(
             crps=tm["crps"].numpy(),
             mae=tm["mae"].numpy(),
@@ -218,32 +246,26 @@ def main() -> None:
             if is_interpolator
             else Path(args.checkpoint).parent.name
         )
-        out_path = (
+        long_path = (
             Path(args.out)
             if args.out
             else OUT_DIR / f"{ckpt_tag}_long_{args.split}.parquet"
         )
-        df.to_parquet(out_path, index=False)
-        logger.info("Saved long dump (%d rows) → %s", len(df), out_path)
-        return
+        df.to_parquet(long_path, index=False)
+        logger.info("Saved long dump (%d rows) → %s", len(df), long_path)
 
-    nwp_predictor = None
-    if args.baseline and not is_interpolator:
-        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-        nwp_predictor = NWPInterpolatorPredictor(
-            config=nwp_config,
-            output_var_names=dataset.config.obs_vars,
-            input_transform=dataset.get_baseline_pre_transform(),
-        ).eval()
+    if tm is not None and nwp_predictor is None:
+        # Aggregate exactly from the long dump — no extra inference pass.
+        metrics = _aggregate_station_time(tm)
+    else:
+        # No long dump, or CRPSS wanted (needs a joint model+baseline pass).
+        metrics = plotter.compute_station_metrics(
+            time_indices=time_indices,
+            eval_station_indices=eval_indices,
+            reference=nwp_predictor,
+            batch_size=args.batch_timesteps,
+        )
 
-    metrics = plotter.compute_station_metrics(
-        time_indices=time_indices,
-        eval_station_indices=eval_indices,
-        reference=nwp_predictor,
-        batch_size=args.batch_timesteps,
-    )
-
-    var_names = list(predictor.var_to_indx.keys())
     _print_summary(metrics, var_names, logger)
 
     # Build per-station CSV
@@ -262,7 +284,12 @@ def main() -> None:
         if is_interpolator
         else Path(args.checkpoint).parent.name
     )
-    out_path = Path(args.out) if args.out else OUT_DIR / f"{ckpt_tag}_metrics_{args.split}.csv"
+    # In --long mode, args.out names the Parquet dump; auto-name the CSV to avoid a clash.
+    out_path = (
+        Path(args.out)
+        if args.out and not args.long
+        else OUT_DIR / f"{ckpt_tag}_metrics_{args.split}.csv"
+    )
     pd.DataFrame(rows).to_csv(out_path, index=False)
     logger.info("Saved → %s", out_path)
 
