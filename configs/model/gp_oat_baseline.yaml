@@ -1,0 +1,38 @@
+# GP whose mean function is the uninformed OAT trunk (Eq. 1-7), trained
+# end-to-end with the kernel and likelihood.
+#
+# The trunk is inherited from uninformed_oat rather than restated, so the mean
+# function is by construction the same architecture as the uninformed baseline
+# we compare against -- changing that baseline changes this mean function too.
+defaults:
+  - uninformed_oat
+  # The GP likelihood is the predictive distribution, so the trunk is built
+  # without the baseline's output head.
+  - override output_head: null
+  - _self_
+
+model_cls: oat.model_module.gp_baseline.GPBaseline
+
+# The trunk already reads the NWP fields, the time embedding and the topography
+# patches internally, so the hand-crafted feature groups are off -- only the geo
+# coordinates are kept, for the stationary kernel.
+use_pre_oat: true
+use_nwp: false
+use_time_emb: false
+use_topography: false
+
+mean_n_hidden_layers: 1
+kernel_n_hidden_layers: 2
+# mean_hidden_dims: derived from (d_model,) * mean_n_hidden_layers at runtime
+# kernel_hidden_dims: derived from (d_model,) * kernel_n_hidden_layers at runtime
+kernel_embed_dim: 4
+mean_groups: [oat]
+stationary_cov_groups: [geo]
+non_stationary_cov_groups: []
+
+noise_variance: 1.0
+eps: 0.001
+loss_fn: crps
+# The GP likelihood is Gaussian, so the targets must live in an unbounded
+# space; the uninformed baseline's keep_support is overridden here.
+transform_type: real
