@@ -43,12 +43,12 @@ MODEL_SPECS = {
     ),
     "gp": ModelSpec(
         "scripts.train_model",
-        ("model=gp_baseline", "predictor=gp_predictor"),
+        ("model=gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
         univariate_only=True,
     ),
     "deep_gp": ModelSpec(
         "scripts.train_model",
-        ("model=deep_gp_baseline", "predictor=gp_predictor"),
+        ("model=deep_gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
         univariate_only=True,
     ),
     "ootg": ModelSpec("scripts.train_ootg_baseline"),

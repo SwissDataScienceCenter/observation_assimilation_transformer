@@ -80,6 +80,30 @@ class GPPredictor(BasePredictor):
                     on_epoch=on_epoch,
                 )
 
+    _DIAG_REDUCE_FX = {
+        "min_eig": "min",
+        "cond_number": "max",
+        "sigma_min": "min",
+        "sigma_max": "max",
+        "cg_nonconverge_count": "max",
+        "jitter_count": "max",
+        "eig_failure_count": "max",
+        "mll_failure_count": "max",
+    }
+
+    def _log_gp_diagnostics(self) -> None:
+        diag = self.model.pop_diagnostics()
+        diag.update(self.model.diagnostic_hyperparams())
+        for key, value in diag.items():
+            self.log(
+                f"diag/{key}",
+                value,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=True,
+                reduce_fx=self._DIAG_REDUCE_FX.get(key, "mean"),
+            )
+
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         batch = self._normalize_batch(batch)
         target_obs = batch["query_data"].pop("obs")
@@ -94,8 +118,13 @@ class GPPredictor(BasePredictor):
         )
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
+        if self.model.config.debug_diagnostics:
+            self._log_gp_diagnostics()
+
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -122,7 +151,9 @@ class GPPredictor(BasePredictor):
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -149,7 +180,9 @@ class GPPredictor(BasePredictor):
         self.log("test_loss", loss)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat, target_obs)
+            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
+                y_hat, target_obs
+            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -184,7 +217,9 @@ class GPPredictor(BasePredictor):
         )
 
     def configure_optimizers(self) -> Optimizer | dict:
-        optimizer = self.optimizer_class(self.model.parameters(), **self.optimizer_params)
+        optimizer = self.optimizer_class(
+            self.model.parameters(), **self.optimizer_params
+        )
         if self.scheduler_class is not None:
             scheduler = self.scheduler_class(optimizer, **self.scheduler_params)
             return {
@@ -228,8 +263,12 @@ def setup_gp_predictor(
         d_model=int(model_cfg.d_model),
         mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
         kernel_n_hidden_layers=int(model_cfg.get("kernel_n_hidden_layers", 2)),
-        mean_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))),
-        kernel_hidden_dims=tuple([int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))),
+        mean_hidden_dims=tuple(
+            [int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))
+        ),
+        kernel_hidden_dims=tuple(
+            [int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))
+        ),
         kernel_embed_dim=int(model_cfg.kernel_embed_dim),
         mean_groups=model_cfg.get("mean_groups"),
         stationary_cov_groups=model_cfg.get("stationary_cov_groups"),
@@ -238,6 +277,12 @@ def setup_gp_predictor(
         eps=float(model_cfg.get("eps", 1e-3)),
         loss_fn=str(model_cfg.loss_fn),
         num_samples=int(model_cfg.num_samples),
+        debug_diagnostics=bool(model_cfg.get("debug_diagnostics", False)),
+        noise_lower_bound=float(model_cfg.get("noise_lower_bound", 0.1)),
+        outputscale_lower_bound=float(model_cfg.get("outputscale_lower_bound", 1e-2)),
+        stationary_lengthscale_lower_bound=float(
+            model_cfg.get("stationary_lengthscale_lower_bound", 1e-2)
+        ),
     )
     gp_model = GPBaseline(gp_config)
 

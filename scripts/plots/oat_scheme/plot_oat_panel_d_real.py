@@ -13,8 +13,10 @@ import numpy as np
 import zarr
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.colors import LinearSegmentedColormap, LightSource
+from matplotlib.colors import LinearSegmentedColormap, LightSource, ListedColormap
 from matplotlib.patches import FancyArrowPatch
+from matplotlib.lines import Line2D
+from matplotlib.legend_handler import HandlerBase
 
 from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
 
@@ -34,21 +36,46 @@ ORANGE_L = "#F5C080"
 GRAY_STA = "#AAAAAA"
 BLUE_Q = "#3A72C6"
 BLUE_L = "#A0BEEC"
+# Cross-attention arrows — a distinct colour from the query blue (BLUE_Q)
+# and the self-attention orange, so the two attention types read separately.
+# Dark grey (darker than GRAY_STA so it's not confused with missing stations).
+CROSS_ATTN = "#656565"
 
-TERRAIN_CMAP = LinearSegmentedColormap.from_list(
-    "terrain_oat",
-    [
-        (0.00, "#3B5E1F"),
-        (0.12, "#5C8A3A"),
-        (0.28, "#8EAA62"),
-        (0.42, "#C8B57A"),
-        (0.55, "#96703C"),
-        (0.68, "#7A6050"),
-        (0.80, "#A09898"),
-        (0.90, "#D2D2D2"),
-        (1.00, "#F4F4F4"),
-    ],
-)
+# TERRAIN_CMAP = LinearSegmentedColormap.from_list(
+#     "terrain_oat",
+#     [
+#         (0.00, "#3B5E1F"),
+#         (0.12, "#5C8A3A"),
+#         (0.28, "#8EAA62"),
+#         (0.42, "#C8B57A"),
+#         (0.55, "#96703C"),
+#         (0.68, "#7A6050"),
+#         (0.80, "#A09898"),
+#         (0.90, "#D2D2D2"),
+#         (1.00, "#F4F4F4"),
+#     ],
+# )
+
+
+def _mute_cmap(cmap, strength=0.5, toward=(0.9, 0.9, 0.9, 1.0)):
+    """strength=1.0 → original, 0.0 → flat grey."""
+    cmap = plt.get_cmap(cmap)
+    cols = cmap(np.linspace(0, 1, 256))
+    cols = strength * cols + (1 - strength) * np.array(toward)
+    return ListedColormap(cols)
+
+
+def _crop_cmap(cmap, lo=0.0, hi=1.0, n=256):
+    """Use only the [lo, hi] slice of a colormap (0=bottom, 1=top).
+
+    Raise `lo` to trim gist_earth's dark navy "sea level" band so the terrain
+    starts from a paler blue/green instead of the deep blue.
+    """
+    cmap = plt.get_cmap(cmap)
+    return ListedColormap(cmap(np.linspace(lo, hi, n)))
+
+
+TERRAIN_CMAP = _mute_cmap(_crop_cmap("gist_earth", lo=0.15, hi=1.0), strength=0.8)
 
 SEED = 42
 STEP_ZOOM = 2       # 100 m resolution — same as plot_oat_panel_a_real.py zoom panel
@@ -191,7 +218,7 @@ def _draw_cross_attn_arrows(
                 xytext=(stations[si, 0], stations[si, 1]),
                 arrowprops=dict(
                     arrowstyle="-|>",
-                    color=BLUE_Q,
+                    color=CROSS_ATTN,
                     lw=lw,
                     alpha=alpha,
                     mutation_scale=14,
@@ -228,9 +255,9 @@ def plot_self_attn_panel(
         obs[:, 0], obs[:, 1],
         c=ORANGE, s=80, zorder=7, edgecolors="white", linewidths=0.8,
     )
-    ax.set_title(
-        "1) Station self-attention\n(spatial mixing among observations)", fontsize=9
-    )
+    # ax.set_title(
+    #     "1) Station self-attention\n(spatial mixing among observations)", fontsize=9
+    # )
 
 
 def plot_cross_attn_panel(
@@ -264,9 +291,54 @@ def plot_cross_attn_panel(
         grid_queries[:, 0], grid_queries[:, 1],
         c=BLUE_Q, s=60, zorder=8, marker="D", edgecolors="white", linewidths=0.8,
     )
-    ax.set_title(
-        "2) Cross-attention to query locations\n(propagate information)", fontsize=9
+    # ax.set_title(
+    #     "2) Cross-attention to query locations\n(propagate information)", fontsize=9
+    # )
+
+
+# ---------------------------------------------------------------------------
+# Legend
+# ---------------------------------------------------------------------------
+class _ArrowHandler(HandlerBase):
+    """Render a short arrow as a legend handle (for cross-attention)."""
+
+    def __init__(self, color: str, lw: float = 2.2) -> None:
+        self._color = color
+        self._lw = lw
+        super().__init__()
+
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):  # noqa: E501
+        y = ydescent + height / 2.0
+        arrow = FancyArrowPatch(
+            (xdescent, y), (xdescent + width, y),
+            arrowstyle="-|>", mutation_scale=13, color=self._color, lw=self._lw,
+        )
+        arrow.set_transform(trans)
+        return [arrow]
+
+
+def _add_bottom_legend(fig: plt.Figure) -> None:
+    """Figure-level legend at the bottom, matching panel A's style."""
+    marker = dict(color="none", markeredgecolor="white", markeredgewidth=0.8)
+    arrow_proxy = Line2D([0], [0], color=CROSS_ATTN, lw=2.5, label="Cross-attention")
+    handles = [
+        # Line2D([0], [0], marker="o", markerfacecolor=ORANGE, markersize=11,
+        #        label="Observed station", **marker),
+        # Line2D([0], [0], marker="o", markerfacecolor=GRAY_STA, markersize=9,
+        #        label="Missing observation", **marker),
+        # Line2D([0], [0], marker="D", markerfacecolor=BLUE_Q, markersize=9,
+        #        label="Query location", **marker),
+        Line2D([0], [0], color=ORANGE, lw=2.8, label="Self-attention"),
+        arrow_proxy,
+    ]
+    leg = fig.legend(
+        handles=handles,
+        handler_map={arrow_proxy: _ArrowHandler(CROSS_ATTN)},
+        loc="upper center", bbox_to_anchor=(0.5, 0.02), ncol=5,
+        fontsize=12, framealpha=0.92, edgecolor="#CCCCCC",
+        handlelength=2.2, columnspacing=1.8, borderpad=0.8,
     )
+    leg.set_zorder(10)
 
 
 # ---------------------------------------------------------------------------
@@ -282,12 +354,13 @@ def main() -> None:
     obs, missing = load_stations_split()
     queries = canonical_queries()
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5.5), facecolor="white")
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(5.5, 11), facecolor="white")
 
     plot_self_attn_panel(ax1, dem, x_1d, y_1d, obs, missing)
     plot_cross_attn_panel(ax2, dem, x_1d, y_1d, obs, missing, queries)
 
     fig.tight_layout(pad=1.5)
+    _add_bottom_legend(fig)
     fig.savefig(OUT_PATH, dpi=200, bbox_inches="tight")
     fig.savefig(OUT_PATH.with_suffix(".pdf"), bbox_inches="tight")
     fig.savefig(OUT_PATH.with_suffix(".svg"), bbox_inches="tight")
