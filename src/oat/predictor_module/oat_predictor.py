@@ -481,10 +481,14 @@ class OATPredictor(BasePredictor):
             return optimizer
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
+def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[model.GlobalEncoderConfig, model.TopographicEncoderConfig, model.NwpTopoFusionConfig]:
+    """Build the configs for the uninformed trunk (Eq. 1-7).
+
+    Shared by the OAT/UninformedOAT setup and by the GP baseline, which reuses
+    the same trunk as its mean function.
+    """
     model_cfg = cfg.model
     data_cfg = cfg.dataset
-    logger.info("Setting up model configs...")
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
     d_model = model_cfg.d_model
     global_encoder_cfg = model.GlobalEncoderConfig(
@@ -507,6 +511,17 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
         cond_dim=time_cond_dim,
         hidden_channels=d_model,
         out_channels=d_model)
+
+    return global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg
+
+
+def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
+    model_cfg = cfg.model
+    data_cfg = cfg.dataset
+    logger.info("Setting up model configs...")
+    d_model = model_cfg.d_model
+    global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(cfg, field_extent)
+    time_cond_dim = nwp_topo_fusion_cfg.cond_dim
 
     if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):
         raise ValueError("Mismatch between observations variable distributions and output head variable distributions (both keys and order must match)")

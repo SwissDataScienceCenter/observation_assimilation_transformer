@@ -398,7 +398,7 @@ def main() -> None:
     )
     p.add_argument(
         "--out-prefix",
-        default=str(RESULTS_DIR / "results_table"),
+        default=None,
         help="Output prefix; writes <prefix>_means.* and <prefix>_ci.* (.tex, .txt).",
     )
     args = p.parse_args()
@@ -406,6 +406,8 @@ def main() -> None:
     if args.results_dir:
         RESULTS_DIR = Path(args.results_dir)
 
+    if args.out_prefix is None:
+        args.out_prefix = str(RESULTS_DIR / "results_table")
     tail = (100.0 - args.ci_level) / 2.0
     pct = (tail, 100.0 - tail)
 

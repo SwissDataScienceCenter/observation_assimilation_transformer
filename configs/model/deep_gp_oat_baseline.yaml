@@ -1,0 +1,12 @@
+# gp_oat_baseline plus a deep (non-stationary) kernel, mirroring how
+# deep_gp_baseline extends gp_baseline.
+#
+# The neural kernel reads the same features as the mean -- the uninformed OAT
+# trunk tokens -- so the trunk is shared: gradients reach it from both the mean
+# and the kernel embedding. This is the same sharing deep_gp_baseline does with
+# its nwp/topo/time features.
+defaults:
+  - gp_oat_baseline
+  - _self_
+
+non_stationary_cov_groups: [oat]

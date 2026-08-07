@@ -4,7 +4,6 @@ import torch
 from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
 from oat.predictor_module.gp_predictor import GPPredictor
 
-
 FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
 NWP_VARS = ["T_2M", "U_10M", "V_10M"]
 OBS_VAR = ["temperature"]
@@ -135,3 +134,106 @@ class TestGPPredictorPredictStep:
         batch = make_batch(B=1, N_q=5)
         with pytest.raises(NotImplementedError):
             p.predict_step(batch, batch_idx=0, return_as="distribution")
+
+
+@pytest.mark.parametrize(
+    "model_name,deep", [("gp_oat_baseline", False), ("deep_gp_oat_baseline", True)]
+)
+def test_gp_oat_baseline_config_builds_trunk_backed_gp(model_name, deep):
+    """The gp_oat configs must compose into a GP whose mean is the uninformed
+    OAT trunk, with no output head. The deep variant additionally feeds those
+    same tokens to the non-stationary kernel."""
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+
+    from oat.predictor_module.gp_predictor import setup_gp_predictor
+
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                f"model={model_name}",
+                "predictor=gp_predictor",
+                "dataset=cosmo_peakweather/temp",
+            ],
+        )
+
+    predictor = setup_gp_predictor(
+        cfg,
+        FIELD_EXTENT,
+        list(cfg.dataset.obs_vars),
+        (IdentityTransform(), IdentityTransform()),
+    )
+
+    gp = predictor.model
+    oat_indices = tuple(range(3, 3 + cfg.model.d_model))
+    assert gp.pre_oat is not None
+    assert gp.pre_oat.output_head is None
+    # geo (3) + fusion tokens (d_model); no hand-crafted nwp/time/topo groups.
+    assert gp.feature_dim == 3 + cfg.model.d_model
+    assert gp.mean_indices == oat_indices
+    assert gp.stationary_covar_indices == (0, 1, 2)
+    assert gp.non_stationary_covar_indices == (oat_indices if deep else ())
+    assert type(gp.gp.covar_module).__name__ == (
+        "ProductKernel" if deep else "ScaledRBFKernel"
+    )
+
+
+@pytest.mark.parametrize("model_name", ["gp_oat_baseline", "deep_gp_oat_baseline"])
+def test_gp_oat_mean_matches_uninformed_baseline_trunk(model_name):
+    """The gp_oat mean function must be the same architecture as the
+    uninformed OAT baseline it is compared against."""
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+
+    from oat.predictor_module.oat_predictor import setup_backbone_cfgs
+
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+
+    def backbone_for(name):
+        with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+            cfg = compose(
+                config_name="config",
+                overrides=[
+                    f"model={name}",
+                    "dataset=cosmo_peakweather/temp",
+                ],
+            )
+        return setup_backbone_cfgs(cfg, FIELD_EXTENT)
+
+    assert backbone_for(model_name) == backbone_for("uninformed_oat")
+
+
+@pytest.mark.parametrize(
+    "model_name,is_gp",
+    [
+        ("gp_oat_baseline", True),
+        ("deep_gp_oat_baseline", True),
+        ("gp_baseline", True),
+        ("deep_gp_baseline", True),
+        ("oat", False),
+        ("uninformed_oat", False),
+    ],
+)
+def test_train_model_routes_gp_configs_to_the_gp_path(model_name, is_gp):
+    """Every GPBaseline config must take the GP training branch and select
+    checkpoints on the data-space CRPS, not on the log-space val_loss."""
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+
+    from scripts.train_model import _is_gp_model, _resolve_checkpoint_monitor
+
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=[f"model={model_name}", "dataset=cosmo_peakweather/precip"],
+        )
+
+    assert _is_gp_model(cfg) is is_gp
+    expected = ("val_crps_precipitation", "min") if is_gp else ("val_loss", "min")
+    assert _resolve_checkpoint_monitor(cfg) == expected
