@@ -34,6 +34,8 @@ def detect_lonlat(coords: NDArray) -> tuple[NDArray, NDArray]:
     assumed to already be [lon, lat] (era5_meteostat).
     """
     coords = np.asarray(coords, dtype=np.float64)
+    if coords.size == 0:
+        return coords[:, 0], coords[:, 1]
     if np.abs(coords[:, 0]).max() > 1e5:
         from pyproj import Transformer
 
@@ -220,7 +222,7 @@ def _bin_keys(
     finite = np.isfinite(values)
     # Guard against all-NaN stratifier
     if finite.sum() == 0:
-        return np.array([]), [], {}, {}
+        return np.full(len(df), -1, dtype=int), [], {}, {}
     if stratifier in _CUSTOM_BINS:
         interior = np.asarray(_CUSTOM_BINS[stratifier]["edges"], dtype=float)
         labels = _CUSTOM_BINS[stratifier]["labels"]

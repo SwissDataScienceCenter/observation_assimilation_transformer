@@ -27,8 +27,11 @@ FIG_DIR = Path(__file__).parents[1] / "data/figures"
 
 def long_parquet_path(dataset: str, model: str, split: str) -> Path:
     """Map a registry key to the long-dump Parquet path written by --long."""
-    ckpt = resolve_checkpoint(dataset, model)
-    tag = Path(ckpt).parent.name
+    if model == "interpolator":
+        tag = f"interpolator_{dataset}"
+    else:
+        ckpt = resolve_checkpoint(dataset, model)
+        tag = Path(ckpt).parent.name
     return OUT_DIR / f"{tag}_long_{split}.parquet"
 
 
