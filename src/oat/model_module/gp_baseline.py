@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import warnings
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import gpytorch
 import torch
 import torch.nn as nn
+from linear_operator import settings as linear_operator_settings
+from linear_operator.utils.errors import NotPSDError
+from linear_operator.utils.warnings import NumericalWarning
 from linear_operator import settings as linear_operator_settings
 from linear_operator.utils.errors import NotPSDError
 from linear_operator.utils.warnings import NumericalWarning
@@ -24,6 +28,13 @@ from oat.model_module.model import UninformedOAT, UninformedOATConfig
 from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 _VALID_LOSS_FNS = ("mll", "crps")
+
+# Default cholesky_max_tries (3) escalates jitter only up to 1e-4 before
+# raising NotPSDError; we've observed context covariances with min eigenvalue
+# beyond that (e.g. -0.087), so give the solver more headroom to recover
+# before giving up. Applied around the whole per-batch-element loop rather
+# than per-call so every Cholesky solve in that scope gets the same budget.
+_CHOLESKY_MAX_TRIES = 6
 
 # Default cholesky_max_tries (3) escalates jitter only up to 1e-4 before
 # raising NotPSDError; we've observed context covariances with min eigenvalue
@@ -248,10 +259,27 @@ class GPBaseline(nn.Module):
         # both trainable is a redundant degree of freedom the optimizer can
         # wander along without changing model behavior. The non-stationary
         # kernel's outputscale is fixed at 1 below.
+        # Lower bounds on lengthscale/outputscale keep K(cx,cx) from drifting into
+        # the severely ill-conditioned regime observed during training (see
+        # debug/gp-training-instability): unconstrained, noise/outputscale collapse
+        # over epochs until even jittered Cholesky solves fail.
+        #
+        # Only the stationary kernel's outputscale is trainable. The overall
+        # kernel is a product (rbf_kernel * non_stationary_kernel), so only the
+        # *product* of the two outputscales is identifiable from data -- having
+        # both trainable is a redundant degree of freedom the optimizer can
+        # wander along without changing model behavior. The non-stationary
+        # kernel's outputscale is fixed at 1 below.
         rbf_kernel = ScaledRBFKernel(
             eps=config.eps,
             active_dims=stationary_covar_indices,
             ard_num_dims=len(stationary_covar_indices) or None,
+            lengthscale_constraint=gpytorch.constraints.GreaterThan(
+                config.stationary_lengthscale_lower_bound
+            ),
+            outputscale_constraint=gpytorch.constraints.GreaterThan(
+                config.outputscale_lower_bound
+            ),
             lengthscale_constraint=gpytorch.constraints.GreaterThan(
                 config.stationary_lengthscale_lower_bound
             ),
@@ -278,7 +306,23 @@ class GPBaseline(nn.Module):
             # output scale, so leaving them trainable is a redundant degree
             # of freedom (see the outputscale note above). Standard
             # deep-kernel-learning practice fixes both.
+            # Lengthscale and outputscale both fixed (not learned): this RBF
+            # operates on the MLP's learned embedding, and rescaling that
+            # embedding by c is mathematically equivalent to rescaling the
+            # lengthscale by 1/c and the square root of the outputscale by
+            # c -- the network can freely undo either value via its own
+            # output scale, so leaving them trainable is a redundant degree
+            # of freedom (see the outputscale note above). Standard
+            # deep-kernel-learning practice fixes both.
             non_stationary_kernel = NeuralKernel(
+                net=kernel_net,
+                kernel=ScaledRBFKernel(
+                    eps=config.eps,
+                    lengthscale=torch.ones(1),
+                    train_lengthscale=False,
+                    variance=torch.tensor(1.0),
+                    train_variance=False,
+                ),
                 net=kernel_net,
                 kernel=ScaledRBFKernel(
                     eps=config.eps,
@@ -292,6 +336,9 @@ class GPBaseline(nn.Module):
         else:
             kernel_function = rbf_kernel
 
+        likelihood = gpytorch.likelihoods.GaussianLikelihood(
+            noise_constraint=gpytorch.constraints.GreaterThan(config.noise_lower_bound)
+        )
         likelihood = gpytorch.likelihoods.GaussianLikelihood(
             noise_constraint=gpytorch.constraints.GreaterThan(config.noise_lower_bound)
         )
@@ -311,6 +358,7 @@ class GPBaseline(nn.Module):
         self._mll = gpytorch.mlls.ExactMarginalLogLikelihood(
             self.gp.likelihood, self.gp
         )
+        self._diag: Dict[str, List[float]] = {}
         self._diag: Dict[str, List[float]] = {}
 
     def _extract_features(
@@ -391,14 +439,38 @@ class GPBaseline(nn.Module):
         else:
             with gpytorch.settings.fast_pred_var():
                 pred = self.gp(tx)
+        if self.config.debug_diagnostics:
+            self._record_context_diagnostics(cx)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", NumericalWarning)
+                with gpytorch.settings.fast_pred_var():
+                    pred = self.gp(tx)
+            cg_count = sum("CG terminated" in str(w.message) for w in caught)
+            jitter_count = sum("added jitter" in str(w.message) for w in caught)
+            self._diag.setdefault("cg_nonconverge_count", []).append(cg_count)
+            self._diag.setdefault("jitter_count", []).append(jitter_count)
+        else:
+            with gpytorch.settings.fast_pred_var():
+                pred = self.gp(tx)
         return self.gp.likelihood(pred)
 
+    def _mll_loss_for_context(
+        self, cx: torch.Tensor, cy: torch.Tensor
+    ) -> Optional[torch.Tensor]:
     def _mll_loss_for_context(
         self, cx: torch.Tensor, cy: torch.Tensor
     ) -> Optional[torch.Tensor]:
         self.gp.set_train_data(inputs=cx, targets=cy, strict=False)
         self.gp.train()
         self.gp.likelihood.train()
+        try:
+            output = self.gp(cx)
+            return -self._mll(output, cy)
+        except NotPSDError:
+            # The context covariance is occasionally too ill-conditioned for
+            # the exact Cholesky the marginal likelihood needs. Skip this
+            # batch element's contribution rather than losing the whole run.
+            return None
         try:
             output = self.gp(cx)
             return -self._mll(output, cy)
@@ -446,7 +518,18 @@ class GPBaseline(nn.Module):
                 cy = context_y[batch_idx][valid]
                 tx = target_x[batch_idx]
                 cx, cy = self._ensure_non_empty_context(cx, cy, tx)
+        with linear_operator_settings.cholesky_max_tries(_CHOLESKY_MAX_TRIES):
+            for batch_idx in range(batch_size):
+                valid = context_mask[batch_idx].bool()
+                cx = context_x[batch_idx][valid]
+                cy = context_y[batch_idx][valid]
+                tx = target_x[batch_idx]
+                cx, cy = self._ensure_non_empty_context(cx, cy, tx)
 
+                with torch.no_grad():
+                    lik_pred = self._posterior_predictive(cx, cy, tx)
+                    sample_values = lik_pred.rsample(torch.Size([num_samples]))
+                var_samples.append(sample_values.T)
                 with torch.no_grad():
                     lik_pred = self._posterior_predictive(cx, cy, tx)
                     sample_values = lik_pred.rsample(torch.Size([num_samples]))
@@ -479,6 +562,18 @@ class GPBaseline(nn.Module):
         total_loss = torch.tensor(0.0, device=context_x.device)
         n_terms = 0
 
+        if self.config.debug_diagnostics:
+            self._diag = {}
+
+        with linear_operator_settings.cholesky_max_tries(_CHOLESKY_MAX_TRIES):
+            for batch_idx in range(batch_size):
+                valid_ctx = context_mask[batch_idx].bool()
+                cx = context_x[batch_idx][valid_ctx]
+                cy = context_y[batch_idx][valid_ctx]
+                tx = target_x[batch_idx]
+                ty = target_y[batch_idx]
+                valid_tgt = target_mask[batch_idx].bool()
+                cx, cy = self._ensure_non_empty_context(cx, cy, tx)
         if self.config.debug_diagnostics:
             self._diag = {}
 
@@ -531,15 +626,88 @@ class GPBaseline(nn.Module):
                         )
                         total_loss = total_loss + crps.mean()
                         n_terms += 1
+                    if self.config.debug_diagnostics:
+                        self._diag.setdefault("sigma_min", []).append(
+                            sigma.min().item()
+                        )
+                        self._diag.setdefault("sigma_max", []).append(
+                            sigma.max().item()
+                        )
+
+                    if valid_tgt.any():
+                        crps = crps_normal(
+                            ty[valid_tgt], mu[valid_tgt], sigma[valid_tgt]
+                        )
+                        total_loss = total_loss + crps.mean()
+                        n_terms += 1
 
                     with torch.no_grad():
                         sample_values = lik_pred.rsample(torch.Size([num_samples]))
+                    with torch.no_grad():
+                        sample_values = lik_pred.rsample(torch.Size([num_samples]))
 
+                var_samples.append(sample_values.T)
                 var_samples.append(sample_values.T)
 
         samples = torch.stack(var_samples, dim=0).unsqueeze(-1)
         loss = total_loss / max(n_terms, 1)
         return {"samples": samples}, loss
+
+    def pop_diagnostics(self) -> Dict[str, float]:
+        """Aggregate and clear the per-step diagnostics accumulated across
+        the batch loop in `forward_with_loss`/`_posterior_predictive`.
+
+        Worst-case reductions are used deliberately (e.g. min-of-mins for
+        eigenvalues, max-of-maxes for condition number) so a single bad
+        batch element isn't averaged away.
+        """
+        diag = self._diag
+        self._diag = {}
+        reductions: Dict[str, Callable[[Iterable[float]], float]] = {
+            "min_eig": min,
+            "cond_number": max,
+            "sigma_min": min,
+            "sigma_max": max,
+            "cg_nonconverge_count": sum,
+            "jitter_count": sum,
+            "eig_failure_count": sum,
+            "mll_failure_count": sum,
+        }
+        return {
+            key: float(reductions[key](values))
+            for key, values in diag.items()
+            if values
+        }
+
+    def diagnostic_hyperparams(self) -> Dict[str, float]:
+        """Read current kernel/likelihood hyperparameters for diagnostic
+        logging. Shared parameters, so this is read once per step (not
+        per batch element).
+        """
+        covar_module = self.gp.covar_module
+        stationary_kernel = covar_module
+        non_stationary_kernel: Optional[ScaledRBFKernel] = None
+        if isinstance(covar_module, gpytorch.kernels.ProductKernel):
+            stationary_kernel, deep_kernel = covar_module.kernels
+            non_stationary_kernel = deep_kernel.kernel
+
+        out: Dict[str, float] = {
+            "noise": self.gp.likelihood.noise.mean().item(),
+            "stationary_outputscale": stationary_kernel.kernel.outputscale.mean().item(),
+            "stationary_lengthscale_min": stationary_kernel.kernel.base_kernel.lengthscale.min().item(),
+            "stationary_lengthscale_max": stationary_kernel.kernel.base_kernel.lengthscale.max().item(),
+        }
+        if non_stationary_kernel is not None:
+            out["neural_outputscale"] = (
+                non_stationary_kernel.kernel.outputscale.mean().item()
+            )
+            out["neural_lengthscale_min"] = (
+                non_stationary_kernel.kernel.base_kernel.lengthscale.min().item()
+            )
+            out["neural_lengthscale_max"] = (
+                non_stationary_kernel.kernel.base_kernel.lengthscale.max().item()
+            )
+        return out
 
     def pop_diagnostics(self) -> Dict[str, float]:
         """Aggregate and clear the per-step diagnostics accumulated across
