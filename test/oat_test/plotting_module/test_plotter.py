@@ -289,7 +289,13 @@ def test_plot_timeseries_at_station_delegates_to_plot_timeseries():
             ax=ax, station_idx=2, var="temp", time_indices=[0, 1]
         )
     mock_ts.assert_called_once_with(
-        ax, (5.0, 6.0), "temp", [0, 1], quantile_lo=0.05, quantile_hi=0.95, predictors=None
+        ax,
+        (5.0, 6.0),
+        "temp",
+        [0, 1],
+        quantile_lo=0.05,
+        quantile_hi=0.95,
+        predictors=None,
     )
     plt.close(fig)
 
@@ -1054,7 +1060,9 @@ def test_compute_station_metrics_returns_expected_keys():
     n_vars = 2
     predictor = _make_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
     dataset = _make_dataset(n_stations=5, n_times=4, n_vars=n_vars)
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples
+    )
 
     fixed_samples = torch.ones(n_eval, n_samples, n_vars)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
@@ -1076,7 +1084,9 @@ def test_compute_station_metrics_with_reference_includes_skill():
     predictor = _make_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
     dataset = _make_dataset(n_stations=5, n_times=4, n_vars=n_vars)
     baseline = _make_baseline_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=n_samples
+    )
 
     fixed_samples = torch.ones(n_eval, n_samples, n_vars)
     with patch.object(plotter, "_run_inference", return_value=fixed_samples):
@@ -1106,7 +1116,9 @@ def test_compute_station_metrics_incremental_matches_batch():
     def _mock_inference(time_idx, query_coords, predictor=None):
         return samples_by_t[time_idx]
 
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples)
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
+    )
 
     with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
         one_shot = plotter.compute_station_metrics(
