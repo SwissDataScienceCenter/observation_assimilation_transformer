@@ -141,7 +141,7 @@ def main() -> None:
     ax0.set_aspect("equal")
     ax0.set_xlabel("Easting [m]", fontsize=9)
     ax0.set_ylabel("Northing [m]", fontsize=9)
-    ax0.set_title("Dataset 1 (Switzerland, LV95)", fontsize=10)
+    ax0.set_title("Switzerland dataset", fontsize=10)
     ax0.legend(loc="lower right", fontsize=8, framealpha=0.9)
     ax0.tick_params(labelsize=7)
     ax0.ticklabel_format(style="sci", axis="both", scilimits=(6, 6))
@@ -186,7 +186,7 @@ def main() -> None:
     _markers(ax1, era5_coords, era5_train, era5_val, era5_test,
              transform=ccrs.PlateCarree())
 
-    ax1.set_title("Dataset 2  (Europe, Lambert Conformal)", fontsize=10)
+    ax1.set_title("Europe dataset", fontsize=10)
     ax1.legend(loc="lower left", fontsize=8, framealpha=0.9)
 
     # ── Save ──────────────────────────────────────────────────────────────────
