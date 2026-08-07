@@ -123,13 +123,7 @@ class GPPredictor(BasePredictor):
         if self.model.config.debug_diagnostics:
             self._log_gp_diagnostics()
 
-        if self.model.config.debug_diagnostics:
-            self._log_gp_diagnostics()
-
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
-                y_hat, target_obs
-            )
             y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
                 y_hat, target_obs
             )
@@ -162,9 +156,6 @@ class GPPredictor(BasePredictor):
             y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
                 y_hat, target_obs
             )
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
-                y_hat, target_obs
-            )
             self._log_instant_metrics(
                 y_hat_samples=y_hat_unnorm,
                 y_true=y_true_unnorm,
@@ -191,9 +182,6 @@ class GPPredictor(BasePredictor):
         self.log("test_loss", loss)
 
         with torch.no_grad():
-            y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
-                y_hat, target_obs
-            )
             y_hat_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(
                 y_hat, target_obs
             )
@@ -231,9 +219,6 @@ class GPPredictor(BasePredictor):
         )
 
     def configure_optimizers(self) -> Optimizer | dict:
-        optimizer = self.optimizer_class(
-            self.model.parameters(), **self.optimizer_params
-        )
         optimizer = self.optimizer_class(
             self.model.parameters(), **self.optimizer_params
         )
@@ -294,12 +279,6 @@ def setup_gp_predictor(
         d_model=int(model_cfg.d_model),
         mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
         kernel_n_hidden_layers=int(model_cfg.get("kernel_n_hidden_layers", 2)),
-        mean_hidden_dims=tuple(
-            [int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))
-        ),
-        kernel_hidden_dims=tuple(
-            [int(model_cfg.d_model)] * int(model_cfg.get("kernel_n_hidden_layers", 2))
-        ),
         mean_hidden_dims=tuple(
             [int(model_cfg.d_model)] * int(model_cfg.get("mean_n_hidden_layers", 1))
         ),
