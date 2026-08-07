@@ -939,25 +939,16 @@ class OATPlotter:
         pos = 0
         for chunk in batched(time_indices, batch_size):
             for t in chunk:
-                y_obs = (
-                    torch.stack(
-                        [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
-                    )
-                    .unsqueeze(0)
-                    .to(self.device)
+                y_obs = self.dataset.obs_tensor[t, eval_station_indices].unsqueeze(0).to(
+                    self.device
                 )  # [1, S, V]
                 mask = (
-                    torch.stack(
-                        [
-                            self.dataset.obs_mask_tensor[t, s]
-                            for s in eval_station_indices
-                        ]
-                    )
+                    self.dataset.obs_mask_tensor[t, eval_station_indices]
                     .float()
                     .unsqueeze(0)
                     .to(self.device)
                 )  # [1, S, V]
-                if float(mask.sum()) == 0:
+                if mask.sum().item() == 0.0:
                     pos += 1
                     continue
                 y_hat = self._run_inference(t, eval_coords).unsqueeze(0)  # [1,S,n,V]
