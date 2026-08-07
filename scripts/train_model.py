@@ -52,7 +52,16 @@ def setup_profiler(cfg: DictConfig) -> Profiler | None:
     raise ValueError(f"Profiler type {cfg.profiler.type} unknown.")
 
 
-def _resolve_checkpoint_monitor(cfg: DictConfig, model_type: str) -> Tuple[str, str]:
+def _is_gp_model(cfg: DictConfig) -> bool:
+    """True for every GP baseline variant (plain, deep, OAT-mean).
+
+    Keyed on the model class rather than the config name so a new GP config
+    picks up the GP training path and checkpoint monitor automatically.
+    """
+    return str(cfg.model.get("model_cls", "")).endswith("GPBaseline")
+
+
+def _resolve_checkpoint_monitor(cfg: DictConfig) -> Tuple[str, str]:
     """Metric + mode for best-checkpoint selection / early stopping.
 
     An explicit ``checkpoint_monitor`` in the config wins. Otherwise it is
@@ -65,15 +74,13 @@ def _resolve_checkpoint_monitor(cfg: DictConfig, model_type: str) -> Tuple[str, 
     mode = cfg.get("checkpoint_monitor_mode", "min")
     if monitor:
         return monitor, mode
-    if model_type in ("gp_baseline", "deep_gp_baseline"):
+    if _is_gp_model(cfg):
         obs_var = list(cfg.dataset.obs_vars)[0]
         return f"val_crps_{obs_var}", "min"
     return "val_loss", mode
 
 
-def setup_logger_and_callbacks(
-    cfg: DictConfig, model_type: str = "oat"
-) -> Tuple[WandbLogger, List]:
+def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
     slurm_job_id = os.environ.get("SLURM_JOB_ID", "local")
@@ -95,7 +102,7 @@ def setup_logger_and_callbacks(
     # Metric used to select the best checkpoint / early-stop. See
     # _resolve_checkpoint_monitor: GP baselines auto-select on the data-space
     # CRPS metric; other models on "val_loss". Overridable via checkpoint_monitor.
-    monitor, monitor_mode = _resolve_checkpoint_monitor(cfg, model_type)
+    monitor, monitor_mode = _resolve_checkpoint_monitor(cfg)
     checkpoint_callback = ModelCheckpoint(
         monitor=monitor,
         mode=monitor_mode,
@@ -196,7 +203,7 @@ def main(cfg: DictConfig) -> None:
         return
 
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    wandb_logger, callbacks = setup_logger_and_callbacks(cfg, model_type)
+    wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
 
     # print config
     logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
@@ -215,7 +222,7 @@ def main(cfg: DictConfig) -> None:
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
-    elif model_type in ("gp_baseline", "deep_gp_baseline"):
+    elif _is_gp_model(cfg):
         predictor = setup_gp_predictor(
             cfg=cfg,
             field_extent=field_extent,

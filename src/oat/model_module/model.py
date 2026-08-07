@@ -187,7 +187,10 @@ class UninformedOATConfig:
     global_encoder: GlobalEncoderConfig
     topographic_encoder: TopographicEncoderConfig
     nwp_topo_fusion: NwpTopoFusionConfig
-    output_head: OutputHeadConfig
+    # None builds only the Eq. 1-7 trunk (no output head). Used when another
+    # model consumes the fusion tokens and supplies its own likelihood, e.g.
+    # GPBaseline using this stack as its mean function.
+    output_head: Optional[OutputHeadConfig] = None
     num_samples: int = 100
 
     @classmethod
@@ -248,9 +251,25 @@ class UninformedOAT(nn.Module):
             n_blocks=config.nwp_topo_fusion.n_blocks,
             residual_learning=config.nwp_topo_fusion.residual_learning,
         )
-        self.output_head = self._init_output_head(config=config)
+        self.output_head = (
+            self._init_output_head(config=config)
+            if config.output_head is not None
+            else None
+        )
 
         self.num_samples = config.num_samples
+
+    # Returns Any, like the untyped _init_output_head it mirrors: OutputHead's
+    # own annotations don't match its runtime returns yet, so a precise type
+    # here surfaces pre-existing errors in every caller.
+    def _require_output_head(self) -> Any:
+        if self.output_head is None:
+            raise RuntimeError(
+                "This model was built without an output head "
+                "(config.output_head is None); only _create_uninformed_tokens "
+                "is available."
+            )
+        return self.output_head
 
     def _init_global_encoder(self, config):
         if config.global_encoder.type == "UNet":
@@ -351,14 +370,15 @@ class UninformedOAT(nn.Module):
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
 
+        head = self._require_output_head()
         query_token = self._create_uninformed_tokens(
             global_data=global_data, local_data=query_data
         )
-        out = self.output_head(query_token)
+        out = head(query_token)
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(
+            samples = head.sample(
                 x=None,
                 pred_dist=out,
                 num_samples=num_samples,
@@ -401,17 +421,16 @@ class UninformedOAT(nn.Module):
             loss: Scalar loss tensor (sum of per-variable scaled losses)
         """
 
+        head = self._require_output_head()
         query_token = self._create_uninformed_tokens(
             global_data=global_data, local_data=query_data
         )
-        out, per_var_losses, loss = self.output_head.loss(
-            query_token, target_obs, target_mask_obs
-        )
+        out, per_var_losses, loss = head.loss(query_token, target_obs, target_mask_obs)
 
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(
+            samples = head.sample(
                 x=None,
                 pred_dist=out,
                 num_samples=num_samples,
@@ -478,6 +497,10 @@ class OAT(UninformedOAT):
     """
 
     requires_observation: bool = True
+    # OATConfig always carries an output head, unlike UninformedOATConfig where
+    # it is optional; narrow it so the uses below need no None checks. Any
+    # rather than OutputHead, for the reason given on _require_output_head.
+    output_head: Any
 
     def __init__(self, config: Optional[OATConfig] = None) -> None:
         """

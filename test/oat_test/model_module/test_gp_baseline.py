@@ -2,6 +2,13 @@ import pytest
 import torch
 
 from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
+from oat.model_module.model import (
+    GlobalEncoderConfig,
+    NwpTopoFusionConfig,
+    OutputHeadConfig,
+    TopographicEncoderConfig,
+    UninformedOATConfig,
+)
 
 FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
 NWP_VARS = ["T_2M", "U_10M", "V_10M"]
@@ -348,3 +355,85 @@ class TestGPBaselineForwardWithLossMLL:
             p.grad is not None for p in model.parameters() if p.requires_grad
         )
         assert has_grad
+
+
+def make_pre_oat_config(d_model=16, n_topo=5, n_nwp=3):
+    """UninformedOAT trunk config (no output head) for use as the GP mean."""
+    return UninformedOATConfig(
+        global_encoder=GlobalEncoderConfig(
+            type="MLP",
+            in_channels=n_nwp + n_topo,
+            out_channels=d_model // 2,
+            hidden_dims=(8,),
+            field_extent_min=tuple(FIELD_EXTENT["min"]),
+            field_extent_max=tuple(FIELD_EXTENT["max"]),
+        ),
+        topographic_encoder=TopographicEncoderConfig(
+            in_channels=n_topo, out_channels=d_model // 2, n_layers=2
+        ),
+        nwp_topo_fusion=NwpTopoFusionConfig(
+            cond_dim=4, hidden_channels=d_model, out_channels=d_model
+        ),
+    )
+
+
+class TestGPBaselinePreOATMean:
+    def test_output_head_must_be_none(self):
+        pre_oat = make_pre_oat_config()
+        pre_oat.output_head = OutputHeadConfig(
+            in_features=16, variable_to_distribution={"temperature": "normal"}
+        )
+        with pytest.raises(ValueError, match="output_head must be None"):
+            GPBaseline(make_config(pre_oat=pre_oat, mean_groups=["oat"]))
+
+    def test_trunk_is_built_without_output_head(self):
+        model = GPBaseline(
+            make_config(pre_oat=make_pre_oat_config(), mean_groups=["oat"])
+        )
+        assert model.pre_oat is not None
+        assert model.pre_oat.output_head is None
+
+    def test_feature_dim_and_indices(self):
+        # geo=0-2, oat=3-18 (d_model=16); nwp/time_emb/topo groups disabled.
+        model = GPBaseline(
+            make_config(
+                use_nwp=False,
+                use_time_emb=False,
+                use_topography=False,
+                pre_oat=make_pre_oat_config(d_model=16),
+                mean_groups=["oat"],
+            )
+        )
+        assert model.feature_dim == 3 + 16
+        assert model.mean_indices == tuple(range(3, 19))
+        assert model.stationary_covar_indices == (0, 1, 2)
+
+    def test_forward_with_loss_trains_the_trunk(self):
+        model = GPBaseline(
+            make_config(
+                use_nwp=False,
+                use_time_emb=False,
+                use_topography=False,
+                pre_oat=make_pre_oat_config(d_model=16),
+                mean_groups=["oat"],
+                loss_fn="crps",
+                num_samples=3,
+            )
+        )
+        B, N_obs, N_q = 2, 10, 6
+        global_data, obs_data, query_data = make_batch(B=B, N_obs=N_obs, N_q=N_q)
+        out, loss = model.forward_with_loss(
+            global_data,
+            obs_data,
+            query_data,
+            query_data["obs"],
+            query_data["mask_obs"],
+            num_samples=3,
+        )
+        assert out["samples"].shape == (B, N_q, 3, 1)
+        assert torch.isfinite(loss)
+
+        loss.backward()
+        trunk_grads = [p.grad for p in model.pre_oat.parameters() if p.requires_grad]
+        assert trunk_grads
+        assert any(g is not None and g.abs().sum() > 0 for g in trunk_grads)

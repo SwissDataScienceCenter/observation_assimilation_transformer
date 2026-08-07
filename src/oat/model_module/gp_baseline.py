@@ -20,6 +20,7 @@ from obsweatherscale.models.mlp import MLP
 import torch.distributions as dist
 
 from oat.model_module.baseline import NWPInterpolator, NWPInterpolatorConfig
+from oat.model_module.model import UninformedOAT, UninformedOATConfig
 from oat.model_module.topographic_encoder import CNNTopographyEncoder
 
 _VALID_LOSS_FNS = ("mll", "crps")
@@ -91,6 +92,10 @@ class GPBaselineConfig:
     use_time_emb: bool = True
     use_topography: bool = False
     topography_encoder_kwargs: Optional[Dict[str, Any]] = None
+    # When set, the uninformed OAT trunk (Eq. 1-7) is built as a submodule and
+    # its fusion tokens become the "oat" feature group. Trained end-to-end with
+    # the rest of the GP -- no pretrained weights are loaded.
+    pre_oat: Optional[UninformedOATConfig] = None
     mean_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
@@ -196,6 +201,26 @@ class GPBaseline(nn.Module):
                 non_stationary_covar_indices += topo_indices
         else:
             self.topography_encoder = None
+
+        if config.pre_oat is not None:
+            if config.pre_oat.output_head is not None:
+                raise ValueError(
+                    "pre_oat.output_head must be None: the GP likelihood "
+                    "supplies the predictive distribution, so the OAT output "
+                    "head would be unused."
+                )
+            self.pre_oat: Optional[UninformedOAT] = UninformedOAT(config.pre_oat)
+            n = int(config.pre_oat.nwp_topo_fusion.out_channels)
+            oat_indices = list(range(offset, offset + n))
+            offset += n
+            if "oat" in config.mean_groups:
+                mean_indices += oat_indices
+            if "oat" in config.stationary_cov_groups:
+                stationary_covar_indices += oat_indices
+            if "oat" in config.non_stationary_cov_groups:
+                non_stationary_covar_indices += oat_indices
+        else:
+            self.pre_oat = None
 
         self.feature_dim = offset
         self.mean_indices = tuple(mean_indices)
@@ -312,6 +337,15 @@ class GPBaseline(nn.Module):
         if self.topography_encoder is not None:
             topo_feats = self.topography_encoder(local_data["topo"])
             parts.append(topo_feats)
+
+        if self.pre_oat is not None:
+            # Eq. 1-7 trunk: global encode -> readout -> topo encode -> fusion.
+            # Called once for the context points and once for the queries, so
+            # the global encoder runs twice per step; cheap for the MLP encoder,
+            # worth hoisting if this is ever run with UNet/SwinUNETR.
+            parts.append(
+                self.pre_oat._create_uninformed_tokens(global_data, local_data)
+            )
 
         return torch.cat(parts, dim=-1)
 

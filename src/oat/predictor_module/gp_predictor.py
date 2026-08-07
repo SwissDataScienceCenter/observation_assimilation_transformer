@@ -9,7 +9,9 @@ from omegaconf import DictConfig
 
 from oat.data_module.transform import Transform
 from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
+from oat.model_module.model import UninformedOATConfig
 from oat.predictor_module.base_predictor import BasePredictor
+from oat.predictor_module.oat_predictor import setup_backbone_cfgs
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
@@ -252,6 +254,19 @@ def setup_gp_predictor(
             "out_channels": int(model_cfg.d_model) // 2,
         }
 
+    pre_oat_cfg = None
+    if bool(model_cfg.get("use_pre_oat", False)):
+        global_encoder_cfg, topo_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(
+            cfg, field_extent
+        )
+        # output_head=None: the GP likelihood is the predictive distribution.
+        pre_oat_cfg = UninformedOATConfig(
+            global_encoder=global_encoder_cfg,
+            topographic_encoder=topo_cfg,
+            nwp_topo_fusion=nwp_topo_fusion_cfg,
+            num_samples=int(model_cfg.num_samples),
+        )
+
     gp_config = GPBaselineConfig(
         obs_vars=obs_vars,
         nwp_vars=list(data_cfg.nwp_vars),
@@ -260,6 +275,7 @@ def setup_gp_predictor(
         use_time_emb=bool(model_cfg.use_time_emb),
         use_topography=bool(model_cfg.get("use_topography", False)),
         topography_encoder_kwargs=gp_topography_kwargs,
+        pre_oat=pre_oat_cfg,
         d_model=int(model_cfg.d_model),
         mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
         kernel_n_hidden_layers=int(model_cfg.get("kernel_n_hidden_layers", 2)),
