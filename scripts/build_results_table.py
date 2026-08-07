@@ -198,9 +198,14 @@ def _boot_skill(
     if paired is None:
         return NAN, (NAN, NAN)
     m, r = paired
-    point = 1.0 - m.mean() / r.mean()
+    r_point = r.mean()
+    if not np.isfinite(r_point) or r_point <= 0:
+        return NAN, (NAN, NAN)
+    point = 1.0 - m.mean() / r_point
     idx = rng.integers(0, m.size, size=(n_boot, m.size))
-    skill = 1.0 - m[idx].mean(axis=1) / r[idx].mean(axis=1)
+    r_boot = r[idx].mean(axis=1)
+    r_boot = np.maximum(r_boot, 1e-12)
+    skill = 1.0 - m[idx].mean(axis=1) / r_boot
     lo, hi = np.percentile(skill, pct)
     return float(point), (float(lo), float(hi))
 
