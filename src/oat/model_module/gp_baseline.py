@@ -323,7 +323,7 @@ class GPBaseline(nn.Module):
                 min_eig = eigvals.min().item()
                 cond_number = eigvals.max().item() / max(min_eig, 1e-12)
                 eig_failed = 0
-            except torch._C._LinAlgError:  # type: ignore[attr-defined]
+            except RuntimeError:
                 # Dense eigh itself failing to converge is a stronger signal
                 # than a large condition number: the matrix is degenerate
                 # enough that even a robust solver can't handle it. Record a
