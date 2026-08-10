@@ -1,16 +1,71 @@
 from typing import Any
 
+import pandas as pd
 import pytest
 import torch
 from omegaconf import OmegaConf
 
 from oat.data_module.field import Field
+from oat.data_module.field_dataset import FieldDatasetBase
 from oat.data_module.field_setup import (
     build_two_group_transform,
     field_collate,
     validate_field_config_against_scalars,
 )
+from oat.data_module.field_spec import parse_field_config
+from oat.data_module.sources import PointSetSource
+from oat.data_module.support import VariableSupport
 from oat_test.data_module.test_field_dataset_base import _build_dataset
+
+
+def _build_dataset_with_global_role() -> FieldDatasetBase:
+    """Minimal field dataset declaring BOTH `target` and `global` roles.
+
+    Unlike `_build_dataset()` (roles={"target": "obs", "geo_bias": "geo"}, no
+    `global` role), this fixture lets `validate_field_config_against_scalars`
+    get past the required-roles check, so tests can actually exercise the
+    obs-var-order comparison instead of failing earlier on the missing-role
+    check.
+    """
+    stations = torch.tensor([[0.0, 0.0], [10.0, 10.0]])
+    nwp = PointSetSource(
+        stations,
+        ["T_2M"],
+        values_fn=lambda t: torch.tensor([[float(t), 1.0 + t]]),
+        native_coord_source="stations",
+    )
+    obs = PointSetSource(
+        stations,
+        ["temperature"],
+        values_fn=lambda t: torch.tensor([[20.0 + t, 21.0 + t]]),
+        mask_fn=lambda t: torch.tensor([[1.0, 1.0]]),
+        native_coord_source="stations",
+    )
+    cfg = parse_field_config(
+        {
+            "coord_sources": {"stations": {"from": "obs"}},
+            "fields": {
+                "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+                "nwp": {"coords": "stations", "inputs": ["nwp.T_2M"], "query": True},
+            },
+            "roles": {"target": "obs", "global": "nwp"},
+            "transform_type": "real",
+        }
+    )
+    times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
+    support = VariableSupport(
+        lower_bounds=torch.tensor([-float("inf")]),
+        upper_bounds=torch.tensor([float("inf")]),
+        lower_open=torch.tensor([True]),
+        upper_open=torch.tensor([True]),
+    )
+    return FieldDatasetBase(
+        field_config=cfg,
+        coord_source_coords={"stations": stations},
+        sources={"obs": obs, "nwp": nwp},
+        times=times,
+        obs_var_support=support,
+    )
 
 
 def _sample(idx: int, mask: bool = True) -> dict[str, Any]:
@@ -68,7 +123,11 @@ def test_build_two_group_transform_applies_both_groups() -> None:
 
 
 def test_validation_rejects_obs_order_mismatch() -> None:
-    ds, _ = _build_dataset()
+    # Fixture declares both `target` and `global` roles with `nwp_vars`
+    # matching, so validation gets PAST the required-roles check and the
+    # raised error is actually about the obs-var order mismatch below (not
+    # a "missing required role" error masquerading as the intended failure).
+    ds = _build_dataset_with_global_role()
     cfg = OmegaConf.create(
         {
             "dataset": {
@@ -78,5 +137,5 @@ def test_validation_rejects_obs_order_mismatch() -> None:
             }
         }
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="role 'target'"):
         validate_field_config_against_scalars(ds, cfg)
