@@ -1,0 +1,7 @@
+defaults:
+  - era5_meteostat/field_settings@_here_
+  - _self_
+
+fields:
+  obs: {coords: stations, inputs: [obs.temp]}
+  nwp: {coords: stations, inputs: [nwp.2t], query: true}
