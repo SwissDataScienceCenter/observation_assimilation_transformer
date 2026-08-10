@@ -139,3 +139,22 @@ def test_validation_rejects_obs_order_mismatch() -> None:
     )
     with pytest.raises(ValueError, match="role 'target'"):
         validate_field_config_against_scalars(ds, cfg)
+
+
+def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    import logging
+
+    import oat.data_module.setup as S
+
+    called: dict[str, str] = {}
+
+    def fake(cfg: Any, logger: Any) -> tuple[str, int, None, None, None, None, None]:
+        called["hit"] = cfg.dataset.dataset_type
+        return ("d", 1, None, None, None, None, None)
+
+    monkeypatch.setattr(
+        "oat.data_module.field_setup.setup_field_data_and_transform", fake
+    )
+    cfg = OmegaConf.create({"dataset": {"dataset_type": "field_cosmo_peakweather"}})
+    S.setup_data_and_transform(cfg, logging.getLogger("t"))
+    assert called["hit"] == "field_cosmo_peakweather"

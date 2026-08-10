@@ -45,12 +45,20 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     NestedTransform,
     Transform,
 ]:
+    field_types = {"field_cosmo_peakweather", "field_era5_meteostat"}
+    if cfg.dataset.get("dataset_type", "cosmo_peakweather") in field_types:
+        from oat.data_module.field_setup import setup_field_data_and_transform
+
+        return setup_field_data_and_transform(cfg, logger)
+
     logger.info("Setting up dataset and dataloaders...")
     dataset = _instantiate_dataset(cfg)
     logger.info(f"Dataset size: {len(dataset)} samples")
     splits = create_splits(dataset, **cfg.split, logger=logger)
     train_dataset, val_dataset, test_dataset = splits["datasets"]
-    train_station_indices, val_station_indices, test_station_indices = splits["station_indices"]
+    train_station_indices, val_station_indices, test_station_indices = splits[
+        "station_indices"
+    ]
 
     logger.info(f"Train size: {len(train_dataset)} samples")
     logger.info(f"Validation size: {len(val_dataset)} samples")
