@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from oat.data_module import statistics
+from oat.data_module import transform as T
 from oat.data_module.field import Field
 from oat.data_module.field_spec import FieldConfig, FieldSpec, validate_field_config
 from oat.data_module.sources import Source, SourceInfo
@@ -182,3 +186,139 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         }
         coords_by_cs = {self.field_config.fields[n].coords: query_coords for n in names}
         return self._build_fields(coords_by_cs, index_by_field, idx, names)
+
+    # -- transforms --
+    def _sample_indices(
+        self, num_data_points: int, data_indices: Sequence[int] | None
+    ) -> list[int]:
+        if data_indices is not None:
+            pool = np.asarray(data_indices)
+            sel = torch.randperm(len(pool))[:num_data_points].numpy()
+            return [int(i) for i in pool[sel]]
+        sel = torch.randperm(len(self))[:num_data_points].numpy()
+        return [int(i) for i in sel]
+
+    def _obs_field_name(self) -> str:
+        return self.field_config.roles["target"]
+
+    def get_transform(
+        self, num_data_points: int, data_indices: Sequence[int] | None = None
+    ) -> tuple[T.NestedTransform, T.Transform]:
+        """Compute data-driven per-field transforms (log/offset + standardize).
+
+        Samples ``num_data_points`` items and gathers per-field running
+        statistics over ``Field.values``. The obs field (``roles["target"]``)
+        additionally gets a support-aware pre-transform — log (``real``) or a
+        zero-avoiding offset (``keep_support``) — applied before its stats are
+        gathered.
+
+        Returns:
+            ``(post_transform, output_transform)`` — ``post_transform``
+            standardizes every field's values (obs uses the composed
+            pre-transform + standardization); ``output_transform`` is that
+            same composed obs transform, usable standalone on obs-shaped
+            tensors (e.g. model outputs).
+        """
+        obs_name = self._obs_field_name()
+        obs_out = list(self.field_config.fields[obs_name].out)
+        offset = 1e-3
+        ttype = self.field_config.transform_type
+
+        # Build the obs pre-transform (applied before gathering obs stats).
+        obs_pre: T.Transform
+        if ttype == "real":
+            log_idx = [
+                i
+                for i in range(len(obs_out))
+                if self.obs_var_support.lower_bounds[i] >= 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            obs_pre = T.LogTransform(apply_to=log_idx, feature_dim=-1, offset=offset)
+        elif ttype == "keep_support":
+            # offset strictly-positive vars away from zero before standardizing
+            zero_lb = [
+                i
+                for i in range(len(obs_out))
+                if self.obs_var_support.lower_bounds[i] == 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            off = torch.zeros(len(obs_out))
+            off[zero_lb] = offset
+            obs_pre = T.TranslateScaleTransform(
+                off, torch.ones(len(obs_out)), channel_dim=-1
+            )
+        else:
+            raise ValueError(f"Unsupported transform_type {ttype!r}")
+
+        # Gather per-field stats over Field.values (obs stats after obs_pre).
+        stats = {
+            n: statistics.RunningFeatureStats(len(f.out), feature_dim=-1)
+            for n, f in self.field_config.fields.items()
+        }
+        for idx in self._sample_indices(num_data_points, data_indices):
+            fields = self[idx]["fields"]
+            for n, f in fields.items():
+                vals = obs_pre(f.values) if n == obs_name else f.values
+                stats[n].update(vals)
+
+        # Compose obs transform (+ output_transform), standardize the rest.
+        output_transform: T.Transform
+        if ttype == "real":
+            output_transform = T.ComposedTransform(
+                [obs_pre, stats[obs_name].get_standard_transform()]
+            )
+        else:
+            translate = -stats[obs_name].mean.clone()
+            only_scale = [
+                i
+                for i in range(len(obs_out))
+                if self.obs_var_support.lower_bounds[i] == 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            translate[only_scale] = 0.0
+            scale = 1.0 / stats[obs_name].std.clone()
+            output_transform = T.ComposedTransform(
+                [obs_pre, T.TranslateScaleTransform(translate, scale, channel_dim=-1)]
+            )
+
+        leaves: dict[str, T.Transform] = {}
+        for n in self.field_config.fields:
+            inner = (
+                output_transform if n == obs_name else stats[n].get_standard_transform()
+            )
+            leaves[n] = T.FieldValueTransform(inner)
+        post_transform = T.NestedTransform({"fields": leaves})
+        return post_transform, output_transform
+
+    def get_baseline_pre_transform(
+        self,
+        nwp_field: str,
+        obs_to_nwp: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]],
+    ) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        """Return a closure mapping an NWP field's values to obs-unit channels.
+
+        The named ``nwp_field``'s ``[N, C]`` values are replaced (channel
+        order = the obs field's ``out``) by applying, per obs channel, the
+        mapping function on a name -> column dict of the NWP field's
+        channels. Used to build an NWP-only baseline prediction in obs units.
+        """
+        nwp_vars = list(self.field_config.fields[nwp_field].out)
+        obs_out = list(self.field_config.fields[self._obs_field_name()].out)
+        for ov in obs_out:
+            if ov not in obs_to_nwp:
+                raise ValueError(f"no NWP mapping for obs var {ov!r}")
+            missing = [d for d in obs_to_nwp[ov][0] if d not in nwp_vars]
+            if missing:
+                raise ValueError(
+                    f"NWP deps {missing} for {ov!r} not in field {nwp_field!r}"
+                )
+
+        def _pre(sample: dict[str, Any]) -> dict[str, Any]:
+            fields = dict(sample["fields"])
+            f = fields[nwp_field]
+            nwp = {v: f.values[..., i] for i, v in enumerate(nwp_vars)}
+            new_vals = torch.stack([obs_to_nwp[ov][1](nwp) for ov in obs_out], dim=-1)
+            fields[nwp_field] = Field(f.coords, new_vals, obs_out, f.mask)
+            return {**sample, "fields": fields}
+
+        return _pre
