@@ -1,4 +1,5 @@
 from typing import Any
+import pickle
 
 import pandas as pd
 import pytest
@@ -158,3 +159,19 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = OmegaConf.create({"dataset": {"dataset_type": "field_cosmo_peakweather"}})
     S.setup_data_and_transform(cfg, logging.getLogger("t"))
     assert called["hit"] == "field_cosmo_peakweather"
+
+
+def test_obs_source_callables_are_picklable() -> None:
+    from oat.data_module.field_cosmo_peakweather_dataset import (
+        FieldCosmoPeakWeatherDataset,
+    )
+
+    from oat.data_module.field_era5_meteostat_dataset import (
+        FieldERA5MeteostatDataset,
+    )
+
+    # bound-method sentinel: the methods exist and are not lambdas
+    for cls in (FieldCosmoPeakWeatherDataset, FieldERA5MeteostatDataset):
+        assert hasattr(cls, "_obs_values") and hasattr(cls, "_obs_mask")
+        assert cls._obs_values.__name__ == "_obs_values"
+        assert cls._obs_mask.__name__ == "_obs_mask"

@@ -267,13 +267,23 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
         # Free the big obs DataFrame; obs_tensor is already in shared memory.
         self.obs_ds._obs = None
 
+    def _obs_values(self, t: int) -> Tensor:
+        return self.obs_tensor[t].T.nan_to_num(nan=0.0)
+
+    def _obs_mask(self, t: int) -> Tensor:
+        return self.obs_mask_tensor[t].T
+
     def _build_obs_source(self) -> PointSetSource:
+        # Note: full spawn-DDP picklability of open zarr/anemoi handles is
+        # pre-existing (shared with the old ERA5MeteostatDataset) and out
+        # of scope; this task only removes the newly-introduced lambda
+        # unpicklability.
         units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}
         return PointSetSource(
             self.station_coords,
             self._obs_vars,
-            values_fn=lambda t: self.obs_tensor[t].T.nan_to_num(nan=0.0),
-            mask_fn=lambda t: self.obs_mask_tensor[t].T,
+            values_fn=self._obs_values,
+            mask_fn=self._obs_mask,
             units=units,
             native_coord_source="stations",
         )
