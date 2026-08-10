@@ -17,9 +17,16 @@ def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
         return ERA5MeteostatDataset(cfg.dataset)
     if dataset_type == "cosmo_peakweather":
         return CosmoPeakWeatherDataset(cfg.dataset)
+    if dataset_type == "field_cosmo_peakweather":
+        from oat.data_module.field_cosmo_peakweather_dataset import (
+            FieldCosmoPeakWeatherDataset,
+        )
+
+        return FieldCosmoPeakWeatherDataset(cfg.dataset)
     raise ValueError(
         f"Unknown dataset_type: {dataset_type!r}. "
-        "Supported: 'cosmo_peakweather', 'era5_meteostat'."
+        "Supported: 'cosmo_peakweather', 'era5_meteostat', "
+        "'field_cosmo_peakweather'."
     )
 
 

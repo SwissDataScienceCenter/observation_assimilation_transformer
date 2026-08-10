@@ -1,0 +1,7 @@
+defaults:
+  - field_settings@_here_
+  - _self_
+
+fields:
+  obs: {coords: stations, inputs: [obs.temperature]}
+  nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G], query: true}
