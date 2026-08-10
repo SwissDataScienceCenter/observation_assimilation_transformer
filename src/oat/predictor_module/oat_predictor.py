@@ -2,13 +2,16 @@ from typing import Any, Dict, Literal, Type, Optional, List
 from importlib import import_module
 import logging
 
+import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
+from oat.data_module.field import Field
 from oat.model_module import model
 from oat.model_module.model import (
     OATConfig,
@@ -22,12 +25,66 @@ from oat.data_module.transform import Transform
 from oat.data_module.support import VariableSupport
 from oat.predictor_module.base_predictor import BasePredictor
 from oat.predictor_module.functional_metrics import (
-    sample_mae, 
+    sample_mae,
     point_mae,
     mc_crps
 )
 
 logger = logging.getLogger(__name__)
+
+_EPOCH = pd.Timestamp("1970-01-01T00:00:00", tz="UTC")
+
+
+def _time_embedding_from_epoch_hours(t_hours: torch.Tensor) -> torch.Tensor:
+    """Reconstruct the sin/cos day+year time embedding from epoch hours.
+
+    Mirrors ``cosmo_peakweather_dataset._get_time_embedding``.
+    """
+    embs = []
+    for th in t_hours.reshape(-1).tolist():
+        dt = _EPOCH + pd.Timedelta(hours=float(th))
+        seconds = dt.hour * 3600 + dt.minute * 60 + dt.second
+        day_angle = 2 * np.pi * seconds / 86400
+        doy = dt.dayofyear + seconds / 86400
+        year_angle = 2 * np.pi * doy / 365.2425
+        embs.append(
+            [
+                np.sin(day_angle),
+                np.cos(day_angle),
+                np.sin(year_angle),
+                np.cos(year_angle),
+            ]
+        )
+    dtype = t_hours.dtype if t_hours.is_floating_point() else torch.float32
+    return torch.tensor(embs, dtype=dtype, device=t_hours.device)
+
+
+def _unwrap_fields_to_model_batch(
+    batch: dict[str, Any], roles: dict[str, str], requires_observation: bool
+) -> dict[str, Any]:
+    """Unwrap a field-collated batch into the shapes expected by the OAT model."""
+
+    def grp(group: str) -> dict[str, torch.Tensor]:
+        f = batch[group]["fields"]
+        obs = f[roles["target"]]
+        return {
+            "coords": obs.spatial_coords,
+            "geo": f[roles["geo_bias"]].values,
+            "topo": f[roles["topo"]].values,
+            "obs": obs.values,
+            "mask_obs": obs.mask,
+            "global_tokens": f[roles["global"]].values,
+        }
+
+    t_hours = batch["observation_data"]["fields"][roles["target"]].coords[:, 0, 2]
+    out: dict[str, Any] = {
+        "global_data": {"time_emb": _time_embedding_from_epoch_hours(t_hours)},
+        "query_data": grp("query_data"),
+    }
+    if requires_observation:
+        out["observation_data"] = grp("observation_data")
+    return out
+
 
 class OATPredictor(BasePredictor):
     
@@ -103,10 +160,13 @@ class OATPredictor(BasePredictor):
                  lr_scheduler_params: Optional[dict] = None,
                  oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
                  oat_loss_scheduler_params:  Optional[dict]  = None,
+                 field_roles: dict | None = None,
                  ):
         super().__init__(output_var_names=output_var_names)
 
         self.save_hyperparameters()
+
+        self.field_roles = field_roles
 
         self.optimizer_class = optimizer_class
         self.optimizer_params = {"lr": lr, **(optimizer_params or {})}
@@ -233,8 +293,37 @@ class OATPredictor(BasePredictor):
             
             self.log("pre_oat_loss_weight", oat_weight, prog_bar=False, on_step=True, on_epoch=False)
 
+    def transfer_batch_to_device(
+        self, batch: Any, device: torch.device, dataloader_idx: int
+    ) -> Any:
+        if self.field_roles is None:
+            return super().transfer_batch_to_device(batch, device, dataloader_idx)
+
+        def mv(f: Field) -> Field:
+            return Field(
+                f.coords.to(device),
+                f.values.to(device),
+                f.var_names,
+                f.mask.to(device) if f.mask is not None else None,
+            )
+
+        out = {}
+        for k, v in batch.items():
+            if isinstance(v, dict) and "fields" in v:
+                out[k] = {"fields": {n: mv(f) for n, f in v["fields"].items()}}
+            elif torch.is_tensor(v):
+                out[k] = v.to(device)
+            else:
+                out[k] = v
+        return out
+
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        return self.input_transform(batch)
+        batch = self.input_transform(batch)
+        if self.field_roles is not None:
+            batch = _unwrap_fields_to_model_batch(
+                batch, self.field_roles, self.model.requires_observation
+            )
+        return batch
 
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -490,6 +579,8 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
+    if model_cfg.global_encoder.type == "Point":
+        global_input_chans = len(data_cfg.nwp_vars)
     d_model = model_cfg.d_model
     global_encoder_cfg = model.GlobalEncoderConfig(
         **model_cfg.global_encoder,
@@ -629,6 +720,11 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         oat_loss_sched_cls = None
         oat_loss_sched_params = None
 
+    field_roles = (
+        OmegaConf.to_container(cfg.dataset.roles, resolve=True)
+        if "roles" in cfg.dataset
+        else None
+    )
 
     predictor = OATPredictor(
         oat_model_cfg=model_cfg,
@@ -641,7 +737,8 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         lr_scheduler_class=sched_cls,
         lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
         oat_loss_scheduler_class=oat_loss_sched_cls,
-        oat_loss_scheduler_params=oat_loss_sched_params
+        oat_loss_scheduler_params=oat_loss_sched_params,
+        field_roles=field_roles
     )
 
     return predictor
