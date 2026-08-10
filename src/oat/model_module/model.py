@@ -328,9 +328,18 @@ class UninformedOAT(nn.Module):
                     "max": torch.tensor(config.global_encoder.field_extent_max),
                 },
             )
+        elif config.global_encoder.type == "Point":
+            return global_encoder.PointGlobalEncoder(
+                mlp_params={
+                    "in_channels": config.global_encoder.in_channels,
+                    "out_channels": config.global_encoder.out_channels,
+                    "hidden_dims": config.global_encoder.hidden_dims,
+                    "act_fn": config.global_encoder.act_fn,
+                },
+            )
 
         raise ValueError(
-            f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', and 'ResNetCNN'."
+            f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', 'ResNetCNN', and 'Point'."
         )
 
     def _init_output_head(self, config):
