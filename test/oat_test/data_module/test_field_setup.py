@@ -1,5 +1,5 @@
-from typing import Any
 import pickle
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -162,16 +162,23 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_obs_source_callables_are_picklable() -> None:
+    import types
+
     from oat.data_module.field_cosmo_peakweather_dataset import (
         FieldCosmoPeakWeatherDataset,
     )
-
     from oat.data_module.field_era5_meteostat_dataset import (
         FieldERA5MeteostatDataset,
     )
 
-    # bound-method sentinel: the methods exist and are not lambdas
+    # bound-method sentinel: the methods exist and are not lambdas.
+    # lambdas cannot be pickled; bound methods can be if their instance is.
     for cls in (FieldCosmoPeakWeatherDataset, FieldERA5MeteostatDataset):
         assert hasattr(cls, "_obs_values") and hasattr(cls, "_obs_mask")
         assert cls._obs_values.__name__ == "_obs_values"
         assert cls._obs_mask.__name__ == "_obs_mask"
+        # verify they are functions (not lambdas)
+        assert isinstance(cls._obs_values, types.FunctionType)
+        assert not cls._obs_values.__name__.startswith("<lambda>")
+        # verify pickling the method's class is possible (lambdas would fail)
+        pickle.dumps(cls)
