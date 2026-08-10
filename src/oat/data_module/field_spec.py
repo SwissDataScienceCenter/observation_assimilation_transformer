@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 _COORD_AXES = ("x", "y", "t")
 
@@ -43,11 +44,13 @@ class FieldConfig:
 def parse_input_ref(ref: str) -> InputRef:
     parts = str(ref).split(".")
     if len(parts) != 2:
-        raise ValueError(f"input ref must be '<source>.<var>' or 'coords.<axis>', got {ref!r}")
+        msg = f"input ref must be '<source>.<var>' or 'coords.<axis>', got {ref!r}"
+        raise ValueError(msg)
     head, tail = parts
     if head == "coords":
         if tail not in _COORD_AXES:
-            raise ValueError(f"coords axis must be one of {_COORD_AXES}, got {tail!r}")
+            msg = f"coords axis must be one of {_COORD_AXES}, got {tail!r}"
+            raise ValueError(msg)
         return InputRef(kind="coord", source=None, name=tail)
     return InputRef(kind="source", source=head, name=tail)
 
@@ -58,21 +61,33 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
         spec = dict(spec)
         kind = spec["from"]
         if kind not in ("obs", "nwp", "regular"):
-            raise ValueError(f"coord source {name!r} has unknown 'from': {kind!r}")
+            msg = f"coord source {name!r} has unknown 'from': {kind!r}"
+            raise ValueError(msg)
         extent = spec.get("extent")
+        parsed_extent: tuple[float, float, float, float] | None = None
+        if extent is not None:
+            parsed_extent = (
+                float(extent[0]),
+                float(extent[1]),
+                float(extent[2]),
+                float(extent[3]),
+            )
         coord_sources[name] = CoordSourceSpec(
             name=name,
             kind=kind,
             res=float(spec["res"]) if spec.get("res") is not None else None,
-            extent=tuple(float(v) for v in extent) if extent is not None else None,
+            extent=parsed_extent,
         )
 
     fields: dict[str, FieldSpec] = {}
     for name, spec in dict(cfg["fields"]).items():
         spec = dict(spec)
         inputs = tuple(parse_input_ref(r) for r in spec["inputs"])
-        out = spec.get("out")
-        out = tuple(str(o) for o in out) if out is not None else tuple(r.name for r in inputs)
+        out_spec = spec.get("out")
+        if out_spec is not None:
+            out = tuple(str(o) for o in out_spec)
+        else:
+            out = tuple(r.name for r in inputs)
         fields[name] = FieldSpec(
             name=name,
             coords=spec["coords"],

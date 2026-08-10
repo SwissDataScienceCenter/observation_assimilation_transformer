@@ -1,22 +1,27 @@
 import pytest
+
 from oat.data_module.field_spec import (
-    InputRef, FieldSpec, CoordSourceSpec, FieldConfig,
-    parse_input_ref, parse_field_config,
+    CoordSourceSpec,
+    InputRef,
+    parse_field_config,
+    parse_input_ref,
 )
 
 
 def test_parse_input_ref_source_and_coord():
-    assert parse_input_ref("nwp.T_2M") == InputRef(kind="source", source="nwp", name="T_2M")
+    assert parse_input_ref("nwp.T_2M") == InputRef(
+        kind="source", source="nwp", name="T_2M"
+    )
     assert parse_input_ref("coords.x") == InputRef(kind="coord", source=None, name="x")
 
 
 def test_parse_input_ref_rejects_bad_axis_and_shape():
     with pytest.raises(ValueError):
-        parse_input_ref("coords.q")        # not x/y/t
+        parse_input_ref("coords.q")  # not x/y/t
     with pytest.raises(ValueError):
-        parse_input_ref("nwp")             # missing dotted var
+        parse_input_ref("nwp")  # missing dotted var
     with pytest.raises(ValueError):
-        parse_input_ref("a.b.c")           # too many parts
+        parse_input_ref("a.b.c")  # too many parts
 
 
 def test_parse_field_config_full():
@@ -27,10 +32,18 @@ def test_parse_field_config_full():
             "grid_1km": {"from": "regular", "res": 1000},
         },
         "fields": {
-            "obs":  {"coords": "stations", "inputs": ["obs.temperature"]},
-            "nwp":  {"coords": "stations", "inputs": ["nwp.T_2M", "nwp.wind_speed"], "query": True},
-            "geo":  {"coords": "stations", "inputs": ["coords.x", "coords.y", "topo.DEM"],
-                     "out": ["easting", "northing", "dem"], "query": True},
+            "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+            "nwp": {
+                "coords": "stations",
+                "inputs": ["nwp.T_2M", "nwp.wind_speed"],
+                "query": True,
+            },
+            "geo": {
+                "coords": "stations",
+                "inputs": ["coords.x", "coords.y", "topo.DEM"],
+                "out": ["easting", "northing", "dem"],
+                "query": True,
+            },
         },
         "roles": {"target": "obs"},
         "transform_type": "real",
@@ -43,6 +56,8 @@ def test_parse_field_config_full():
     # out defaults to input leaf names when omitted
     assert fc.fields["nwp"].out == ("T_2M", "wind_speed")
     assert fc.fields["nwp"].query is True
-    assert fc.fields["obs"].query is False              # default
+    assert fc.fields["obs"].query is False  # default
     assert fc.fields["geo"].out == ("easting", "northing", "dem")
-    assert fc.fields["geo"].inputs[2] == InputRef(kind="source", source="topo", name="DEM")
+    assert fc.fields["geo"].inputs[2] == InputRef(
+        kind="source", source="topo", name="DEM"
+    )
