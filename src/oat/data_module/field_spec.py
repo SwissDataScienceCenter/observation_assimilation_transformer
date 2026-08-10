@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from oat.data_module.sources import SourceInfo
+
 _COORD_AXES = ("x", "y", "t")
 
 
@@ -103,3 +105,73 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
         roles=roles,
         transform_type=str(cfg["transform_type"]),
     )
+
+
+def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> None:
+    masked_sources = {name for name, s in sources.items() if s.has_mask}
+
+    for fname, field in cfg.fields.items():
+        if not fname:
+            raise ValueError("field names must be non-empty")
+        if field.coords not in cfg.coord_sources:
+            raise ValueError(
+                f"field {fname!r} uses unknown coord source {field.coords!r}"
+            )
+        for ref in field.inputs:
+            if ref.kind == "coord":
+                if ref.name not in ("x", "y", "t"):
+                    raise ValueError(
+                        f"field {fname!r} has bad coords axis {ref.name!r}"
+                    )
+            else:
+                if ref.source not in sources:
+                    raise ValueError(
+                        f"field {fname!r} refers to unknown source {ref.source!r}"
+                    )
+                if ref.name not in sources[ref.source].available_vars:
+                    raise ValueError(
+                        f"field {fname!r}: var {ref.name!r} "
+                        f"not in source {ref.source!r}"
+                    )
+        if len(field.out) != len(field.inputs):
+            raise ValueError(
+                f"field {fname!r}: out has {len(field.out)} names "
+                f"for {len(field.inputs)} inputs"
+            )
+        if len(set(field.out)) != len(field.out):
+            raise ValueError(
+                f"field {fname!r}: output channel names must be unique: {field.out}"
+            )
+
+        used_masked = {
+            r.source
+            for r in field.inputs
+            if r.kind == "source" and r.source in masked_sources
+        }
+        if used_masked:
+            only_that_source = all(
+                r.kind == "source" and r.source in used_masked for r in field.inputs
+            )
+            if len(used_masked) != 1 or not only_that_source:
+                raise ValueError(
+                    f"field {fname!r} may not mix masked-source inputs "
+                    f"with other inputs"
+                )
+
+    for role, target in cfg.roles.items():
+        if target not in cfg.fields:
+            raise ValueError(f"role {role!r} names undeclared field {target!r}")
+
+    target_field = cfg.roles.get("target")
+    if target_field is not None:
+        inputs = cfg.fields[target_field].inputs
+        srcs = {r.source for r in inputs if r.kind == "source"}
+        if not (
+            len(srcs) == 1
+            and next(iter(srcs)) in masked_sources
+            and all(r.kind == "source" for r in inputs)
+        ):
+            raise ValueError(
+                f"roles.target {target_field!r} must be the obs field "
+                f"(masked source only)"
+            )
