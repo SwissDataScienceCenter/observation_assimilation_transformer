@@ -1,5 +1,5 @@
 defaults:
-  - field_settings@_here_
+  - cosmo_peakweather/field_settings@_here_
   - _self_
 
 fields:
