@@ -53,6 +53,9 @@ class TopographicEncoderConfig:
     kernel_sizes: int = 3
     act_fn: str = "GELU"
     use_batchnorm: bool = True
+    type: str = "CNN"
+    hidden_dims: tuple[int, ...] = ()
+    use_layernorm: bool = False
 
 
 @dataclass
@@ -231,15 +234,7 @@ class UninformedOAT(nn.Module):
         d_topo = config.topographic_encoder.out_channels
 
         self.global_encoder = self._init_global_encoder(config=config)
-        self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(
-            in_channels=config.topographic_encoder.in_channels,
-            out_channels=config.topographic_encoder.out_channels,
-            n_layers=config.topographic_encoder.n_layers,
-            initial_hw=config.topographic_encoder.initial_hw,
-            kernel_sizes=config.topographic_encoder.kernel_sizes,
-            act_fn=config.topographic_encoder.act_fn,
-            use_batchnorm=config.topographic_encoder.use_batchnorm,
-        )
+        self.topographic_encoder = self._init_topographic_encoder(config=config)
         self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
             in_channels=[d_global, d_topo],
             out_channels=config.nwp_topo_fusion.out_channels,
@@ -341,6 +336,28 @@ class UninformedOAT(nn.Module):
         raise ValueError(
             f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', 'ResNetCNN', and 'Point'."
         )
+
+    def _init_topographic_encoder(self, config):
+        tc = config.topographic_encoder
+        if getattr(tc, "type", "CNN") == "CNN":
+            return topographic_encoder.CNNTopographyEncoder(
+                in_channels=tc.in_channels,
+                out_channels=tc.out_channels,
+                n_layers=tc.n_layers,
+                initial_hw=tc.initial_hw,
+                kernel_sizes=tc.kernel_sizes,
+                act_fn=tc.act_fn,
+                use_batchnorm=tc.use_batchnorm,
+            )
+        if tc.type == "MLP":
+            return topographic_encoder.MLPTopographyEncoder(
+                in_channels=tc.in_channels,
+                out_channels=tc.out_channels,
+                hidden_dims=tc.hidden_dims,
+                act_fn=tc.act_fn,
+                use_layernorm=tc.use_layernorm,
+            )
+        raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
 
     def _init_output_head(self, config):
 

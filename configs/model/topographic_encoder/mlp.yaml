@@ -1,0 +1,5 @@
+# in_channels: len(topo_vars) at runtime; out_channels: d_model // 2 at runtime
+type: MLP
+hidden_dims: []
+act_fn: GELU
+use_layernorm: false
