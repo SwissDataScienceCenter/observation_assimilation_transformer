@@ -47,6 +47,10 @@ def nearest_read(
     Distance uses only the spatial ``(x, y)`` columns; the ``t`` column is ignored.
     ``field.values`` is ``[N, C]`` or ``[B, N, C]``; ``dst_coords`` is ``[M, D]`` or
     ``[B, M, D]``. Returns ``[M, C]`` / ``[B, M, C]`` on ``field.values.device``.
+
+    When ``field`` is batched, its source ``coords`` must be identical across the
+    batch: the nearest-neighbour index is built from batch element 0 and reused for
+    every element.
     """
     _check_distance(distance)
     if index is None:
