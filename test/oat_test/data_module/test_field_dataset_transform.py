@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch
 
@@ -91,6 +92,24 @@ def test_get_transform_keep_support_offsets_only_strictly_positive_var():
     obs_vals = sample["fields"]["obs"].values
     normed = output(obs_vals)
     assert torch.allclose(output.inverse(normed), obs_vals, atol=1e-4)
+
+
+def test_target_point_indices_restricts_stats() -> None:
+    ds, _ = _build_dataset()  # existing helper: obs field on 'stations' coord source
+    inner_all, _ = ds.compute_field_leaves(num_data_points=len(ds))
+    inner_sub, _ = ds.compute_field_leaves(
+        num_data_points=len(ds), target_point_indices=np.array([0])
+    )
+    # restricting to station 0 changes the obs standardization stats
+    obs_name = ds.field_config.roles["target"]
+    assert inner_all[obs_name].to_dict() != inner_sub[obs_name].to_dict()
+
+
+def test_nwp_extent_and_target_coord_source() -> None:
+    ds, _ = _build_dataset()
+    ext = ds.nwp_extent
+    assert set(ext) == {"min", "max"} and ext["min"].shape == (2,)
+    assert ds.target_coord_source() == "stations"
 
 
 def test_baseline_pre_transform_maps_nwp_to_obs_units():

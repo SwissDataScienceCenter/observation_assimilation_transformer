@@ -201,30 +201,21 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
     def _obs_field_name(self) -> str:
         return self.field_config.roles["target"]
 
-    def get_transform(
-        self, num_data_points: int, data_indices: Sequence[int] | None = None
-    ) -> tuple[T.NestedTransform, T.Transform]:
-        """Compute data-driven per-field transforms (log/offset + standardize).
+    def target_coord_source(self) -> str:
+        return self.field_config.fields[self.field_config.roles["target"]].coords
 
-        Samples ``num_data_points`` items and gathers per-field running
-        statistics over ``Field.values``. The obs field (``roles["target"]``)
-        additionally gets a support-aware pre-transform — log (``real``) or a
-        zero-avoiding offset (``keep_support``) — applied before its stats are
-        gathered.
+    @property
+    def nwp_extent(self) -> dict[str, Tensor]:
+        for name, spec in self.field_config.coord_sources.items():
+            if spec.kind == "nwp":
+                xy = self._coords[name][:, :2]
+                return {"min": xy.amin(dim=0), "max": xy.amax(dim=0)}
+        raise ValueError("no coord source of kind 'nwp' to derive nwp_extent from")
 
-        Returns:
-            ``(post_transform, output_transform)`` — ``post_transform``
-            standardizes every field's values (obs uses the composed
-            pre-transform + standardization); ``output_transform`` is that
-            same composed obs transform, usable standalone on obs-shaped
-            tensors (e.g. model outputs).
-        """
-        obs_name = self._obs_field_name()
-        obs_out = list(self.field_config.fields[obs_name].out)
-        offset = 1e-3
-        ttype = self.field_config.transform_type
-
-        # Build the obs pre-transform (applied before gathering obs stats).
+    def _build_obs_pre(
+        self, obs_out: list[str], ttype: str, offset: float
+    ) -> T.Transform:
+        """Build the obs pre-transform (applied before gathering obs stats)."""
         obs_pre: T.Transform
         if ttype == "real":
             log_idx = [
@@ -250,6 +241,76 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
             )
         else:
             raise ValueError(f"Unsupported transform_type {ttype!r}")
+        return obs_pre
+
+    def _compose_output_transform(
+        self,
+        obs_pre: T.Transform,
+        obs_stats: statistics.RunningFeatureStats,
+        obs_out: list[str],
+        ttype: str,
+    ) -> T.Transform:
+        """Compose obs transform (+ output_transform) from obs_pre + gathered stats."""
+        output_transform: T.Transform
+        if ttype == "real":
+            output_transform = T.ComposedTransform(
+                [obs_pre, obs_stats.get_standard_transform()]
+            )
+        else:
+            translate = -obs_stats.mean.clone()
+            only_scale = [
+                i
+                for i in range(len(obs_out))
+                if self.obs_var_support.lower_bounds[i] == 0.0
+                and self.obs_var_support.upper_bounds[i] == float("inf")
+            ]
+            translate[only_scale] = 0.0
+            scale = 1.0 / obs_stats.std.clone()
+            output_transform = T.ComposedTransform(
+                [obs_pre, T.TranslateScaleTransform(translate, scale, channel_dim=-1)]
+            )
+        return output_transform
+
+    def compute_field_leaves(
+        self,
+        num_data_points: int,
+        data_indices: Sequence[int] | None = None,
+        target_point_indices: Sequence[int] | None = None,
+    ) -> tuple[dict[str, T.Transform], T.Transform]:
+        """Gather per-field running stats and compose the obs output transform.
+
+        Samples ``num_data_points`` items and gathers per-field running
+        statistics over ``Field.values``. The obs field (``roles["target"]``)
+        additionally gets a support-aware pre-transform — log (``real``) or a
+        zero-avoiding offset (``keep_support``) — applied before its stats are
+        gathered.
+
+        If ``target_point_indices`` is given, every field whose coord source
+        matches ``target_coord_source()`` (i.e. the obs field's coord source)
+        is sliced to those point indices before its stats are updated — this
+        restricts the stats scope to e.g. train-only stations, closing a
+        leakage bug where val/test stations contributed to the fit.
+
+        Returns:
+            ``(inner_by_field, output_transform)`` — ``inner_by_field`` maps
+            each field name to its (un-nested) inner transform: the obs field
+            maps to ``output_transform`` itself, every other field maps to its
+            plain standardization transform. ``output_transform`` is the
+            composed obs transform, usable standalone on obs-shaped tensors
+            (e.g. model outputs).
+        """
+        obs_name = self._obs_field_name()
+        obs_out = list(self.field_config.fields[obs_name].out)
+        offset = 1e-3
+        ttype = self.field_config.transform_type
+        obs_pre = self._build_obs_pre(obs_out, ttype, offset)
+
+        tcs = self.target_coord_source()
+        tgt_idx = (
+            None
+            if target_point_indices is None
+            else torch.as_tensor(list(target_point_indices), dtype=torch.long)
+        )
 
         # Gather per-field stats over Field.values (obs stats after obs_pre).
         stats = {
@@ -259,35 +320,44 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         for idx in self._sample_indices(num_data_points, data_indices):
             fields = self[idx]["fields"]
             for n, f in fields.items():
-                vals = obs_pre(f.values) if n == obs_name else f.values
+                vals = f.values
+                if tgt_idx is not None and self.field_config.fields[n].coords == tcs:
+                    vals = vals[tgt_idx]
+                vals = obs_pre(vals) if n == obs_name else vals
                 stats[n].update(vals)
 
-        # Compose obs transform (+ output_transform), standardize the rest.
-        output_transform: T.Transform
-        if ttype == "real":
-            output_transform = T.ComposedTransform(
-                [obs_pre, stats[obs_name].get_standard_transform()]
-            )
-        else:
-            translate = -stats[obs_name].mean.clone()
-            only_scale = [
-                i
-                for i in range(len(obs_out))
-                if self.obs_var_support.lower_bounds[i] == 0.0
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            translate[only_scale] = 0.0
-            scale = 1.0 / stats[obs_name].std.clone()
-            output_transform = T.ComposedTransform(
-                [obs_pre, T.TranslateScaleTransform(translate, scale, channel_dim=-1)]
-            )
-
-        leaves: dict[str, T.Transform] = {}
+        output_transform = self._compose_output_transform(
+            obs_pre, stats[obs_name], obs_out, ttype
+        )
+        inner: dict[str, T.Transform] = {}
         for n in self.field_config.fields:
-            inner = (
+            inner[n] = (
                 output_transform if n == obs_name else stats[n].get_standard_transform()
             )
-            leaves[n] = T.FieldValueTransform(inner)
+        return inner, output_transform
+
+    def get_transform(
+        self,
+        num_data_points: int,
+        data_indices: Sequence[int] | None = None,
+        target_point_indices: Sequence[int] | None = None,
+    ) -> tuple[T.NestedTransform, T.Transform]:
+        """Compute data-driven per-field transforms (log/offset + standardize).
+
+        Delegates to :meth:`compute_field_leaves` — see there for the stats
+        gathering (and optional ``target_point_indices`` scoping) details.
+
+        Returns:
+            ``(post_transform, output_transform)`` — ``post_transform``
+            standardizes every field's values (obs uses the composed
+            pre-transform + standardization); ``output_transform`` is that
+            same composed obs transform, usable standalone on obs-shaped
+            tensors (e.g. model outputs).
+        """
+        inner, output_transform = self.compute_field_leaves(
+            num_data_points, data_indices, target_point_indices
+        )
+        leaves = {n: T.FieldValueTransform(inner[n]) for n in inner}
         post_transform = T.NestedTransform({"fields": leaves})
         return post_transform, output_transform
 
