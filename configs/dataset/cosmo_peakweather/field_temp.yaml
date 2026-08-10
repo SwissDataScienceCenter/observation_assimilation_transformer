@@ -2,6 +2,13 @@ defaults:
   - cosmo_peakweather/field_settings@_here_
   - _self_
 
+nwp_vars: [T_2M, T_G]
+
+obs_vars: [temperature]
+
+obs_variable_to_distribution:
+  temperature: normal
+
 fields:
   obs: {coords: stations, inputs: [obs.temperature]}
   nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G], query: true}

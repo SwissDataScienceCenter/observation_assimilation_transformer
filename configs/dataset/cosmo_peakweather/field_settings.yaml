@@ -20,6 +20,7 @@ fields:
 
 roles:
   target: obs
+  global: nwp
   geo_bias: geo
   topo: topo
 
