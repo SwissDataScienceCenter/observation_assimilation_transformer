@@ -234,7 +234,7 @@ class PointGlobalEncoder(BaseGlobalEncoder):
     No grid_sample, no field_extent, no global_field.
     """
 
-    def __init__(self, *, mlp_params: Dict[str, Any], **kwargs: Any) -> None:
+    def __init__(self, *, mlp_params: dict[str, Any], **kwargs: Any) -> None:
         super().__init__()
         in_dim = mlp_params['in_channels']
         out_dim = mlp_params['out_channels']
@@ -249,5 +249,7 @@ class PointGlobalEncoder(BaseGlobalEncoder):
         layers.append(torch.nn.Linear(d, out_dim))
         self.model = torch.nn.Sequential(*layers)
 
-    def forward(self, global_data: Dict[str, Any], local_data: Dict[str, Any]) -> torch.Tensor:
+    def forward(
+        self, global_data: dict[str, Any], local_data: dict[str, Any]
+    ) -> torch.Tensor:
         return self.model(local_data['global_tokens'])
