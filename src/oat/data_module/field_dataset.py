@@ -235,11 +235,12 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
             ]
             obs_pre = T.LogTransform(apply_to=log_idx, feature_dim=-1, offset=offset)
         elif ttype == "keep_support":
-            # offset strictly-positive vars away from zero before standardizing
+            # offset STRICTLY-positive (open-lower-bound) vars away from zero
             zero_lb = [
                 i
                 for i in range(len(obs_out))
                 if self.obs_var_support.lower_bounds[i] == 0.0
+                and bool(self.obs_var_support.lower_open[i])
                 and self.obs_var_support.upper_bounds[i] == float("inf")
             ]
             off = torch.zeros(len(obs_out))
