@@ -164,6 +164,78 @@ def test_plot_timeseries_draws_line_and_band():
     plt.close(fig)
 
 
+def test_plot_timeseries_forwards_stage_to_inference():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(1, 10, 2)
+    with patch.object(
+        plotter, "_run_inference", return_value=fixed_samples
+    ) as mock_inf:
+        plotter.plot_timeseries(
+            ax=ax,
+            center=(8.0, 47.0),
+            var="temp",
+            time_indices=[0, 1],
+            stage="pre_oat",
+        )
+
+    assert mock_inf.call_count == 2
+    for call in mock_inf.call_args_list:
+        assert call.kwargs["stage"] == "pre_oat"
+    plt.close(fig)
+
+
+def test_plot_timeseries_label_and_color_apply_to_line_and_band():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=5, n_times=4)
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(1, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        plotter.plot_timeseries(
+            ax=ax,
+            center=(8.0, 47.0),
+            var="temp",
+            time_indices=[0, 1],
+            label="Pre-OAT",
+            color="tab:orange",
+        )
+
+    assert ax.lines[0].get_label() == "Pre-OAT"
+    # The band must share the line's colour, otherwise two stages drawn on one
+    # axes cannot be told apart.
+    assert ax.collections[0].get_label().startswith("Pre-OAT")
+    band_rgba = ax.collections[0].get_facecolor()[0]
+    assert np.allclose(
+        band_rgba[:3], matplotlib.colors.to_rgb("tab:orange"), atol=1e-6
+    )
+    plt.close(fig)
+
+
+def test_plot_timeseries_at_station_can_suppress_observations():
+    predictor = _make_predictor(N_q=1, n_samples=10)
+    dataset = _make_dataset(n_stations=3, n_times=4, n_vars=2)
+    dataset.station_coords = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1, 2])
+
+    fig, ax = plt.subplots()
+    with patch.object(plotter, "plot_timeseries"):
+        plotter.plot_timeseries_at_station(
+            ax=ax,
+            station_idx=1,
+            var="temp",
+            time_indices=[0, 1, 2, 3],
+            show_observations=False,
+        )
+
+    assert not ax.collections, "Observations should not be scattered"
+    plt.close(fig)
+
+
 def _spatial_plotter(extent=0.4, resolution=0.2):
     """Returns a plotter where _run_inference is patched to the right N_q."""
     # With extent=0.4, resolution=0.2:
@@ -296,6 +368,9 @@ def test_plot_timeseries_at_station_delegates_to_plot_timeseries():
         quantile_lo=0.05,
         quantile_hi=0.95,
         predictors=None,
+        stage="oat",
+        label=None,
+        color=None,
     )
     plt.close(fig)
 
