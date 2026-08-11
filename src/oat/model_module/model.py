@@ -211,6 +211,31 @@ class UninformedOATConfig:
         )
 
 
+def build_topographic_encoder(
+    tc: TopographicEncoderConfig,
+) -> topographic_encoder.TopographyEncoder:
+    """Dispatch to CNN (grid patches) or MLP (flat field values) by ``tc.type``."""
+    if getattr(tc, "type", "CNN") == "CNN":
+        return topographic_encoder.CNNTopographyEncoder(
+            in_channels=tc.in_channels,
+            out_channels=tc.out_channels,
+            n_layers=tc.n_layers,
+            initial_hw=tc.initial_hw,
+            kernel_sizes=tc.kernel_sizes,
+            act_fn=tc.act_fn,
+            use_batchnorm=tc.use_batchnorm,
+        )
+    if tc.type == "MLP":
+        return topographic_encoder.MLPTopographyEncoder(
+            in_channels=tc.in_channels,
+            out_channels=tc.out_channels,
+            hidden_dims=tc.hidden_dims,
+            act_fn=tc.act_fn,
+            use_layernorm=tc.use_layernorm,
+        )
+    raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
+
+
 class UninformedOAT(nn.Module):
     """
     Base class for Observation Assimilation Transformer for neural downscaling.
@@ -338,26 +363,7 @@ class UninformedOAT(nn.Module):
         )
 
     def _init_topographic_encoder(self, config):
-        tc = config.topographic_encoder
-        if getattr(tc, "type", "CNN") == "CNN":
-            return topographic_encoder.CNNTopographyEncoder(
-                in_channels=tc.in_channels,
-                out_channels=tc.out_channels,
-                n_layers=tc.n_layers,
-                initial_hw=tc.initial_hw,
-                kernel_sizes=tc.kernel_sizes,
-                act_fn=tc.act_fn,
-                use_batchnorm=tc.use_batchnorm,
-            )
-        if tc.type == "MLP":
-            return topographic_encoder.MLPTopographyEncoder(
-                in_channels=tc.in_channels,
-                out_channels=tc.out_channels,
-                hidden_dims=tc.hidden_dims,
-                act_fn=tc.act_fn,
-                use_layernorm=tc.use_layernorm,
-            )
-        raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
+        return build_topographic_encoder(config.topographic_encoder)
 
     def _init_output_head(self, config):
 

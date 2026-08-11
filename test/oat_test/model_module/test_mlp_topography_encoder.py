@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from oat.model_module.topographic_encoder import MLPTopographyEncoder
 
@@ -25,3 +26,30 @@ def test_topo_dispatch_mlp():
         M.UninformedOAT.__new__(M.UninformedOAT), _Holder
     )
     assert isinstance(enc, MLPTopographyEncoder)
+
+
+def test_build_topographic_encoder_dispatches_cnn():
+    from oat.model_module import model as M
+    from oat.model_module.topographic_encoder import CNNTopographyEncoder
+
+    tc = M.TopographicEncoderConfig(in_channels=5, out_channels=8, type="CNN")
+    enc = M.build_topographic_encoder(tc)
+    assert isinstance(enc, CNNTopographyEncoder)
+
+
+def test_build_topographic_encoder_dispatches_mlp():
+    from oat.model_module import model as M
+
+    tc = M.TopographicEncoderConfig(
+        in_channels=5, out_channels=8, type="MLP", hidden_dims=()
+    )
+    enc = M.build_topographic_encoder(tc)
+    assert isinstance(enc, MLPTopographyEncoder)
+
+
+def test_build_topographic_encoder_rejects_unknown_type():
+    from oat.model_module import model as M
+
+    tc = M.TopographicEncoderConfig(in_channels=5, out_channels=8, type="bogus")
+    with pytest.raises(ValueError, match="Unsupported topographic encoder type"):
+        M.build_topographic_encoder(tc)
