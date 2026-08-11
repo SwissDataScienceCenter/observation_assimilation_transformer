@@ -9,7 +9,6 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig, OmegaConf
 
-from oat.data_module.field import Field
 from oat.model_module import model
 from oat.model_module.model import (
     OATConfig,
