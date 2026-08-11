@@ -16,6 +16,6 @@ station_type: null
 
 fields:
   obs: {coords: stations, inputs: [obs.temperature, obs.precipitation]}
-  nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT], query: true}
+  nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT], query: true, k: 4}
 
 transform_type: keep_support
