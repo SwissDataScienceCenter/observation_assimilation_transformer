@@ -21,11 +21,17 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-DATASET_VARIANTS = ("temp", "precip", "temp_precip")
+DATASET_VARIANTS = (
+    "temp",
+    "precip",
+    "temp_precip",
+    "field_temp",
+    "field_temp_precip",
+)
 DATASETS = tuple(
     f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
 )
-UNIVARIATE_VARIANTS = ("temp", "precip")
+UNIVARIATE_VARIANTS = ("temp", "precip", "field_temp")
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,28 @@ MODEL_SPECS = {
     "uninformed_oat": ModelSpec(
         "scripts.train_model",
         ("model=uninformed_oat", "predictor=oat_predictor", "split=no_conditioning"),
+    ),
+    # Field-path variants: same models on the flat-Field datasets, with the
+    # point-wise global/topographic encoders (the grid encoders need the old
+    # grid batch). Must be paired with a field_* dataset (see validate()).
+    "oat_field": ModelSpec(
+        "scripts.train_model",
+        (
+            "model=oat",
+            "predictor=oat_predictor",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
+    ),
+    "uninformed_oat_field": ModelSpec(
+        "scripts.train_model",
+        (
+            "model=uninformed_oat",
+            "predictor=oat_predictor",
+            "split=no_conditioning",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
     ),
     "gp": ModelSpec(
         "scripts.train_model",
@@ -95,6 +123,14 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
 
 def validate(model: str, dataset: str) -> None:
     _, variant = dataset.split("/", 1)
+    is_field_model = model.endswith("_field")
+    is_field_dataset = variant.startswith("field_")
+    if is_field_model != is_field_dataset:
+        raise SystemExit(
+            f"Field models (*_field) pair only with field_* datasets, and non-field "
+            f"models only with non-field datasets. Got model='{model}', "
+            f"dataset='{dataset}'."
+        )
     if MODEL_SPECS[model].univariate_only and variant not in UNIVARIATE_VARIANTS:
         raise SystemExit(
             f"Model '{model}' is univariate-only (see gp_baseline.py); dataset variant "
