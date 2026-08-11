@@ -31,6 +31,9 @@ dist/
 build/
 *.egg-info/
 
+# Worktrees
+.worktrees/
+
 # Misc
 .DS_Store
 poetry.lock
