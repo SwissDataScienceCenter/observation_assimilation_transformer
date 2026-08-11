@@ -1,5 +1,6 @@
-# in_channels: len(topo_vars) at runtime; out_channels: d_model // 2 at runtime
+# in_channels: len(topo_vars) at runtime.
+# out_channels + hidden_dims derived at runtime as d_model // 2 (2 hidden
+# layers), mirroring the old topographic encoder's structure.
 type: MLP
-hidden_dims: []
 act_fn: GELU
 use_layernorm: false

@@ -582,16 +582,31 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     if model_cfg.global_encoder.type == "Point":
         global_input_chans = len(data_cfg.nwp_vars)
     d_model = model_cfg.d_model
+    # PointGlobalEncoder / MLPTopographyEncoder mirror the old topo encoder:
+    # 2 hidden layers of width d_model // 2. d_model is only known here, so the
+    # hidden dims are derived at model-setup time (like out_channels below).
+    hidden_dims_2x = [d_model // 2, d_model // 2]
+
+    global_encoder_kwargs = OmegaConf.to_container(
+        model_cfg.global_encoder, resolve=True
+    )
+    if global_encoder_kwargs.get("type") == "Point":
+        global_encoder_kwargs["hidden_dims"] = hidden_dims_2x
     global_encoder_cfg = model.GlobalEncoderConfig(
-        **model_cfg.global_encoder,
+        **global_encoder_kwargs,
         in_channels=global_input_chans,
         out_channels=d_model // 2,
         field_extent_max=field_extent['max'],
         field_extent_min=field_extent['min']
         )
 
+    topography_encoder_kwargs = OmegaConf.to_container(
+        model_cfg.topographic_encoder, resolve=True
+    )
+    if topography_encoder_kwargs.get("type") == "MLP":
+        topography_encoder_kwargs["hidden_dims"] = hidden_dims_2x
     topography_encoder_cfg = model.TopographicEncoderConfig(
-        **model_cfg.topographic_encoder,
+        **topography_encoder_kwargs,
         in_channels=len(data_cfg.topo_vars),
         out_channels=d_model // 2,
         )

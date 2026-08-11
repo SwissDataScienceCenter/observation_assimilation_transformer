@@ -1,4 +1,5 @@
 type: Point
-# in_channels: len(nwp_vars) at runtime; out_channels: d_model // 2 at runtime
+# in_channels: len(nwp_vars) at runtime.
+# out_channels + hidden_dims derived at runtime as d_model // 2 (2 hidden
+# layers), mirroring the old topographic encoder's structure.
 act_fn: GELU
-hidden_dims: []
