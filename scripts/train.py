@@ -69,27 +69,45 @@ MODEL_SPECS = {
             "model/topographic_encoder=mlp",
         ),
     ),
-    "gp": ModelSpec(
+    "gp_field": ModelSpec(
         "scripts.train_model",
-        ("model=gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=gp_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "gp_oat": ModelSpec(
+    "deep_gp_field": ModelSpec(
         "scripts.train_model",
-        ("model=gp_oat_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=deep_gp_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "deep_gp": ModelSpec(
+    "gp_oat_field": ModelSpec(
         "scripts.train_model",
-        ("model=deep_gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=gp_oat_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "deep_gp_oat": ModelSpec(
+    "deep_gp_oat_field": ModelSpec(
         "scripts.train_model",
         (
             "model=deep_gp_oat_baseline",
             "predictor=gp_predictor",
             "trainer.precision=64",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
         ),
         univariate_only=True,
     ),
