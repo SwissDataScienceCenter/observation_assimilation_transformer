@@ -578,7 +578,7 @@ def _resolve_point_hidden_dims(kwargs: dict[str, Any], d_model: int) -> list[int
     ``hidden_width``. When ``hidden_width`` is not specified it defaults to
     ``d_model // 2``, mirroring the old topographic encoder.
     """
-    n_layers = int(kwargs.pop("num_hidden_layers", 2))
+    n_layers = int(kwargs.pop("num_hidden_layers", 0))
     width = kwargs.pop("hidden_width", None)
     if width is None:
         width = d_model // 2
