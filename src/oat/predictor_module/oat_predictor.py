@@ -570,6 +570,21 @@ class OATPredictor(BasePredictor):
             return optimizer
 
 
+def _resolve_point_hidden_dims(kwargs: dict[str, Any], d_model: int) -> list[int]:
+    """Build the MLP hidden stack for the Point/MLP encoders from config knobs.
+
+    Pops ``num_hidden_layers`` (default 2) and ``hidden_width`` (default ``None``)
+    off ``kwargs`` and returns ``num_hidden_layers`` layers each of width
+    ``hidden_width``. When ``hidden_width`` is not specified it defaults to
+    ``d_model // 2``, mirroring the old topographic encoder.
+    """
+    n_layers = int(kwargs.pop("num_hidden_layers", 2))
+    width = kwargs.pop("hidden_width", None)
+    if width is None:
+        width = d_model // 2
+    return [int(width)] * n_layers
+
+
 def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[model.GlobalEncoderConfig, model.TopographicEncoderConfig, model.NwpTopoFusionConfig]:
     """Build the configs for the uninformed trunk (Eq. 1-7).
 
@@ -582,16 +597,14 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     if model_cfg.global_encoder.type == "Point":
         global_input_chans = len(data_cfg.nwp_vars)
     d_model = model_cfg.d_model
-    # PointGlobalEncoder / MLPTopographyEncoder mirror the old topo encoder:
-    # 2 hidden layers of width d_model // 2. d_model is only known here, so the
-    # hidden dims are derived at model-setup time (like out_channels below).
-    hidden_dims_2x = [d_model // 2, d_model // 2]
 
     global_encoder_kwargs = OmegaConf.to_container(
         model_cfg.global_encoder, resolve=True
     )
     if global_encoder_kwargs.get("type") == "Point":
-        global_encoder_kwargs["hidden_dims"] = hidden_dims_2x
+        global_encoder_kwargs["hidden_dims"] = _resolve_point_hidden_dims(
+            global_encoder_kwargs, d_model
+        )
     global_encoder_cfg = model.GlobalEncoderConfig(
         **global_encoder_kwargs,
         in_channels=global_input_chans,
@@ -604,7 +617,9 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
         model_cfg.topographic_encoder, resolve=True
     )
     if topography_encoder_kwargs.get("type") == "MLP":
-        topography_encoder_kwargs["hidden_dims"] = hidden_dims_2x
+        topography_encoder_kwargs["hidden_dims"] = _resolve_point_hidden_dims(
+            topography_encoder_kwargs, d_model
+        )
     topography_encoder_cfg = model.TopographicEncoderConfig(
         **topography_encoder_kwargs,
         in_channels=len(data_cfg.topo_vars),

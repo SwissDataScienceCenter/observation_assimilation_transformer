@@ -1,6 +1,8 @@
-# in_channels: len(topo_vars) at runtime.
-# out_channels + hidden_dims derived at runtime as d_model // 2 (2 hidden
-# layers), mirroring the old topographic encoder's structure.
+# in_channels: len(topo_vars) at runtime; out_channels: d_model // 2 at runtime.
 type: MLP
 act_fn: GELU
 use_layernorm: false
+# MLP hidden stack: num_hidden_layers layers, each of width hidden_width.
+# hidden_width null -> d_model // 2 at runtime (mirrors the old topo encoder).
+num_hidden_layers: 2
+hidden_width: null
