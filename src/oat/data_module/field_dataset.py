@@ -58,17 +58,27 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         self.dtype = dtype
         self._t_hours = EPOCH_HOURS(self.times).to(dtype)
 
-        # Precompute (source, coord_source) nearest indices used by any field.
-        self._index_cache: dict[tuple[str, str], Tensor] = {}
+        # Precompute (source, coord_source, k) indices used by any field.
+        # k=1 -> (idx, None) via build_index; k>1 -> (idx, weights) via
+        # build_interp (IDW). None marks the unweighted nearest read.
+        self._index_cache: dict[tuple[str, str, int], tuple[Tensor, Tensor | None]] = {}
         for field in field_config.fields.values():
             for ref in field.inputs:
                 if ref.kind == "source":
                     assert ref.source is not None
-                    key = (ref.source, field.coords)
+                    key = (ref.source, field.coords, field.k)
                     if key not in self._index_cache:
-                        self._index_cache[key] = sources[ref.source].build_index(
-                            self._coords[field.coords]
+                        self._index_cache[key] = self._build_index_entry(
+                            sources[ref.source], self._coords[field.coords], field.k
                         )
+
+    @staticmethod
+    def _build_index_entry(
+        source: Source, dst_coords: Tensor, k: int
+    ) -> tuple[Tensor, Tensor | None]:
+        if k == 1:
+            return source.build_index(dst_coords), None
+        return source.build_interp(dst_coords, k)
 
     def __len__(self) -> int:
         return len(self.times)
@@ -96,7 +106,7 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         self,
         field: FieldSpec,
         coords3: Tensor,
-        index_by_source: dict[str, Tensor],
+        index_by_source: dict[str, tuple[Tensor, Tensor | None]],
         frames: dict[str, Tensor],
         mask_frames: dict[str, Tensor | None],
     ) -> Field:
@@ -109,11 +119,11 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
             else:
                 assert ref.source is not None
                 src = self._source_objs[ref.source]
-                idx = index_by_source[ref.source]
+                idx, w = index_by_source[ref.source]
                 frame = frames[ref.source]
-                channels.append(
-                    frame[src.var_names.index(ref.name)][idx].to(self.dtype)
-                )
+                vals = frame[src.var_names.index(ref.name)][idx].to(self.dtype)
+                col = vals if w is None else (vals * w.to(self.dtype)).sum(dim=-1)
+                channels.append(col)
                 if src.has_mask:
                     masked_source = ref.source
                     mframe = mask_frames[ref.source]
@@ -128,7 +138,7 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
     def _build_fields(
         self,
         coords_by_cs: dict[str, Tensor],
-        index_by_field: dict[str, dict[str, Tensor]],
+        index_by_field: dict[str, dict[str, tuple[Tensor, Tensor | None]]],
         time_idx: int,
         names: list[str],
     ) -> dict[str, Field]:
@@ -163,7 +173,11 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         index_by_field = {
             n: {
                 ref.source: self._index_cache[
-                    (ref.source, self.field_config.fields[n].coords)
+                    (
+                        ref.source,
+                        self.field_config.fields[n].coords,
+                        self.field_config.fields[n].k,
+                    )
                 ]
                 for ref in self.field_config.fields[n].inputs
                 if ref.kind == "source" and ref.source is not None
@@ -178,7 +192,11 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         names = [n for n, f in self.field_config.fields.items() if f.query]
         index_by_field = {
             n: {
-                ref.source: self._source_objs[ref.source].build_index(query_coords)
+                ref.source: self._build_index_entry(
+                    self._source_objs[ref.source],
+                    query_coords,
+                    self.field_config.fields[n].k,
+                )
                 for ref in self.field_config.fields[n].inputs
                 if ref.kind == "source" and ref.source is not None
             }

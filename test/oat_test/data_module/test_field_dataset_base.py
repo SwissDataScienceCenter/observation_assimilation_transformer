@@ -99,6 +99,81 @@ def test_get_query_only_query_fields_no_obs():
     assert torch.equal(out["geo"].values[:, :2], q)
 
 
+def _build_dataset_k2():
+    stations = torch.tensor([[0.5, 0.0], [2.0, 2.0]])  # 2 stations
+    raster = torch.arange(9.0).reshape(1, 3, 3)  # value = row*3 + col
+    nwp = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["T"])
+    topo = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["DEM"])
+    obs = PointSetSource(
+        stations,
+        ["temperature"],
+        values_fn=lambda t: torch.tensor([[20.0 + t, 21.0 + t]]),
+        mask_fn=lambda t: torch.tensor([[1.0, 0.0]]),
+        native_coord_source="stations",
+    )
+    cfg = parse_field_config(
+        {
+            "coord_sources": {"stations": {"from": "obs"}},
+            "fields": {
+                "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+                "nwp": {
+                    "coords": "stations",
+                    "inputs": ["nwp.T"],
+                    "query": True,
+                    "k": 2,
+                },
+                "geo": {
+                    "coords": "stations",
+                    "inputs": ["coords.x", "coords.y", "topo.DEM"],
+                    "out": ["e", "n", "dem"],
+                    "query": True,
+                },
+            },
+            "roles": {"target": "obs", "geo_bias": "geo"},
+            "transform_type": "real",
+        }
+    )
+    times = pd.to_datetime(["2020-01-01T00:00:00Z"])
+    support = VariableSupport(
+        lower_bounds=torch.tensor([-float("inf")]),
+        upper_bounds=torch.tensor([float("inf")]),
+        lower_open=torch.tensor([True]),
+        upper_open=torch.tensor([True]),
+    )
+    ds = FieldDatasetBase(
+        field_config=cfg,
+        coord_source_coords={"stations": stations},
+        sources={"obs": obs, "nwp": nwp, "topo": topo},
+        times=times,
+        obs_var_support=support,
+    )
+    return ds, stations, nwp, topo
+
+
+def test_k2_interpolated_nwp_read_matches_idw_and_k1_unaffected():
+    ds, stations, nwp, topo = _build_dataset_k2()
+    fields = ds[0]["fields"]
+
+    # station 0 at (0.5, 0.0): midway between flat cols 0 (value 0) and 1
+    # (value 1) of row 0 -> IDW with k=2 gives equal weights, mean = 0.5.
+    assert fields["nwp"].values[0, 0].item() == 0.5
+    # station 1 sits exactly on grid point (2, 2) -> flat index 8, value 8,
+    # regardless of which two (tied, distance-0) corners k=2 selects.
+    assert fields["nwp"].values[1, 0].item() == 8.0
+
+    # k=1 field (geo's topo.DEM) is unaffected: matches build_index directly.
+    idx = topo.build_index(stations)
+    expected_dem = topo.load(0)[0][idx]
+    assert torch.equal(fields["geo"].values[:, 2], expected_dem)
+
+
+def test_get_query_k2_interpolated_nwp_read():
+    ds, stations, _, _ = _build_dataset_k2()
+    out = ds.get_query(stations, idx=0)
+    assert out["nwp"].values[0, 0].item() == 0.5
+    assert out["nwp"].values[1, 0].item() == 8.0
+
+
 def test_introspection():
     ds, _ = _build_dataset()
     assert ds.field_coord_sources() == {

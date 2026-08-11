@@ -25,6 +25,7 @@ class FieldSpec:
     inputs: tuple[InputRef, ...]
     out: tuple[str, ...]
     query: bool
+    k: int = 1
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
             inputs=inputs,
             out=out,
             query=bool(spec.get("query", False)),
+            k=int(spec.get("k", 1)),
         )
 
     roles = {str(k): str(v) for k, v in dict(cfg.get("roles", {})).items()}
@@ -156,6 +158,12 @@ def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> N
                 raise ValueError(
                     f"field {fname!r} may not mix masked-source inputs "
                     f"with other inputs"
+                )
+            if field.k > 1:
+                raise ValueError(
+                    f"field {fname!r} has k={field.k} but references masked "
+                    f"source(s) {sorted(used_masked)}: interpolating a mask "
+                    f"is ill-defined"
                 )
 
     for role, target in cfg.roles.items():

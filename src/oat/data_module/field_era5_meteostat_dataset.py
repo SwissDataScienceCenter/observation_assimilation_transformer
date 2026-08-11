@@ -329,5 +329,6 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
             "nwp_lonlat",
         ):
             self._share(getattr(self, attr, None))
-        for tensor in self._index_cache.values():
-            self._share(tensor)
+        for idx, w in self._index_cache.values():
+            self._share(idx)
+            self._share(w)
