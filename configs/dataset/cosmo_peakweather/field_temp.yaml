@@ -9,6 +9,10 @@ obs_vars: [temperature]
 obs_variable_to_distribution:
   temperature: normal
 
+# All stations incl. rain gauges (matches old temp.yaml; overrides settings'
+# meteo_station default).
+station_type: null
+
 fields:
   obs: {coords: stations, inputs: [obs.temperature]}
   nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G], query: true}
