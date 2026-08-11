@@ -61,3 +61,24 @@ def test_parse_field_config_full():
     assert fc.fields["geo"].inputs[2] == InputRef(
         kind="source", source="topo", name="DEM"
     )
+    # k defaults to 1 (nearest) when omitted
+    assert fc.fields["obs"].k == 1
+    assert fc.fields["nwp"].k == 1
+
+
+def test_parse_field_config_k_override():
+    cfg = {
+        "coord_sources": {"stations": {"from": "obs"}, "nwp_grid": {"from": "nwp"}},
+        "fields": {
+            "nwp": {
+                "coords": "stations",
+                "inputs": ["nwp.T_2M"],
+                "query": True,
+                "k": 4,
+            },
+        },
+        "roles": {"target": "nwp"},
+        "transform_type": "real",
+    }
+    fc = parse_field_config(cfg)
+    assert fc.fields["nwp"].k == 4

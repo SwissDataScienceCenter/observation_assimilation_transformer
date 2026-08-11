@@ -23,6 +23,31 @@ def _cfg(fields, roles=None):
     )
 
 
+def test_k_greater_than_one_on_masked_source_raises():
+    cfg = _cfg(
+        {"obs": {"coords": "stations", "inputs": ["obs.temperature"], "k": 2}},
+        roles={"target": "obs"},
+    )
+    with pytest.raises(ValueError, match="mask"):
+        validate_field_config(cfg, _sources())
+
+
+def test_k_greater_than_one_on_unmasked_source_passes():
+    cfg = _cfg(
+        {
+            "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+            "nwp": {
+                "coords": "stations",
+                "inputs": ["nwp.T_2M"],
+                "query": True,
+                "k": 4,
+            },
+        },
+        roles={"target": "obs"},
+    )
+    validate_field_config(cfg, _sources())  # no raise
+
+
 def test_valid_config_passes():
     cfg = _cfg(
         {
