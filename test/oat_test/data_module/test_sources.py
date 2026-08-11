@@ -49,3 +49,36 @@ def test_raster_index_arithmetic():
     # out-of-range point clamps into the grid (no crash)
     idx2 = src.build_index(torch.tensor([[99.0, -99.0]]))
     assert src.load(0)[0][idx2].item() == 2.0  # clamps to (x=2, y=0) -> 2
+
+
+def test_pointset_build_interp_weights_sum_to_one_and_identity():
+    coords = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
+    vals = torch.tensor([[1.0, 2.0, 3.0, 4.0]])  # [C=1, N=4]
+    src = PointSetSource(coords, ["v"], lambda t: vals, native_coord_source="pts")
+
+    idx, w = src.build_interp(coords, k=2)
+    assert idx.shape == (4, 2)
+    assert w.shape == (4, 2)
+    assert torch.allclose(w.sum(dim=-1), torch.ones(4))
+
+    # query exactly on a source point -> that point's weight ~= 1 (distance 0)
+    idx3, w3 = src.build_interp(torch.tensor([[10.0, 10.0]]), k=2)
+    self_pos = (idx3[0] == 3).nonzero(as_tuple=True)[0].item()
+    assert w3[0, self_pos].item() > 0.999
+
+
+def test_raster_build_interp_midpoint_between_two_cells():
+    # 1 channel, 3x3 grid, origin (0,0), res (1,1); raster[c, row=y, col=x]
+    raster = torch.arange(9.0).reshape(1, 3, 3)  # value = y*3 + x
+    src = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["dem"])
+
+    # (0.5, 0.0) is midway between (x=0,y=0)=0 and (x=1,y=0)=1, both nearer
+    # than the row-1 corners -> equal weights, interpolated value = mean
+    idx, w = src.build_interp(torch.tensor([[0.5, 0.0]]), k=2)
+    assert idx.shape == (1, 2)
+    assert w.shape == (1, 2)
+    assert torch.allclose(w.sum(dim=-1), torch.ones(1))
+    flat = src.load(0)[0]
+    interpolated = (flat[idx] * w).sum(dim=-1)
+    assert interpolated.item() == 0.5
+    assert torch.allclose(w[0], torch.tensor([0.5, 0.5]))
