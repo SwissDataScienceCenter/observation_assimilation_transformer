@@ -21,9 +21,9 @@ from omegaconf import OmegaConf
 from pyproj import Transformer
 from torch import Tensor
 
-from oat.data_module.cosmo_peakweather_dataset import (
-    DERIVED_FEATURES,
-    _build_obs_variable_support,
+from oat.data_module.dataset_helpers import (
+    COSMO_DERIVED_FEATURES as DERIVED_FEATURES,
+    build_obs_variable_support as _build_obs_variable_support,
     dtype_map,
 )
 from oat.data_module.field_dataset import FieldDatasetBase

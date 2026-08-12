@@ -16,48 +16,14 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from oat.data_module import statistics, transform
+from oat.data_module.dataset_helpers import (
+    ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
+    build_obs_variable_support as _build_obs_variable_support,
+    dtype_map,
+)
 from oat.data_module.meteostat_observations import MeteostatObservations
-from oat.data_module.support import VariableSupport
 
 _log = _logging.getLogger(__name__)
-
-dtype_map = {
-    "float32": torch.float32,
-    "float64": torch.float64,
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-}
-
-DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
-    "wind_speed": (["10u", "10v"], lambda u, v: torch.sqrt(u**2 + v**2)),
-    "wind_direction": (
-        ["10u", "10v"],
-        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
-    ),
-}
-
-
-def _build_obs_variable_support(catalog: Any, obs_vars: list[str]) -> VariableSupport:
-    cat = catalog.obs_vars
-    missing = [v for v in obs_vars if v not in cat]
-    if missing:
-        raise KeyError(f"Observation variables missing from catalog: {missing}")
-    return VariableSupport(
-        lower_bounds=torch.tensor(
-            [cat[v].get("lower_bound", float("-inf")) for v in obs_vars],
-            dtype=torch.float32,
-        ),
-        upper_bounds=torch.tensor(
-            [cat[v].get("upper_bound", float("inf")) for v in obs_vars],
-            dtype=torch.float32,
-        ),
-        lower_open=torch.tensor(
-            [cat[v].get("lower_open", False) for v in obs_vars], dtype=torch.bool
-        ),
-        upper_open=torch.tensor(
-            [cat[v].get("upper_open", False) for v in obs_vars], dtype=torch.bool
-        ),
-    )
 
 
 @dataclass

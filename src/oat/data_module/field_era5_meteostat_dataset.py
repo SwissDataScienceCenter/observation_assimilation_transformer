@@ -19,9 +19,9 @@ import xarray as xr
 from omegaconf import OmegaConf
 from torch import Tensor
 
-from oat.data_module.era5_meteostat_dataset import (
-    DERIVED_FEATURES,
-    _build_obs_variable_support,
+from oat.data_module.dataset_helpers import (
+    ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
+    build_obs_variable_support as _build_obs_variable_support,
     dtype_map,
 )
 from oat.data_module.field_dataset import FieldDatasetBase

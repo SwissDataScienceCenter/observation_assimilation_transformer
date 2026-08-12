@@ -18,22 +18,13 @@ from scipy.spatial import cKDTree
 from torch.nn.functional import grid_sample
 from torch.utils.data import Dataset, DataLoader
 from oat.data_module import transform, statistics
-from oat.data_module.support import VariableSupport
 import logging as _logging
 from tqdm import tqdm
-
-dtype_map = {
-    "float32": torch.float32,
-    "float64": torch.float64,
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-}
-
-# (deps, fn) where fn(*dep_tensors) → tensor (H, W)
-DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
-    'wind_speed': (['U_10M', 'V_10M'], lambda u, v: torch.sqrt(u**2 + v**2)),
-    'wind_direction': (['U_10M', 'V_10M'], lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0),
-}
+from oat.data_module.dataset_helpers import (
+    COSMO_DERIVED_FEATURES as DERIVED_FEATURES,
+    build_obs_variable_support as _build_obs_variable_support,
+    dtype_map,
+)
 
 # Mapping from obs variable name → (list of required NWP vars, conversion fn).
 # fn receives a dict {nwp_var: tensor(H, W)} and returns tensor(H, W).
@@ -44,37 +35,6 @@ _OBS_NWP_MAPPING: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
     'wind_speed':    (['U_10M', 'V_10M'],   lambda nwp: torch.sqrt(nwp['U_10M'] ** 2 + nwp['V_10M'] ** 2)),
     'precipitation': (['TOT_PREC_1H'],      lambda nwp: 600.0 * nwp['TOT_PREC_1H']),
 }
-
-
-def _build_obs_variable_support(catalog: Any, obs_vars: list[str]) -> VariableSupport:
-    catalog_obs_vars = catalog.obs_vars
-    missing_vars = [var for var in obs_vars if var not in catalog_obs_vars]
-    if missing_vars:
-        raise KeyError(f"Observation variables missing from catalog: {missing_vars}")
-
-    lower_bounds = torch.tensor(
-        [catalog_obs_vars[var].get("lower_bound", float("-inf")) for var in obs_vars],
-        dtype=torch.float32,
-    )
-    upper_bounds = torch.tensor(
-        [catalog_obs_vars[var].get("upper_bound", float("inf")) for var in obs_vars],
-        dtype=torch.float32,
-    )
-    lower_open = torch.tensor(
-        [catalog_obs_vars[var].get("lower_open", False) for var in obs_vars],
-        dtype=torch.bool,
-    )
-    upper_open = torch.tensor(
-        [catalog_obs_vars[var].get("upper_open", False) for var in obs_vars],
-        dtype=torch.bool,
-    )
-
-    return VariableSupport(
-        lower_bounds,
-        upper_bounds,
-        lower_open=lower_open,
-        upper_open=upper_open,
-    )
 
 
 @dataclass
