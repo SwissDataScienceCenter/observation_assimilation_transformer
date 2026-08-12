@@ -150,7 +150,7 @@ def test_gp_oat_baseline_config_builds_trunk_backed_gp(model_name, deep):
             overrides=[
                 f"model={model_name}",
                 "predictor=gp_predictor",
-                "dataset=cosmo_peakweather/temp",
+                "dataset=cosmo_peakweather/field_temp",
             ],
         )
 
@@ -193,7 +193,7 @@ def test_gp_oat_mean_matches_uninformed_baseline_trunk(model_name):
                 config_name="config",
                 overrides=[
                     f"model={name}",
-                    "dataset=cosmo_peakweather/temp",
+                    "dataset=cosmo_peakweather/field_temp",
                 ],
             )
         return setup_backbone_cfgs(cfg, FIELD_EXTENT)

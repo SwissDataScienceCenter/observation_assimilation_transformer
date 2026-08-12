@@ -1,5 +1,5 @@
 defaults:
-  - topographic_encoder: default
+  - topographic_encoder: mlp
 
 model_cls: oat.model_module.gp_baseline.GPBaseline
 
