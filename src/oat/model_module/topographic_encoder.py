@@ -54,6 +54,11 @@ class CNNTopographyEncoder(TopographyEncoder):
             use_batchnorm: Whether a batch norm is applied after every
                 convolution.
         """
+        raise NotImplementedError(
+            "CNNTopographyEncoder is deprecated with the old grid data path (used by the "
+            "OOTG baseline). Use MLPTopographyEncoder (topographic_encoder type 'MLP'). "
+            "Revive by removing this guard."
+        )
         super().__init__(in_channels=in_channels, out_channels=out_channels)
 
         # TODO add kwargs for some act (eg LeakyReLU)

@@ -42,6 +42,12 @@ class InterpolationGlobalEncoder(BaseGlobalEncoder):
             interpolation_params: Parameters for interpolation. Should contain 'mode' and 'padding_mode' keys for F.grid_sample. Defaults to bilinear and border respectively.
             field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
+        raise NotImplementedError(
+            "InterpolationGlobalEncoder (grid global encoders MLP/UNet/ResNetCNN/"
+            "SwinUNETR, and the interpolation baseline) is deprecated with the old grid "
+            "data path. Use the point-based field path (global_encoder type 'Point'). "
+            "Revive by removing this guard."
+        )
         super().__init__()
         self.register_buffer("field_min", torch.as_tensor(field_extent['min']))
         self.register_buffer("field_max", torch.as_tensor(field_extent['max']))
