@@ -78,8 +78,11 @@ def mock_nwp():
 
 @pytest.fixture
 def dataset(tmp_path, mock_nwp):
-    from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
-    with patch("oat.data_module.era5_meteostat_dataset.open_dataset", return_value=mock_nwp):
+    from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
+    with patch(
+        "oat.data_module.legacy.era5_meteostat_dataset.open_dataset",
+        return_value=mock_nwp,
+    ):
         return ERA5MeteostatDataset(_make_cfg(tmp_path))
 
 

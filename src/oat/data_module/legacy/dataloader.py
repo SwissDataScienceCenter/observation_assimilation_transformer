@@ -2,7 +2,7 @@ import torch
 from typing import Any, Callable, Dict
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import _BaseDataLoaderIter
-from .wind_dataset import WindDataset
+from oat.data_module.legacy.wind_dataset import WindDataset
 
 class OATLoader(DataLoader[Dict[str, torch.Tensor]]):
     """

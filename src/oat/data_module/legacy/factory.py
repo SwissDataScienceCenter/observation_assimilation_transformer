@@ -1,7 +1,8 @@
 from pathlib import Path
 import logging
 import numpy as np
-from oat.data_module import wind_dataset, dataloader, transform
+from oat.data_module import transform
+from oat.data_module.legacy import wind_dataset, dataloader
 import torch
 from omegaconf import DictConfig
 import xarray as xr

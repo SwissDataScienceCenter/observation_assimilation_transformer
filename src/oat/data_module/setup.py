@@ -4,15 +4,15 @@ from typing import Any
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.data_split import create_splits
+from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+from oat.data_module.legacy.data_split import create_splits
 from oat.data_module.transform import NestedTransform, Transform
 
 
 def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
     dataset_type = cfg.dataset.get("dataset_type", "cosmo_peakweather")
     if dataset_type == "era5_meteostat":
-        from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+        from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
 
         return ERA5MeteostatDataset(cfg.dataset)
     if dataset_type == "cosmo_peakweather":

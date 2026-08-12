@@ -1,7 +1,7 @@
 import os
 import pytest
 from omegaconf import OmegaConf
-from oat.data_module import factory
+from oat.data_module.legacy import factory
 import torch
 from torch.utils.data import DataLoader
 

@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import Any, Dict
 
-from oat.data_module.data_split import create_splits, TrainDataset, EvalDataset
+from oat.data_module.legacy.data_split import create_splits, TrainDataset, EvalDataset
 
 
 class MockDataset(Dataset):

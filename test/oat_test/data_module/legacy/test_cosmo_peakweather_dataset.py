@@ -1,5 +1,5 @@
 from hydra import initialize, compose
-from oat.data_module.cosmo_peakweather_dataset import (
+from oat.data_module.legacy.cosmo_peakweather_dataset import (
     CosmoPeakWeatherDataset,
     DERIVED_FEATURES,
     _build_obs_variable_support,
@@ -7,7 +7,7 @@ from oat.data_module.cosmo_peakweather_dataset import (
 )
 from oat.data_module.support import VariableSupport
 from oat.data_module.transform import NestedTransform, Transform
-from oat.data_module.data_split import create_splits
+from oat.data_module.legacy.data_split import create_splits
 from types import SimpleNamespace
 import numpy as np
 import pandas as pd
@@ -25,7 +25,7 @@ def _dataset_stub(obs_vars: list[str], nwp_vars: list[str]):
     reason="Skipped on CI (requires local datasets)"
 )
 def test_cosmo_peakweather_dataset() -> None:
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
@@ -88,7 +88,7 @@ def test_cosmo_peakweather_dataset() -> None:
     reason="Skipped on CI (requires local datasets)"
 )
 def test_splits(observation_fraction: float) -> None:
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
@@ -180,7 +180,7 @@ def test_derived_feature_output_order() -> None:
 
 
 def test_build_obs_variable_support_reads_catalog_bounds() -> None:
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
 
     support = _build_obs_variable_support(
@@ -240,7 +240,7 @@ def _check_obs_nwp_alignment(dataset: CosmoPeakWeatherDataset, indices: list[int
 @pytest.mark.skipif(os.getenv("CI") == "true", reason="Skipped on CI (requires local datasets)")
 def test_obs_nwp_alignment() -> None:
     """obs_tensor[idx] must correspond to the same timestamp as NWP at time_indices[idx]."""
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
     _check_obs_nwp_alignment(dataset, [0, 1, len(dataset) // 2, len(dataset) - 1])
@@ -250,7 +250,7 @@ def test_obs_nwp_alignment() -> None:
 def test_obs_nwp_alignment_with_date_filter() -> None:
     """Same check with start_date/end_date set — exercises the re-indexing path in _load_observations."""
     from omegaconf import OmegaConf
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
     OmegaConf.update(cfg, "dataset.start_date", "2021-01-01")
     OmegaConf.update(cfg, "dataset.end_date", "2021-06-30")
@@ -323,7 +323,7 @@ def test_baseline_pre_transform_channel_order_follows_obs_vars() -> None:
 
 
 def test_build_obs_variable_support_raises_for_missing_variable() -> None:
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
 
     with pytest.raises(KeyError, match="missing from catalog"):
@@ -337,7 +337,7 @@ def test_build_obs_variable_support_raises_for_missing_variable() -> None:
     reason="Skipped on CI (requires local datasets)"
 )
 def test_cosmo_peakweather_dataset_exposes_obs_var_support() -> None:
-    with initialize(config_path="../../../configs/", version_base=None):
+    with initialize(config_path="../../../../configs/", version_base=None):
         cfg = compose(config_name="config")
 
     dataset = CosmoPeakWeatherDataset(cfg.dataset)
