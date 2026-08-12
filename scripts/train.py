@@ -6,7 +6,7 @@ run name used consistently for the checkpoint dir and W&B run.
 
 Usage:
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp_precip
-    python -m scripts.train --model gp --dataset era5_meteostat/temp --dry-run
+    python -m scripts.train --model gp_field --dataset era5_meteostat/field_temp --dry-run
     python -m scripts.train --model ootg --dataset cosmo_peakweather/temp --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
