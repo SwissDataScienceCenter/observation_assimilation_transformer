@@ -1,9 +1,16 @@
 import torch
 from typing import Any, Dict
-from oat.data_module.wind_dataset import pos_transform
 from oat.model_module.activations import get_activation
 from torch.nn import functional as F
 from abc import ABC, abstractmethod
+
+
+def pos_transform(val: torch.Tensor, min: torch.Tensor, max: torch.Tensor) -> torch.Tensor:
+    """Transform positions from high-res to low-res grid coordinates."""
+    assert val.shape[-1] == min.shape[-1] == max.shape[-1], "Dimension mismatch in position transformation."
+    val_scaled = 2 * (val - min) / (max - min) - 1  # Scale to [-1, 1]
+    return val_scaled
+
 
 class BaseGlobalEncoder(torch.nn.Module, ABC):
     """Base class for global encoders processing global data inputs."""
