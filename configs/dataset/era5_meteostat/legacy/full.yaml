@@ -1,5 +1,5 @@
 defaults:
-  - era5_meteostat/settings@_here_
+  - era5_meteostat/legacy/settings@_here_
   - era5_meteostat/catalog@catalog
   - era5_meteostat/plot_config@_here_
   - _self_

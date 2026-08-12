@@ -1,14 +1,18 @@
 defaults:
-  - era5_meteostat/settings@_here_
+  - era5_meteostat/legacy/settings@_here_
   - era5_meteostat/catalog@catalog
   - era5_meteostat/plot_config@_here_
   - _self_
 
 nwp_vars:
-  - wind_speed
+  - 2t
+  - tp
+  - tcc
 
 obs_vars:
-  - wspd
+  - temp
+  - prcp
 
 obs_variable_to_distribution:
-  wspd: "lognormal"
+  temp: "normal"
+  prcp: "zero_inflated_lognormal"

@@ -1,0 +1,6 @@
+defaults:
+  - ../base@_here_
+  - ../catalog@catalog
+  - _self_
+
+dataset_type: legacy_cosmo_peakweather

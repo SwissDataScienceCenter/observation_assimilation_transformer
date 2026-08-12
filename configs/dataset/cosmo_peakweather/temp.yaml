@@ -1,17 +1,18 @@
 defaults:
   - cosmo_peakweather/settings@_here_
-  - cosmo_peakweather/catalog@catalog
-  - cosmo_peakweather/plot_config@_here_
   - _self_
 
-nwp_vars:
-  - T_2M
-  - T_G
+nwp_vars: [T_2M, T_G]
 
-obs_vars:
-  - temperature
+obs_vars: [temperature]
 
 obs_variable_to_distribution:
-  temperature: "normal"
+  temperature: normal
 
-station_type: null # with null, all stations are taken, among which there are rain gauges
+# All stations incl. rain gauges (matches old temp.yaml; overrides settings'
+# meteo_station default).
+station_type: null
+
+fields:
+  obs: {coords: stations, inputs: [obs.temperature]}
+  nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G], query: true}

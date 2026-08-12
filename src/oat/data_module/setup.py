@@ -21,28 +21,28 @@ _GROUPS = ("observation_data", "query_data")
 
 def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
     dataset_type = cfg.dataset.get("dataset_type", "cosmo_peakweather")
-    if dataset_type == "era5_meteostat":
-        from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
-
-        return ERA5MeteostatDataset(cfg.dataset)
     if dataset_type == "cosmo_peakweather":
-        return CosmoPeakWeatherDataset(cfg.dataset)
-    if dataset_type == "field_cosmo_peakweather":
         from oat.data_module.cosmo_peakweather_dataset import (
             CosmoPeakWeatherDataset as FieldCosmoPeakWeatherDataset,
         )
 
         return FieldCosmoPeakWeatherDataset(cfg.dataset)
-    if dataset_type == "field_era5_meteostat":
+    if dataset_type == "era5_meteostat":
         from oat.data_module.era5_meteostat_dataset import (
             ERA5MeteostatDataset as FieldERA5MeteostatDataset,
         )
 
         return FieldERA5MeteostatDataset(cfg.dataset)
+    if dataset_type == "legacy_cosmo_peakweather":
+        return CosmoPeakWeatherDataset(cfg.dataset)
+    if dataset_type == "legacy_era5_meteostat":
+        from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
+
+        return ERA5MeteostatDataset(cfg.dataset)
     raise ValueError(
         f"Unknown dataset_type: {dataset_type!r}. "
         "Supported: 'cosmo_peakweather', 'era5_meteostat', "
-        "'field_cosmo_peakweather', 'field_era5_meteostat'."
+        "'legacy_cosmo_peakweather', 'legacy_era5_meteostat'."
     )
 
 
@@ -196,7 +196,7 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     NestedTransform,
     Transform,
 ]:
-    field_types = {"field_cosmo_peakweather", "field_era5_meteostat"}
+    field_types = {"cosmo_peakweather", "era5_meteostat"}
     if cfg.dataset.get("dataset_type", "cosmo_peakweather") in field_types:
         return _setup_field_data_and_transform(cfg, logger)
 

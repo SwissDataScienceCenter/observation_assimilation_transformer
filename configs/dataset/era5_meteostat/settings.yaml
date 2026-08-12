@@ -1,38 +1,25 @@
+defaults:
+  - base@_here_
+  - catalog@catalog
+  - _self_
+
 dataset_type: era5_meteostat
 
-nwp_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/era5-europe-mars-n320-2019-2024-1h-v1.zarr"
-topo_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/europe-static.zarr"
-obs_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
-station_meta_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/station_quality.parquet"
+coord_sources:
+  stations: {from: obs}
+  nwp_grid: {from: nwp}
 
-topo_vars:
-  - elevation
-  - distance_to_coast
+fields:
+  obs:  {coords: stations, inputs: [obs.temp]}
+  nwp:  {coords: stations, inputs: [nwp.2t], query: true}
+  topo: {coords: stations, inputs: [topo.elevation, topo.distance_to_coast], query: true, k: 4}
+  geo:  {coords: stations, inputs: [coords.x, coords.y, topo.elevation],
+         out: [longitude, latitude, elevation], query: true, k: 4}
 
-coord_vars:
-  - longitude
-  - latitude
+roles:
+  target: obs
+  global: nwp
+  geo_bias: geo
+  topo: topo
 
-geo_vars:
-  - longitude
-  - latitude
-  - elevation
-
-stations: null
-start_date: null
-end_date: null
-
-nwp_lat_min: 34.0
-nwp_lat_max: 71.75
-nwp_lon_min: -24.75
-nwp_lon_max: 45.0
-nwp_lat_res: 0.25
-nwp_lon_res: 0.25
-
-patch_size:
-  - 1
-  - 1
-
-use_time_embedding: true
-dtype: float32
-data_points_for_stats: 4096
+transform_type: real
