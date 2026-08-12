@@ -156,7 +156,7 @@ def test_field_training_step_uninformed_runs():
     assert torch.isfinite(out["samples"]).all()
 
 
-def test_field_temp_config_composes():
+def test_temp_config_composes():
     from hydra import compose, initialize_config_dir
 
     cfg_dir = os.path.abspath("configs")
@@ -164,7 +164,7 @@ def test_field_temp_config_composes():
         cfg = compose(
             config_name="config",
             overrides=[
-                "dataset=cosmo_peakweather/field_temp",
+                "dataset=cosmo_peakweather/temp",
                 "model/global_encoder=point",
                 "model/topographic_encoder=mlp",
             ],
@@ -191,7 +191,7 @@ def test_field_training_step_real_data_smoke():
         cfg = compose(
             config_name="config",
             overrides=[
-                "dataset=cosmo_peakweather/field_temp",
+                "dataset=cosmo_peakweather/temp",
                 "model/global_encoder=point",
                 "model/topographic_encoder=mlp",
                 "dataloader.train.batch_size=2",

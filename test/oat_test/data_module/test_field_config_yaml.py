@@ -10,11 +10,11 @@ def _compose_dataset():
     d = os.path.abspath("configs")
     with initialize_config_dir(version_base=None, config_dir=d):
         return compose(
-            config_name="config", overrides=["dataset=cosmo_peakweather/field_temp"]
+            config_name="config", overrides=["dataset=cosmo_peakweather/temp"]
         ).dataset
 
 
-def test_field_temp_config_parses_and_validates():
+def test_temp_config_parses_and_validates():
     cfg = _compose_dataset()
     fc = parse_field_config(cfg)
     assert fc.transform_type == "real"

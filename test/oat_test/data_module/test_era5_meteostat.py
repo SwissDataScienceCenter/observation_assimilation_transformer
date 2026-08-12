@@ -12,9 +12,7 @@ from oat.data_module.sources import SourceInfo
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 
-_settings_path = os.path.join(
-    _REPO_ROOT, "configs/dataset/era5_meteostat/settings.yaml"
-)
+_settings_path = os.path.join(_REPO_ROOT, "configs/dataset/era5_meteostat/base.yaml")
 _TOPO_PATH = str(OmegaConf.load(_settings_path).topo_path)
 pytestmark = pytest.mark.skipif(
     not os.path.exists(_TOPO_PATH), reason="ERA5 topo data not present"
@@ -24,11 +22,11 @@ pytestmark = pytest.mark.skipif(
 def _compose_dataset():
     with initialize_config_dir(version_base=None, config_dir=_CONFIG_DIR):
         return compose(
-            config_name="config", overrides=["dataset=era5_meteostat/field_temp"]
+            config_name="config", overrides=["dataset=era5_meteostat/temp"]
         ).dataset
 
 
-def test_field_temp_config_parses_and_validates():
+def test_temp_config_parses_and_validates():
     cfg = _compose_dataset()
     fc = parse_field_config(cfg)
     assert fc.transform_type == "real"

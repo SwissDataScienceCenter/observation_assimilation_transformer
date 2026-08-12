@@ -68,7 +68,7 @@ def test_gp_field_training_step_runs(model_name, overrides):
             overrides=[
                 f"model={model_name}",
                 "predictor=gp_predictor",
-                "dataset=cosmo_peakweather/field_temp",
+                "dataset=cosmo_peakweather/temp",
                 *overrides,
             ],
         )
@@ -151,7 +151,7 @@ def test_gp_field_training_step_runs_under_precision_64(model_name, overrides):
             overrides=[
                 f"model={model_name}",
                 "predictor=gp_predictor",
-                "dataset=cosmo_peakweather/field_temp",
+                "dataset=cosmo_peakweather/temp",
                 "trainer.precision=64",
                 *overrides,
             ],

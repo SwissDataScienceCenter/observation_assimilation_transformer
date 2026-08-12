@@ -37,6 +37,9 @@ _FIELD_SCHEMA = {
 
 
 def _config():
+    base = OmegaConf.load(
+        os.path.join(_REPO_ROOT, "configs/dataset/cosmo_peakweather/base.yaml")
+    )
     settings = OmegaConf.load(
         os.path.join(_REPO_ROOT, "configs/dataset/cosmo_peakweather/settings.yaml")
     )
@@ -44,6 +47,7 @@ def _config():
         os.path.join(_REPO_ROOT, "configs/dataset/cosmo_peakweather/catalog.yaml")
     )
     return OmegaConf.merge(
+        base,
         settings,
         OmegaConf.create({"catalog": catalog}),
         OmegaConf.create(_FIELD_SCHEMA),

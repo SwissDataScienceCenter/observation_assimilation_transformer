@@ -189,9 +189,9 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
         return ("d", 1, None, None, None, None, None)
 
     monkeypatch.setattr("oat.data_module.setup._setup_field_data_and_transform", fake)
-    cfg = OmegaConf.create({"dataset": {"dataset_type": "field_cosmo_peakweather"}})
+    cfg = OmegaConf.create({"dataset": {"dataset_type": "cosmo_peakweather"}})
     S.setup_data_and_transform(cfg, logging.getLogger("t"))
-    assert called["hit"] == "field_cosmo_peakweather"
+    assert called["hit"] == "cosmo_peakweather"
 
 
 def test_obs_source_callables_are_picklable() -> None:

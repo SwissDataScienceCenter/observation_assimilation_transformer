@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # DEPRECATED: use the central dispatcher instead, e.g.
-#   python -m scripts.train --model gp_field --dataset cosmo_peakweather/field_temp --submit
+#   python -m scripts.train --model gp_field --dataset cosmo_peakweather/temp --submit
 # See scripts/submit_training.sh / scripts/train.py.
 #
 # NOTE: the srun invocation below still composes the bare `model=gp_baseline`

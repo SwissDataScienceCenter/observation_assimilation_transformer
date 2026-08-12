@@ -6,7 +6,7 @@ run name used consistently for the checkpoint dir and W&B run.
 
 Usage:
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp_precip
-    python -m scripts.train --model gp_field --dataset era5_meteostat/field_temp --dry-run
+    python -m scripts.train --model gp_field --dataset era5_meteostat/temp --dry-run
     python -m scripts.train --model ootg --dataset cosmo_peakweather/temp --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
@@ -21,17 +21,18 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
+# Both families only ship "temp" (univariate) and "temp_precip" (multivariate)
+# at the top level now -- the old grid-only "precip" variant and the
+# "field_"-prefixed names were retired when Task 7 promoted the flat-Field
+# configs to these clean names and moved the grid-only ones to legacy/.
 DATASET_VARIANTS = (
     "temp",
-    "precip",
     "temp_precip",
-    "field_temp",
-    "field_temp_precip",
 )
 DATASETS = tuple(
     f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
 )
-UNIVARIATE_VARIANTS = ("temp", "precip", "field_temp")
+UNIVARIATE_VARIANTS = ("temp",)
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,11 @@ MODEL_SPECS = {
         "scripts.train_model",
         ("model=uninformed_oat", "predictor=oat_predictor", "split=no_conditioning"),
     ),
-    # Field-path variants: same models on the flat-Field datasets, with the
-    # point-wise global/topographic encoders (the grid encoders need the old
-    # grid batch). Must be paired with a field_* dataset (see validate()).
+    # "_field" presets: same models with the point-wise global/topographic
+    # encoders pinned explicitly. Every non-legacy dataset is flat-Field-shaped
+    # now (Task 7 promoted those configs to the clean top-level names), and
+    # model=oat/uninformed_oat already default to point/mlp too, so these are
+    # a stable, explicit-override alias rather than a dataset-gated variant.
     "oat_field": ModelSpec(
         "scripts.train_model",
         (
@@ -141,14 +144,6 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
 
 def validate(model: str, dataset: str) -> None:
     _, variant = dataset.split("/", 1)
-    is_field_model = model.endswith("_field")
-    is_field_dataset = variant.startswith("field_")
-    if is_field_model != is_field_dataset:
-        raise SystemExit(
-            f"Field models (*_field) pair only with field_* datasets, and non-field "
-            f"models only with non-field datasets. Got model='{model}', "
-            f"dataset='{dataset}'."
-        )
     if MODEL_SPECS[model].univariate_only and variant not in UNIVARIATE_VARIANTS:
         raise SystemExit(
             f"Model '{model}' is univariate-only (see gp_baseline.py); dataset variant "

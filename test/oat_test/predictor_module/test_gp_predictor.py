@@ -150,7 +150,7 @@ def test_gp_oat_baseline_config_builds_trunk_backed_gp(model_name, deep):
             overrides=[
                 f"model={model_name}",
                 "predictor=gp_predictor",
-                "dataset=cosmo_peakweather/field_temp",
+                "dataset=cosmo_peakweather/temp",
             ],
         )
 
@@ -193,7 +193,7 @@ def test_gp_oat_mean_matches_uninformed_baseline_trunk(model_name):
                 config_name="config",
                 overrides=[
                     f"model={name}",
-                    "dataset=cosmo_peakweather/field_temp",
+                    "dataset=cosmo_peakweather/temp",
                 ],
             )
         return setup_backbone_cfgs(cfg, FIELD_EXTENT)
@@ -225,7 +225,10 @@ def test_train_model_routes_gp_configs_to_the_gp_path(model_name, is_gp):
     with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
         cfg = compose(
             config_name="config",
-            overrides=[f"model={model_name}", "dataset=cosmo_peakweather/precip"],
+            overrides=[
+                f"model={model_name}",
+                "dataset=cosmo_peakweather/legacy/precip",
+            ],
         )
 
     assert _is_gp_model(cfg) is is_gp
