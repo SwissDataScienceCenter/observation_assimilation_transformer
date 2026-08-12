@@ -142,6 +142,41 @@ def test_validation_rejects_obs_order_mismatch() -> None:
         validate_field_config_against_scalars(ds, cfg)
 
 
+def _global_role_config(nwp_inputs: list[str]) -> Any:
+    import types
+
+    fc = parse_field_config(
+        {
+            "coord_sources": {"stations": {"from": "obs"}},
+            "fields": {
+                "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+                "nwp": {"coords": "stations", "inputs": nwp_inputs},
+            },
+            "roles": {"target": "obs", "global": "nwp"},
+            "transform_type": "real",
+        }
+    )
+    ds = types.SimpleNamespace(field_config=fc)
+    cfg = OmegaConf.create(
+        {"dataset": {"obs_vars": ["temperature"], "nwp_vars": ["T_2M"], "geo_vars": []}}
+    )
+    return ds, cfg
+
+
+def test_validation_allows_extra_global_channels_after_nwp_vars() -> None:
+    # Global field may append context channels (e.g. topo.*) after the NWP
+    # scalars; nwp_vars need only be a leading prefix -> no raise.
+    ds, cfg = _global_role_config(["nwp.T_2M", "topo.DEM"])
+    validate_field_config_against_scalars(ds, cfg)
+
+
+def test_validation_rejects_global_not_prefixed_by_nwp_vars() -> None:
+    # nwp_vars must lead the global field's channels.
+    ds, cfg = _global_role_config(["topo.DEM", "nwp.T_2M"])
+    with pytest.raises(ValueError, match="must start with"):
+        validate_field_config_against_scalars(ds, cfg)
+
+
 def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
     import logging
 

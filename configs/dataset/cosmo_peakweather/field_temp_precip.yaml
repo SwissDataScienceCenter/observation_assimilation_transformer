@@ -21,9 +21,7 @@ fields:
   # (topo still also feeds the separate topographic encoder).
   nwp:
     coords: stations
-    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT,
-             topo.DEM, topo.TPI_500M, topo.TPI_2000M,
-             topo.WE_DERIVATIVE_2000M_SIGRATIO1, topo.SN_DERIVATIVE_2000M_SIGRATIO1]
+    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
     query: true
     k: 4
 

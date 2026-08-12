@@ -75,7 +75,7 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
             "nwp": self._build_nwp_source(),
             "topo": self._build_topo_source(),
         }
-        coord_source_coords = self._build_coord_source_coords(field_config, dtype)
+        coord_source_coords = self._build_coord_source_coords(field_config)
 
         super().__init__(
             field_config=field_config,
@@ -290,30 +290,16 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
 
     # -- coord sources --
     def _build_coord_source_coords(
-        self, field_config: FieldConfig, dtype: torch.dtype
+        self, field_config: FieldConfig
     ) -> dict[str, Tensor]:
-        coords: dict[str, Tensor] = {}
-        for name, spec in field_config.coord_sources.items():
-            if spec.kind == "obs":
-                coords[name] = self.station_coords
-            elif spec.kind == "nwp":
-                coords[name] = self.nwp_lonlat
-            elif spec.kind == "regular":
-                if spec.res is None or spec.extent is None:
-                    raise ValueError(
-                        f"coord source {name!r} has kind 'regular' but is "
-                        f"missing 'res'/'extent'"
-                    )
-                x0, y0, x1, y1 = spec.extent
-                xs = torch.arange(x0, x1, spec.res, dtype=dtype)
-                ys = torch.arange(y0, y1, spec.res, dtype=dtype)
-                grid_x, grid_y = torch.meshgrid(xs, ys, indexing="xy")
-                coords[name] = torch.stack(
-                    [grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1
-                )
-            else:
-                raise ValueError(f"unknown coord source kind {spec.kind!r}")
-        return coords
+        return {
+            name: (
+                self.nwp_lonlat
+                if name == field_config.nwp_coord_source
+                else self.station_coords
+            )
+            for name in field_config.coord_sources
+        }
 
     @staticmethod
     def _share(tensor: Any) -> None:

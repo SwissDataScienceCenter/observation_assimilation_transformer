@@ -82,7 +82,16 @@ def validate_field_config_against_scalars(dataset: Any, cfg: DictConfig) -> None
     for role, scalar in checks:
         field_out = list(fc.fields[roles[role]].out)
         expected = [str(v) for v in cfg.dataset.get(scalar, [])]
-        if field_out != expected:
+        if role == "global":
+            # The global field may append extra context channels (e.g. topo.*)
+            # after the NWP scalars, so nwp_vars need only be a leading prefix
+            # of the field's channels, not an exact match.
+            if field_out[: len(expected)] != expected:
+                raise ValueError(
+                    f"role 'global' field {roles[role]!r} channels {field_out} "
+                    f"must start with cfg.dataset.{scalar} {expected} (order matters)"
+                )
+        elif field_out != expected:
             raise ValueError(
                 f"role {role!r} field {roles[role]!r} channels {field_out} "
                 f"!= cfg.dataset.{scalar} {expected} (order matters)"

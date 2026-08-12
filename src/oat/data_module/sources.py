@@ -14,6 +14,8 @@ from torch import Tensor
 
 @dataclass
 class SourceInfo:
+    """Static metadata describing a `Source`."""
+
     available_vars: list[str]
     native_coords: str | None
     has_mask: bool
@@ -21,6 +23,8 @@ class SourceInfo:
 
 
 class Source(ABC):
+    """Common interface for reading variables at a set of destination coordinates."""
+
     var_names: list[str]
     units: dict[str, str]
     has_mask: bool = False
@@ -44,6 +48,7 @@ class Source(ABC):
 
     @property
     def info(self) -> SourceInfo:
+        """This source's metadata as a `SourceInfo`."""
         return SourceInfo(
             available_vars=list(self.var_names),
             native_coords=self.native_coord_source,
@@ -53,6 +58,8 @@ class Source(ABC):
 
 
 class PointSetSource(Source):
+    """Source backed by an irregular point set, indexed via a cKDTree."""
+
     def __init__(
         self,
         coords: Tensor,
@@ -72,16 +79,20 @@ class PointSetSource(Source):
         self._tree = cKDTree(coords[..., :2].detach().cpu().numpy())
 
     def load(self, time_idx: int) -> Tensor:
+        """Delegate to `values_fn` for all variables at the native points."""
         return self._values_fn(time_idx)
 
     def load_mask(self, time_idx: int) -> Tensor | None:
+        """Delegate to `mask_fn`, or None when no mask function was given."""
         return None if self._mask_fn is None else self._mask_fn(time_idx)
 
     def build_index(self, dst_coords: Tensor) -> Tensor:
+        """Nearest native point index for each destination point (cKDTree query)."""
         _, idx = self._tree.query(dst_coords[..., :2].detach().cpu().numpy())
         return torch.as_tensor(idx, dtype=torch.long)
 
     def build_interp(self, dst_coords: Tensor, k: int) -> tuple[Tensor, Tensor]:
+        """k nearest native points and inverse-distance weights per destination point."""
         d, idx = self._tree.query(dst_coords[..., :2].detach().cpu().numpy(), k=k)
         d = d.reshape(-1, k)
         idx = idx.reshape(-1, k)
@@ -93,6 +104,8 @@ class PointSetSource(Source):
 
 
 class RasterSource(Source):
+    """Source backed by a regular raster grid, indexed via coordinate arithmetic."""
+
     def __init__(
         self,
         raster: Tensor,
@@ -113,9 +126,11 @@ class RasterSource(Source):
         self._rx, self._ry = res
 
     def load(self, time_idx: int) -> Tensor:
+        """Return the flattened raster, shape [C, H*W] (time-invariant)."""
         return self._flat
 
     def build_index(self, dst_coords: Tensor) -> Tensor:
+        """Nearest raster cell (row-major flat index) for each destination point."""
         xy = dst_coords[..., :2]
         col = (
             torch.round((xy[..., 0] - self._x0) / self._rx).long().clamp(0, self._w - 1)
@@ -126,6 +141,7 @@ class RasterSource(Source):
         return row * self._w + col
 
     def build_interp(self, dst_coords: Tensor, k: int) -> tuple[Tensor, Tensor]:
+        """k nearest raster cells and inverse-distance weights per destination point."""
         xy = dst_coords[..., :2]
         x, y = xy[..., 0], xy[..., 1]
         fx = (x - self._x0) / self._rx

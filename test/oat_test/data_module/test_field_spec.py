@@ -1,7 +1,6 @@
 import pytest
 
 from oat.data_module.field_spec import (
-    CoordSourceSpec,
     InputRef,
     parse_field_config,
     parse_input_ref,
@@ -29,7 +28,6 @@ def test_parse_field_config_full():
         "coord_sources": {
             "stations": {"from": "obs"},
             "nwp_grid": {"from": "nwp"},
-            "grid_1km": {"from": "regular", "res": 1000},
         },
         "fields": {
             "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
@@ -50,9 +48,8 @@ def test_parse_field_config_full():
     }
     fc = parse_field_config(cfg)
     assert fc.transform_type == "real"
-    assert fc.coord_sources["grid_1km"] == CoordSourceSpec(
-        name="grid_1km", kind="regular", res=1000.0, extent=None
-    )
+    assert fc.coord_sources == frozenset({"stations", "nwp_grid"})
+    assert fc.nwp_coord_source == "nwp_grid"
     # out defaults to input leaf names when omitted
     assert fc.fields["nwp"].out == ("T_2M", "wind_speed")
     assert fc.fields["nwp"].query is True

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from oat.data_module.sources import SourceInfo
 
@@ -18,6 +18,12 @@ class InputRef:
     name: str
 
 
+class SourceRef(NamedTuple):
+    """An ``InputRef`` narrowed to the source-kind case (source/name non-None)."""
+    source: str
+    name: str
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     name: str
@@ -27,18 +33,20 @@ class FieldSpec:
     query: bool
     k: int = 1
 
-
-@dataclass(frozen=True)
-class CoordSourceSpec:
-    name: str
-    kind: Literal["obs", "nwp", "regular"]
-    res: float | None = None
-    extent: tuple[float, float, float, float] | None = None
+    @property
+    def source_refs(self) -> tuple[SourceRef, ...]:
+        """The subset of ``inputs`` that read from a source (not a coord)."""
+        return tuple(
+            SourceRef(r.source, r.name)
+            for r in self.inputs
+            if r.kind == "source" and r.source is not None
+        )
 
 
 @dataclass(frozen=True)
 class FieldConfig:
-    coord_sources: dict[str, CoordSourceSpec]
+    coord_sources: frozenset[str]
+    nwp_coord_source: str | None
     fields: dict[str, FieldSpec]
     roles: dict[str, str]
     transform_type: str
@@ -59,28 +67,16 @@ def parse_input_ref(ref: str) -> InputRef:
 
 
 def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
-    coord_sources: dict[str, CoordSourceSpec] = {}
+    coord_sources: set[str] = set()
+    nwp_coord_source: str | None = None
     for name, spec in dict(cfg["coord_sources"]).items():
-        spec = dict(spec)
-        kind = spec["from"]
-        if kind not in ("obs", "nwp", "regular"):
+        kind = dict(spec)["from"]
+        if kind not in ("obs", "nwp"):
             msg = f"coord source {name!r} has unknown 'from': {kind!r}"
             raise ValueError(msg)
-        extent = spec.get("extent")
-        parsed_extent: tuple[float, float, float, float] | None = None
-        if extent is not None:
-            parsed_extent = (
-                float(extent[0]),
-                float(extent[1]),
-                float(extent[2]),
-                float(extent[3]),
-            )
-        coord_sources[name] = CoordSourceSpec(
-            name=name,
-            kind=kind,
-            res=float(spec["res"]) if spec.get("res") is not None else None,
-            extent=parsed_extent,
-        )
+        coord_sources.add(name)
+        if kind == "nwp" and nwp_coord_source is None:
+            nwp_coord_source = name
 
     fields: dict[str, FieldSpec] = {}
     for name, spec in dict(cfg["fields"]).items():
@@ -102,7 +98,8 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
 
     roles = {str(k): str(v) for k, v in dict(cfg.get("roles", {})).items()}
     return FieldConfig(
-        coord_sources=coord_sources,
+        coord_sources=frozenset(coord_sources),
+        nwp_coord_source=nwp_coord_source,
         fields=fields,
         roles=roles,
         transform_type=str(cfg["transform_type"]),
@@ -121,7 +118,7 @@ def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> N
             )
         for ref in field.inputs:
             if ref.kind == "coord":
-                if ref.name not in ("x", "y", "t"):
+                if ref.name not in _COORD_AXES:
                     raise ValueError(
                         f"field {fname!r} has bad coords axis {ref.name!r}"
                     )
@@ -146,13 +143,11 @@ def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> N
             )
 
         used_masked = {
-            r.source
-            for r in field.inputs
-            if r.kind == "source" and r.source in masked_sources
+            r.source for r in field.source_refs if r.source in masked_sources
         }
         if used_masked:
-            only_that_source = all(
-                r.kind == "source" and r.source in used_masked for r in field.inputs
+            only_that_source = len(field.source_refs) == len(field.inputs) and all(
+                r.source in used_masked for r in field.source_refs
             )
             if len(used_masked) != 1 or not only_that_source:
                 raise ValueError(
@@ -172,12 +167,12 @@ def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> N
 
     target_field = cfg.roles.get("target")
     if target_field is not None:
-        inputs = cfg.fields[target_field].inputs
-        srcs = {r.source for r in inputs if r.kind == "source"}
+        target_spec = cfg.fields[target_field]
+        srcs = {r.source for r in target_spec.source_refs}
         if not (
             len(srcs) == 1
             and next(iter(srcs)) in masked_sources
-            and all(r.kind == "source" for r in inputs)
+            and len(target_spec.source_refs) == len(target_spec.inputs)
         ):
             raise ValueError(
                 f"roles.target {target_field!r} must be the obs field "

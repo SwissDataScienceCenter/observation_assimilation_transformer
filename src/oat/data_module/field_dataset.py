@@ -57,28 +57,36 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         self.obs_var_support = obs_var_support
         self.dtype = dtype
         self._t_hours = EPOCH_HOURS(self.times).to(dtype)
+        self._all_field_names = list(field_config.fields)
+        self._query_field_names = [n for n, f in field_config.fields.items() if f.query]
+        # Per-source name -> channel index, to avoid a linear var_names.index()
+        # scan on every field assembly.
+        self._var_index = {
+            name: {var: i for i, var in enumerate(src.var_names)}
+            for name, src in sources.items()
+        }
 
         # Precompute (source, coord_source, k) indices used by any field.
         # k=1 -> (idx, None) via build_index; k>1 -> (idx, weights) via
         # build_interp (IDW). None marks the unweighted nearest read.
         self._index_cache: dict[tuple[str, str, int], tuple[Tensor, Tensor | None]] = {}
         for field in field_config.fields.values():
-            for ref in field.inputs:
-                if ref.kind == "source":
-                    assert ref.source is not None
-                    key = (ref.source, field.coords, field.k)
-                    if key not in self._index_cache:
-                        self._index_cache[key] = self._build_index_entry(
-                            sources[ref.source], self._coords[field.coords], field.k
-                        )
+            for ref in field.source_refs:
+                key = (ref.source, field.coords, field.k)
+                if key not in self._index_cache:
+                    self._index_cache[key] = self._build_index_entry(
+                        sources[ref.source], self._coords[field.coords], field.k, dtype
+                    )
 
     @staticmethod
     def _build_index_entry(
-        source: Source, dst_coords: Tensor, k: int
+        source: Source, dst_coords: Tensor, k: int, dtype: torch.dtype
     ) -> tuple[Tensor, Tensor | None]:
+        """Nearest-neighbor index (k=1), or IDW index + weights (k>1)."""
         if k == 1:
             return source.build_index(dst_coords), None
-        return source.build_interp(dst_coords, k)
+        idx, weights = source.build_interp(dst_coords, k)
+        return idx, weights.to(dtype)
 
     def __len__(self) -> int:
         return len(self.times)
@@ -99,6 +107,7 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
 
     # -- assembly --
     def _coords3(self, spatial: Tensor, t_val: Tensor) -> Tensor:
+        """Append the (broadcast) time value as a third coordinate column."""
         t_col = t_val.to(spatial.dtype).expand(spatial.shape[0], 1)
         return torch.cat([spatial, t_col], dim=-1)
 
@@ -110,29 +119,25 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         frames: dict[str, Tensor],
         mask_frames: dict[str, Tensor | None],
     ) -> Field:
+        """Stack one field's per-channel values (and mask, if its source has one)."""
         channels: list[Tensor] = []
         mask_channels: list[Tensor] = []
-        masked_source: str | None = None
         for ref in field.inputs:
             if ref.kind == "coord":
                 channels.append(coords3[:, _AXIS[ref.name]])
-            else:
-                assert ref.source is not None
-                src = self._source_objs[ref.source]
-                idx, w = index_by_source[ref.source]
-                frame = frames[ref.source]
-                vals = frame[src.var_names.index(ref.name)][idx].to(self.dtype)
-                col = vals if w is None else (vals * w.to(self.dtype)).sum(dim=-1)
-                channels.append(col)
-                if src.has_mask:
-                    masked_source = ref.source
-                    mframe = mask_frames[ref.source]
-                    assert mframe is not None
-                    mask_channels.append(
-                        mframe[src.var_names.index(ref.name)][idx].to(self.dtype)
-                    )
+                continue
+            assert ref.source is not None
+            src = self._source_objs[ref.source]
+            idx, w = index_by_source[ref.source]
+            col_idx = self._var_index[ref.source][ref.name]
+            vals = frames[ref.source][col_idx][idx].to(self.dtype)
+            channels.append(vals if w is None else (vals * w).sum(dim=-1))
+            if src.has_mask:
+                mframe = mask_frames[ref.source]
+                assert mframe is not None
+                mask_channels.append(mframe[col_idx][idx].to(self.dtype))
         values = torch.stack(channels, dim=-1)
-        mask = torch.stack(mask_channels, dim=-1) if masked_source is not None else None
+        mask = torch.stack(mask_channels, dim=-1) if mask_channels else None
         return Field(coords3, values, list(field.out), mask)
 
     def _build_fields(
@@ -142,16 +147,14 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         time_idx: int,
         names: list[str],
     ) -> dict[str, Field]:
+        """Assemble the named fields for one time step, loading each source once."""
         t_val = self._t_hours[time_idx].reshape(1)
         coords3_by_cs = {
             cs: self._coords3(sp, t_val) for cs, sp in coords_by_cs.items()
         }
         # Load each needed source's frame once per assembly call.
         needed: set[str] = {
-            ref.source
-            for n in names
-            for ref in self.field_config.fields[n].inputs
-            if ref.kind == "source" and ref.source is not None
+            ref.source for n in names for ref in self.field_config.fields[n].source_refs
         }
         frames = {s: self._source_objs[s].load(time_idx) for s in needed}
         mask_frames = {s: self._source_objs[s].load_mask(time_idx) for s in needed}
@@ -168,39 +171,47 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
             )
         return out
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        names = list(self.field_config.fields)
-        index_by_field = {
-            n: {
-                ref.source: self._index_cache[
-                    (
-                        ref.source,
-                        self.field_config.fields[n].coords,
-                        self.field_config.fields[n].k,
-                    )
-                ]
-                for ref in self.field_config.fields[n].inputs
-                if ref.kind == "source" and ref.source is not None
-            }
-            for n in names
+    def _cached_index_entries(
+        self, name: str
+    ) -> dict[str, tuple[Tensor, Tensor | None]]:
+        """Index entries for a field's source inputs, from the precomputed cache."""
+        field = self.field_config.fields[name]
+        return {
+            ref.source: self._index_cache[(ref.source, field.coords, field.k)]
+            for ref in field.source_refs
         }
+
+    def _fresh_index_entries(
+        self,
+        name: str,
+        dst_coords: Tensor,
+        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]],
+    ) -> dict[str, tuple[Tensor, Tensor | None]]:
+        """Index entries built against ``dst_coords``, memoized per (source, k)."""
+        field = self.field_config.fields[name]
+        entries: dict[str, tuple[Tensor, Tensor | None]] = {}
+        for ref in field.source_refs:
+            key = (ref.source, field.k)
+            if key not in cache:
+                cache[key] = self._build_index_entry(
+                    self._source_objs[ref.source], dst_coords, field.k, self.dtype
+                )
+            entries[ref.source] = cache[key]
+        return entries
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        names = self._all_field_names
+        index_by_field = {n: self._cached_index_entries(n) for n in names}
         fields = self._build_fields(self._coords, index_by_field, idx, names)
         return {"index": idx, "fields": fields}
 
     def get_query(self, query_coords: Tensor, idx: int) -> dict[str, Field]:
+        """Assemble query-only fields at arbitrary coordinates (not the dataset grid)."""
         query_coords = query_coords.to(self.dtype)
-        names = [n for n, f in self.field_config.fields.items() if f.query]
+        names = self._query_field_names
+        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]] = {}
         index_by_field = {
-            n: {
-                ref.source: self._build_index_entry(
-                    self._source_objs[ref.source],
-                    query_coords,
-                    self.field_config.fields[n].k,
-                )
-                for ref in self.field_config.fields[n].inputs
-                if ref.kind == "source" and ref.source is not None
-            }
-            for n in names
+            n: self._fresh_index_entries(n, query_coords, cache) for n in names
         }
         coords_by_cs = {self.field_config.fields[n].coords: query_coords for n in names}
         return self._build_fields(coords_by_cs, index_by_field, idx, names)
@@ -220,46 +231,45 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         return self.field_config.roles["target"]
 
     def target_coord_source(self) -> str:
-        return self.field_config.fields[self.field_config.roles["target"]].coords
+        return self.field_config.fields[self._obs_field_name()].coords
 
     @property
     def nwp_extent(self) -> dict[str, Tensor]:
-        for name, spec in self.field_config.coord_sources.items():
-            if spec.kind == "nwp":
-                xy = self._coords[name][:, :2]
-                return {"min": xy.amin(dim=0), "max": xy.amax(dim=0)}
-        raise ValueError("no coord source of kind 'nwp' to derive nwp_extent from")
+        name = self.field_config.nwp_coord_source
+        if name is None:
+            raise ValueError("no coord source of kind 'nwp' to derive nwp_extent from")
+        xy = self._coords[name][:, :2]
+        return {"min": xy.amin(dim=0), "max": xy.amax(dim=0)}
+
+    @staticmethod
+    def _support_mask(n: int, predicate: Callable[[int], bool]) -> list[int]:
+        return [i for i in range(n) if predicate(i)]
 
     def _build_obs_pre(
         self, obs_out: list[str], ttype: str, offset: float
     ) -> T.Transform:
         """Build the obs pre-transform (applied before gathering obs stats)."""
-        obs_pre: T.Transform
+        sup = self.obs_var_support
+        n = len(obs_out)
         if ttype == "real":
-            log_idx = [
-                i
-                for i in range(len(obs_out))
-                if self.obs_var_support.lower_bounds[i] >= 0.0
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            obs_pre = T.LogTransform(apply_to=log_idx, feature_dim=-1, offset=offset)
-        elif ttype == "keep_support":
-            # offset STRICTLY-positive (open-lower-bound) vars away from zero
-            zero_lb = [
-                i
-                for i in range(len(obs_out))
-                if self.obs_var_support.lower_bounds[i] == 0.0
-                and bool(self.obs_var_support.lower_open[i])
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            off = torch.zeros(len(obs_out))
-            off[zero_lb] = offset
-            obs_pre = T.TranslateScaleTransform(
-                off, torch.ones(len(obs_out)), channel_dim=-1
+            log_idx = self._support_mask(
+                n,
+                lambda i: sup.lower_bounds[i] >= 0.0
+                and sup.upper_bounds[i] == float("inf"),
             )
-        else:
-            raise ValueError(f"Unsupported transform_type {ttype!r}")
-        return obs_pre
+            return T.LogTransform(apply_to=log_idx, feature_dim=-1, offset=offset)
+        if ttype == "keep_support":
+            # offset STRICTLY-positive (open-lower-bound) vars away from zero
+            zero_lb = self._support_mask(
+                n,
+                lambda i: sup.lower_bounds[i] == 0.0
+                and bool(sup.lower_open[i])
+                and sup.upper_bounds[i] == float("inf"),
+            )
+            off = torch.zeros(n)
+            off[zero_lb] = offset
+            return T.TranslateScaleTransform(off, torch.ones(n), channel_dim=-1)
+        raise ValueError(f"Unsupported transform_type {ttype!r}")
 
     def _compose_output_transform(
         self,
@@ -269,25 +279,21 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
         ttype: str,
     ) -> T.Transform:
         """Compose obs transform (+ output_transform) from obs_pre + gathered stats."""
-        output_transform: T.Transform
         if ttype == "real":
-            output_transform = T.ComposedTransform(
-                [obs_pre, obs_stats.get_standard_transform()]
-            )
-        else:
-            translate = -obs_stats.mean.clone()
-            only_scale = [
-                i
-                for i in range(len(obs_out))
-                if self.obs_var_support.lower_bounds[i] == 0.0
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            translate[only_scale] = 0.0
-            scale = 1.0 / obs_stats.std.clone()
-            output_transform = T.ComposedTransform(
-                [obs_pre, T.TranslateScaleTransform(translate, scale, channel_dim=-1)]
-            )
-        return output_transform
+            return T.ComposedTransform([obs_pre, obs_stats.get_standard_transform()])
+        sup = self.obs_var_support
+        n = len(obs_out)
+        translate = -obs_stats.mean.clone()
+        only_scale = self._support_mask(
+            n,
+            lambda i: sup.lower_bounds[i] == 0.0
+            and sup.upper_bounds[i] == float("inf"),
+        )
+        translate[only_scale] = 0.0
+        scale = 1.0 / obs_stats.std.clone()
+        return T.ComposedTransform(
+            [obs_pre, T.TranslateScaleTransform(translate, scale, channel_dim=-1)]
+        )
 
     def compute_field_leaves(
         self,
@@ -401,12 +407,13 @@ class FieldDatasetBase(Dataset[dict[str, Any]]):
                 raise ValueError(
                     f"NWP deps {missing} for {ov!r} not in field {nwp_field!r}"
                 )
+        mapping = {ov: obs_to_nwp[ov] for ov in obs_out}
 
         def _pre(sample: dict[str, Any]) -> dict[str, Any]:
             fields = dict(sample["fields"])
             f = fields[nwp_field]
             nwp = {v: f.values[..., i] for i, v in enumerate(nwp_vars)}
-            new_vals = torch.stack([obs_to_nwp[ov][1](nwp) for ov in obs_out], dim=-1)
+            new_vals = torch.stack([mapping[ov][1](nwp) for ov in obs_out], dim=-1)
             fields[nwp_field] = Field(f.coords, new_vals, obs_out, f.mask)
             return {**sample, "fields": fields}
 
