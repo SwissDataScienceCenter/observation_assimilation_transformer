@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import torch
 
 _TNPDIR = Path(__file__).parents[4] / "deps" / "gridded-tnp"
@@ -294,41 +295,6 @@ def _make_topo_predictor(dim_y=1, dim_gridded_y=2, v2d=None):
     )
 
 
-def _make_topo_gen_batch(B=1, N_c=5, N_t=4, dim_y=1):
-    return types.SimpleNamespace(
-        xc=torch.randn(B, N_c, 2),
-        yc=torch.randn(B, N_c, dim_y),
-        xc_grid=torch.randn(B, 8, 8, 2),
-        yc_grid=torch.randn(B, 8, 8, 2),
-        xt=torch.randn(B, N_t, 2),
-        yt=torch.randn(B, N_t, dim_y),
-        topo_c=torch.randn(B, N_c, C_TOPO, HP, WP),
-        topo_t=torch.randn(B, N_t, C_TOPO, HP, WP),
-    )
-
-
-def _make_topo_oat_batch(B=1, N_obs=15, N_q=5, dim_y=1, n_nwp=2):
-    batch = _make_oat_batch(B=B, N_obs=N_obs, N_q=N_q, dim_y=dim_y, n_nwp=n_nwp)
-    batch["observation_data"]["topo"] = torch.randn(B, N_obs, C_TOPO, HP, WP)
-    batch["query_data"]["topo"] = torch.randn(B, N_q, C_TOPO, HP, WP)
-    return batch
-
-
-def test_predictor_generator_batch_with_topo():
-    pred = _make_topo_predictor(dim_y=1)
-    dist = pred._forward_generator_batch(_make_topo_gen_batch(dim_y=1))
-    assert dist.mean.shape[-1] == 1
-
-
-def test_predictor_predict_step_with_topo():
-    pred = _make_topo_predictor(dim_y=1)
-    out = pred.predict_step(_make_topo_oat_batch(B=1, N_q=5, dim_y=1), 0)
-    assert out.shape == (1, 5, 1, 1)
-
-
-def test_predictor_predict_step_topo_empty_context():
-    pred = _make_topo_predictor(dim_y=1)
-    batch = _make_topo_oat_batch(B=1, N_obs=5, N_q=3, dim_y=1)
-    batch["observation_data"]["mask_obs"] = torch.zeros(1, 5, 1)
-    out = pred.predict_step(batch, 0)
-    assert out.shape == (1, 3, 1, 1)
+def test_ootg_topo_predictor_is_deprecated():
+    with pytest.raises(NotImplementedError, match="deprecated"):
+        _make_topo_predictor(dim_y=1)
