@@ -22,8 +22,11 @@ dtype_map = {
 
 # (deps, fn) where fn(*dep_tensors) → tensor (H, W)
 COSMO_DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
-    'wind_speed': (['U_10M', 'V_10M'], lambda u, v: torch.sqrt(u**2 + v**2)),
-    'wind_direction': (['U_10M', 'V_10M'], lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0),
+    "wind_speed": (["U_10M", "V_10M"], lambda u, v: torch.sqrt(u**2 + v**2)),
+    "wind_direction": (
+        ["U_10M", "V_10M"],
+        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
+    ),
 }
 
 ERA5_DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {

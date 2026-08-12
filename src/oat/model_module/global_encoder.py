@@ -5,9 +5,13 @@ from torch.nn import functional as F
 from abc import ABC, abstractmethod
 
 
-def pos_transform(val: torch.Tensor, min: torch.Tensor, max: torch.Tensor) -> torch.Tensor:
+def pos_transform(
+    val: torch.Tensor, min: torch.Tensor, max: torch.Tensor
+) -> torch.Tensor:
     """Transform positions from high-res to low-res grid coordinates."""
-    assert val.shape[-1] == min.shape[-1] == max.shape[-1], "Dimension mismatch in position transformation."
+    assert (
+        val.shape[-1] == min.shape[-1] == max.shape[-1]
+    ), "Dimension mismatch in position transformation."
     val_scaled = 2 * (val - min) / (max - min) - 1  # Scale to [-1, 1]
     return val_scaled
 
@@ -44,9 +48,9 @@ class InterpolationGlobalEncoder(BaseGlobalEncoder):
         """
         raise NotImplementedError(
             "InterpolationGlobalEncoder (grid global encoders MLP/UNet/ResNetCNN/"
-            "SwinUNETR, and the interpolation baseline) is deprecated with the old grid "
-            "data path. Use the point-based field path (global_encoder type 'Point'). "
-            "Revive by removing this guard."
+            "SwinUNETR, and the interpolation baseline) is deprecated with the old "
+            "grid data path. Use the point-based field path (global_encoder type "
+            "'Point'). Revive by removing this guard."
         )
         super().__init__()
         self.register_buffer("field_min", torch.as_tensor(field_extent['min']))

@@ -25,7 +25,11 @@ from torch import Tensor
 from oat.data_module.dataset import DatasetBase
 from oat.data_module.dataset_helpers import (
     COSMO_DERIVED_FEATURES as DERIVED_FEATURES,
+)
+from oat.data_module.dataset_helpers import (
     build_obs_variable_support as _build_obs_variable_support,
+)
+from oat.data_module.dataset_helpers import (
     dtype_map,
 )
 from oat.data_module.field_spec import FieldConfig, parse_field_config
@@ -53,8 +57,8 @@ class CosmoPeakWeatherDataset(DatasetBase):
     """``DatasetBase`` wired to the existing COSMO / PeakWeather loaders.
 
     Accepts the same ``config`` shape as ``legacy.CosmoPeakWeatherDataset``
-    (data paths, variable lists, station/time filters, ``catalog``) plus the field schema
-    (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an obs
+    (data paths, variable lists, station/time filters, ``catalog``) plus the field
+    schema (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an obs
     ``PointSetSource``, an nwp ``PointSetSource`` (native grid points in
     EPSG:2056) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.

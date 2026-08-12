@@ -206,7 +206,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         return {"index": idx, "fields": fields}
 
     def get_query(self, query_coords: Tensor, idx: int) -> dict[str, Field]:
-        """Assemble query-only fields at arbitrary coordinates (not the dataset grid)."""
+        """Assemble query-only fields at arbitrary coords (not the dataset grid)."""
         query_coords = query_coords.to(self.dtype)
         names = self._query_field_names
         cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]] = {}
