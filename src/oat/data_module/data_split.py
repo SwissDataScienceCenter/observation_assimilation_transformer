@@ -1,4 +1,4 @@
-"""Field-native train/eval split wrappers mirroring data_split.py semantics."""
+"""Field-native train/eval split wrappers mirroring legacy/data_split.py semantics."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _as_index_array(x: Any) -> np.ndarray:  # type: ignore[type-arg]
     return x  # type: ignore[no-any-return]
 
 
-class FieldTrainDataset(Dataset[dict[str, Any]]):
+class TrainDataset(Dataset[dict[str, Any]]):
     """Random per-sample observed/query split over a set of train stations."""
 
     def __init__(
@@ -82,7 +82,7 @@ class FieldTrainDataset(Dataset[dict[str, Any]]):
         }
 
     def get_transform(self, num_data_points: int) -> Any:
-        # Field path assembles the two-group transform in field_setup; this
+        # Field path assembles the two-group transform in setup.py; this
         # delegates stats gathering to the base dataset over train stations.
         return self.dataset.get_transform(
             num_data_points=num_data_points,
@@ -91,7 +91,7 @@ class FieldTrainDataset(Dataset[dict[str, Any]]):
         )
 
 
-class FieldEvalDataset(Dataset[dict[str, Any]]):
+class EvalDataset(Dataset[dict[str, Any]]):
     """Fixed observed/query station split for validation / test."""
 
     def __init__(
@@ -132,7 +132,7 @@ class FieldEvalDataset(Dataset[dict[str, Any]]):
         }
 
 
-def create_field_splits(
+def create_splits(
     dataset: Any,
     *,
     val_station_fraction: float = 0.2,
@@ -145,7 +145,7 @@ def create_field_splits(
     seed: int | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
-    """Field-native mirror of data_split.create_splits (same semantics)."""
+    """Field-native mirror of legacy.data_split.create_splits (same semantics)."""
     all_positions = np.arange(len(dataset))
     if test_days > 0:
         cutoff = dataset.times[-1] - pd.Timedelta(days=test_days)
@@ -184,7 +184,7 @@ def create_field_splits(
         and len(test_station_indices) > 0
     )
 
-    train_dataset = FieldTrainDataset(
+    train_dataset = TrainDataset(
         dataset,
         train_station_indices,
         split_fraction=train_split_fraction,
@@ -196,7 +196,7 @@ def create_field_splits(
         if train_split_fraction == 0.0
         else train_station_indices
     )
-    val_dataset = FieldEvalDataset(
+    val_dataset = EvalDataset(
         dataset,
         eval_indices=val_station_indices,
         observed_indices=observed_for_val,
@@ -208,7 +208,7 @@ def create_field_splits(
         else np.concatenate((train_station_indices, val_station_indices))
     )
     test_time_indices_arg = test_time_indices if test_days > 0 else None
-    test_dataset = FieldEvalDataset(
+    test_dataset = EvalDataset(
         dataset,
         eval_indices=test_station_indices,
         observed_indices=observed_for_test,

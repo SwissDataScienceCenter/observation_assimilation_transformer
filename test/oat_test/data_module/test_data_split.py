@@ -2,13 +2,13 @@ import numpy as np
 import pandas as pd
 import torch
 
-from oat.data_module.field import Field
-from oat.data_module.field_data_split import (
-    FieldEvalDataset,
-    FieldTrainDataset,
+from oat.data_module.data_split import (
+    EvalDataset,
+    TrainDataset,
     _slice_field,
-    create_field_splits,
+    create_splits,
 )
+from oat.data_module.field import Field
 
 
 class _Base:
@@ -41,7 +41,7 @@ def test_slice_field_copies_and_selects():
 
 def test_train_dataset_disjoint_context_query():
     base = _Base()
-    train = FieldTrainDataset(base, np.array([0, 1, 2, 3]), split_fraction=0.5, seed=0)
+    train = TrainDataset(base, np.array([0, 1, 2, 3]), split_fraction=0.5, seed=0)
     sample = train[0]
     obs = sample["observation_data"]["fields"]["obs"]
     qry = sample["query_data"]["fields"]["obs"]
@@ -55,7 +55,7 @@ def test_train_dataset_disjoint_context_query():
 
 def test_eval_dataset_fixed_indices():
     base = _Base()
-    ev = FieldEvalDataset(base, eval_indices=np.array([3]), observed_indices=np.array([0, 1]))
+    ev = EvalDataset(base, eval_indices=np.array([3]), observed_indices=np.array([0, 1]))
     sample = ev[1]
     assert sample["observation_data"]["fields"]["obs"].num_points == 2
     assert sample["query_data"]["fields"]["obs"].num_points == 1
@@ -63,9 +63,9 @@ def test_eval_dataset_fixed_indices():
     assert sample["query_data"]["fields"]["obs"].values[0, 0].item() == 4.0
 
 
-def test_create_field_splits_shapes_and_temporal():
+def test_create_splits_shapes_and_temporal():
     base = _Base()
-    out = create_field_splits(
+    out = create_splits(
         base,
         val_station_fraction=0.25,
         test_station_fraction=0.25,
@@ -77,7 +77,7 @@ def test_create_field_splits_shapes_and_temporal():
         seed=1,
     )
     tr, va, te = out["datasets"]
-    assert isinstance(tr, FieldTrainDataset)
-    assert isinstance(va, FieldEvalDataset) and isinstance(te, FieldEvalDataset)
+    assert isinstance(tr, TrainDataset)
+    assert isinstance(va, EvalDataset) and isinstance(te, EvalDataset)
     assert len(out["station_indices"][0]) == 2  # train stations
     assert len(tr) == 3

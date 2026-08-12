@@ -30,7 +30,7 @@ def EPOCH_HOURS(times: pd.DatetimeIndex) -> Tensor:
     return torch.tensor(delta.to_numpy(dtype="float64"), dtype=torch.float64)
 
 
-class FieldDatasetBase(Dataset[dict[str, Any]]):
+class DatasetBase(Dataset[dict[str, Any]]):
     """Assembles a dict of :class:`Field` per sample from injected coords/sources.
 
     Dependency-injected core: callers provide the coordinate tensors per coord

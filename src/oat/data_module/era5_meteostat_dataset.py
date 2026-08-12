@@ -1,9 +1,10 @@
 """ERA5-Meteostat dataset that emits a dict of ``Field`` per sample.
 
-Thin concrete subclass of ``FieldDatasetBase``: reuses the existing ERA5 NWP /
-topography / Meteostat-observation loaders from ``era5_meteostat_dataset.py``
-and wires them into three ``Source`` objects (obs, nwp, topo) consumed by the
-config-driven field assembly in ``FieldDatasetBase``.
+Thin concrete subclass of ``DatasetBase``: reuses the existing ERA5 NWP /
+topography / Meteostat-observation loaders from
+``legacy/era5_meteostat_dataset.py`` and wires them into three ``Source``
+objects (obs, nwp, topo) consumed by the config-driven field assembly in
+``DatasetBase``.
 """
 
 from __future__ import annotations
@@ -19,12 +20,12 @@ import xarray as xr
 from omegaconf import OmegaConf
 from torch import Tensor
 
+from oat.data_module.dataset import DatasetBase
 from oat.data_module.dataset_helpers import (
     ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
     build_obs_variable_support as _build_obs_variable_support,
     dtype_map,
 )
-from oat.data_module.field_dataset import FieldDatasetBase
 from oat.data_module.field_spec import FieldConfig, parse_field_config
 from oat.data_module.meteostat_observations import MeteostatObservations
 from oat.data_module.sources import PointSetSource, RasterSource
@@ -33,8 +34,8 @@ _LOG = logging.getLogger(__name__)
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
 # name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping`` for use with
-# FieldDatasetBase.get_baseline_pre_transform.
+# legacy.ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping`` for
+# use with DatasetBase.get_baseline_pre_transform.
 ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temp": (["2t"], lambda n: n["2t"] - 273.15),
     "wspd": (["10u", "10v"], lambda n: torch.sqrt(n["10u"] ** 2 + n["10v"] ** 2)),
@@ -43,15 +44,15 @@ ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor
 }
 
 
-class FieldERA5MeteostatDataset(FieldDatasetBase):
-    """``FieldDatasetBase`` wired to the existing ERA5 / Meteostat loaders.
+class ERA5MeteostatDataset(DatasetBase):
+    """``DatasetBase`` wired to the existing ERA5 / Meteostat loaders.
 
-    Accepts the same ``config`` shape as ``ERA5MeteostatDataset`` (data paths,
-    variable lists, station/time filters, ``catalog``) plus the field schema
+    Accepts the same ``config`` shape as ``legacy.ERA5MeteostatDataset``
+    (data paths, variable lists, station/time filters, ``catalog``) plus the field schema
     (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an
     obs ``PointSetSource``, an nwp ``PointSetSource`` (native ERA5 lon/lat
     grid points) and a topo ``RasterSource``, then delegates assembly to
-    ``FieldDatasetBase``.
+    ``DatasetBase``.
 
     CRS note: unlike the COSMO field dataset (Swiss LV95 eastings/northings),
     all coordinates here are geographic ``[longitude, latitude]`` in degrees.
@@ -214,7 +215,7 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
         # Data vars are (latitude, longitude); RasterSource.build_index does
         # row * W + col with row from y (=latitude), col from x (=longitude),
         # and assumes strictly increasing (origin, res) axes. Flip to
-        # ascending latitude first (mirrors ERA5MeteostatDataset._load_topo)
+        # ascending latitude first (mirrors legacy.ERA5MeteostatDataset._load_topo)
         # so origin=(lon[0], lat[0]) / res=(dlon, dlat) index correctly; a
         # lat/lon swap or descending-latitude origin here would silently
         # misalign every topo lookup.
@@ -241,7 +242,7 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
     def _load_obs(self, config: Any, dtype: torch.dtype) -> None:
         if self.times is None or len(self.times) == 0:
             raise ValueError(
-                "FieldERA5MeteostatDataset._load_obs called with no valid "
+                "ERA5MeteostatDataset._load_obs called with no valid "
                 "times available (self.times is empty)."
             )
         self._obs_vars = [str(v) for v in config.obs_vars]
@@ -275,7 +276,7 @@ class FieldERA5MeteostatDataset(FieldDatasetBase):
 
     def _build_obs_source(self) -> PointSetSource:
         # Note: full spawn-DDP picklability of open zarr/anemoi handles is
-        # pre-existing (shared with the old ERA5MeteostatDataset) and out
+        # pre-existing (shared with the old legacy.ERA5MeteostatDataset) and out
         # of scope; this task only removes the newly-introduced lambda
         # unpicklability.
         units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}

@@ -51,11 +51,11 @@ def _config():
 
 
 def test_cosmo_field_dataset_smoke():
-    from oat.data_module.field_cosmo_peakweather_dataset import (
-        FieldCosmoPeakWeatherDataset,
+    from oat.data_module.cosmo_peakweather_dataset import (
+        CosmoPeakWeatherDataset,
     )
 
-    ds = FieldCosmoPeakWeatherDataset(_config())
+    ds = CosmoPeakWeatherDataset(_config())
     sample = ds[0]
     fields = sample["fields"]
 

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from oat.data_module.field_dataset import FieldDatasetBase
+from oat.data_module.dataset import DatasetBase
 from oat.data_module.field_spec import parse_field_config
 from oat.data_module.sources import PointSetSource
 from oat.data_module.support import VariableSupport
@@ -12,10 +12,10 @@ from oat.data_module.transform import (
     NestedTransform,
     TranslateScaleTransform,
 )
-from oat_test.data_module.test_field_dataset_base import _build_dataset
+from oat_test.data_module.test_dataset_base import _build_dataset
 
 
-def _build_keep_support_dataset() -> FieldDatasetBase:
+def _build_keep_support_dataset() -> DatasetBase:
     """Obs field with two channels of mixed support at the lower bound zero.
 
     Var "A" is strictly positive (lower_open=True, e.g. wind speed) and MUST
@@ -48,7 +48,7 @@ def _build_keep_support_dataset() -> FieldDatasetBase:
         lower_open=torch.tensor([True, False]),
         upper_open=torch.tensor([True, True]),
     )
-    return FieldDatasetBase(
+    return DatasetBase(
         field_config=cfg,
         coord_source_coords={"stations": stations},
         sources={"obs": obs},

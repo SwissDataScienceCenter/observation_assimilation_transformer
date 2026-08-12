@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from oat.data_module.field import Field
-from oat.data_module.field_setup import field_collate
+from oat.data_module.setup import collate
 from oat.data_module.transform import (
     FieldValueTransform,
     IdentityTransform,
@@ -141,14 +141,14 @@ def _build_predictor(
 
 def test_field_training_step_runs():
     predictor = _build_predictor(_oat_config())
-    batch = field_collate([_make_sample(0, 4, 3), _make_sample(1, 4, 3)])
+    batch = collate([_make_sample(0, 4, 3), _make_sample(1, 4, 3)])
     loss = predictor.training_step(batch, 0)
     assert torch.isfinite(loss)
 
 
 def test_field_training_step_uninformed_runs():
     predictor = _build_predictor(_uninformed_oat_config())
-    batch = field_collate([_make_sample(0, 4, 3), _make_sample(1, 4, 3)])
+    batch = collate([_make_sample(0, 4, 3), _make_sample(1, 4, 3)])
     batch = predictor._normalize_batch(batch)
     out = predictor.model.forward(
         global_data=batch["global_data"], query_data=batch["query_data"]

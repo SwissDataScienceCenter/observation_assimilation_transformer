@@ -1,9 +1,10 @@
 """COSMO-PeakWeather dataset that emits a dict of ``Field`` per sample.
 
-Thin concrete subclass of ``FieldDatasetBase``: reuses the existing COSMO NWP /
-topography / PeakWeather-observation loaders from ``cosmo_peakweather_dataset.py``
-and wires them into three ``Source`` objects (obs, nwp, topo) consumed by the
-config-driven field assembly in ``FieldDatasetBase``.
+Thin concrete subclass of ``DatasetBase``: reuses the existing COSMO NWP /
+topography / PeakWeather-observation loaders from
+``legacy/cosmo_peakweather_dataset.py`` and wires them into three ``Source``
+objects (obs, nwp, topo) consumed by the config-driven field assembly in
+``DatasetBase``.
 """
 
 from __future__ import annotations
@@ -21,12 +22,12 @@ from omegaconf import OmegaConf
 from pyproj import Transformer
 from torch import Tensor
 
+from oat.data_module.dataset import DatasetBase
 from oat.data_module.dataset_helpers import (
     COSMO_DERIVED_FEATURES as DERIVED_FEATURES,
     build_obs_variable_support as _build_obs_variable_support,
     dtype_map,
 )
-from oat.data_module.field_dataset import FieldDatasetBase
 from oat.data_module.field_spec import FieldConfig, parse_field_config
 from oat.data_module.sources import PointSetSource, RasterSource
 
@@ -34,8 +35,8 @@ _LOG = logging.getLogger(__name__)
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
 # name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# cosmo_peakweather_dataset._OBS_NWP_MAPPING for use with
-# FieldDatasetBase.get_baseline_pre_transform.
+# legacy.cosmo_peakweather_dataset._OBS_NWP_MAPPING for use with
+# DatasetBase.get_baseline_pre_transform.
 COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15),
     "wind_u": (["U_10M"], lambda n: n["U_10M"]),
@@ -48,15 +49,15 @@ COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tenso
 }
 
 
-class FieldCosmoPeakWeatherDataset(FieldDatasetBase):
-    """``FieldDatasetBase`` wired to the existing COSMO / PeakWeather loaders.
+class CosmoPeakWeatherDataset(DatasetBase):
+    """``DatasetBase`` wired to the existing COSMO / PeakWeather loaders.
 
-    Accepts the same ``config`` shape as ``CosmoPeakWeatherDataset`` (data paths,
-    variable lists, station/time filters, ``catalog``) plus the field schema
+    Accepts the same ``config`` shape as ``legacy.CosmoPeakWeatherDataset``
+    (data paths, variable lists, station/time filters, ``catalog``) plus the field schema
     (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an obs
     ``PointSetSource``, an nwp ``PointSetSource`` (native grid points in
     EPSG:2056) and a topo ``RasterSource``, then delegates assembly to
-    ``FieldDatasetBase``.
+    ``DatasetBase``.
     """
 
     def __init__(self, config: Any) -> None:
@@ -280,7 +281,7 @@ class FieldCosmoPeakWeatherDataset(FieldDatasetBase):
     def _load_obs(self, config: Any, dtype: torch.dtype) -> None:
         if self.times is None or len(self.times) == 0:
             raise ValueError(
-                "FieldCosmoPeakWeatherDataset._load_obs called with no valid "
+                "CosmoPeakWeatherDataset._load_obs called with no valid "
                 "times available (self.times is empty)."
             )
         self._obs_vars = [str(v) for v in config.obs_vars]
@@ -310,7 +311,7 @@ class FieldCosmoPeakWeatherDataset(FieldDatasetBase):
 
     def _build_obs_source(self) -> PointSetSource:
         # Note: full spawn-DDP picklability of open zarr/anemoi handles is
-        # pre-existing (shared with the old CosmoPeakWeatherDataset) and out
+        # pre-existing (shared with the old legacy.CosmoPeakWeatherDataset) and out
         # of scope; this task only removes the newly-introduced lambda
         # unpicklability.
         units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}

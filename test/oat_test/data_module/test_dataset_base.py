@@ -1,8 +1,8 @@
 import pandas as pd
 import torch
 
+from oat.data_module.dataset import EPOCH_HOURS, DatasetBase
 from oat.data_module.field import Field
-from oat.data_module.field_dataset import EPOCH_HOURS, FieldDatasetBase
 from oat.data_module.field_spec import parse_field_config
 from oat.data_module.sources import PointSetSource, RasterSource
 from oat.data_module.support import VariableSupport
@@ -55,7 +55,7 @@ def _build_dataset():
         lower_open=torch.tensor([True]),
         upper_open=torch.tensor([True]),
     )
-    ds = FieldDatasetBase(
+    ds = DatasetBase(
         field_config=cfg,
         coord_source_coords={"stations": stations, "nwp_grid": nwp_coords},
         sources={"obs": obs, "nwp": nwp, "topo": topo},
@@ -140,7 +140,7 @@ def _build_dataset_k2():
         lower_open=torch.tensor([True]),
         upper_open=torch.tensor([True]),
     )
-    ds = FieldDatasetBase(
+    ds = DatasetBase(
         field_config=cfg,
         coord_source_coords={"stations": stations},
         sources={"obs": obs, "nwp": nwp, "topo": topo},

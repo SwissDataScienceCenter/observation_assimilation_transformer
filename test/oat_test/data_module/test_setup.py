@@ -6,20 +6,20 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from oat.data_module.dataset import DatasetBase
 from oat.data_module.field import Field
-from oat.data_module.field_dataset import FieldDatasetBase
-from oat.data_module.field_setup import (
+from oat.data_module.field_spec import parse_field_config
+from oat.data_module.setup import (
     build_two_group_transform,
-    field_collate,
+    collate,
     validate_field_config_against_scalars,
 )
-from oat.data_module.field_spec import parse_field_config
 from oat.data_module.sources import PointSetSource
 from oat.data_module.support import VariableSupport
-from oat_test.data_module.test_field_dataset_base import _build_dataset
+from oat_test.data_module.test_dataset_base import _build_dataset
 
 
-def _build_dataset_with_global_role() -> FieldDatasetBase:
+def _build_dataset_with_global_role() -> DatasetBase:
     """Minimal field dataset declaring BOTH `target` and `global` roles.
 
     Unlike `_build_dataset()` (roles={"target": "obs", "geo_bias": "geo"}, no
@@ -60,7 +60,7 @@ def _build_dataset_with_global_role() -> FieldDatasetBase:
         lower_open=torch.tensor([True]),
         upper_open=torch.tensor([True]),
     )
-    return FieldDatasetBase(
+    return DatasetBase(
         field_config=cfg,
         coord_source_coords={"stations": stations},
         sources={"obs": obs, "nwp": nwp},
@@ -83,8 +83,8 @@ def _sample(idx: int, mask: bool = True) -> dict[str, Any]:
     }
 
 
-def test_field_collate_stacks_to_batched_fields() -> None:
-    batch = field_collate([_sample(0), _sample(1)])
+def test_collate_stacks_to_batched_fields() -> None:
+    batch = collate([_sample(0), _sample(1)])
     obs = batch["observation_data"]["fields"]["obs"]
     assert obs.coords.shape == (2, 2, 3) and obs.values.shape == (2, 2, 1)
     assert obs.mask is not None and obs.mask.shape == (2, 2, 1)
@@ -92,8 +92,8 @@ def test_field_collate_stacks_to_batched_fields() -> None:
     assert batch["index"].tolist() == [0, 1]
 
 
-def test_field_collate_none_mask() -> None:
-    batch = field_collate([_sample(0, mask=False), _sample(1, mask=False)])
+def test_collate_none_mask() -> None:
+    batch = collate([_sample(0, mask=False), _sample(1, mask=False)])
     assert batch["observation_data"]["fields"]["obs"].mask is None
 
 
@@ -188,9 +188,7 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
         called["hit"] = cfg.dataset.dataset_type
         return ("d", 1, None, None, None, None, None)
 
-    monkeypatch.setattr(
-        "oat.data_module.field_setup.setup_field_data_and_transform", fake
-    )
+    monkeypatch.setattr("oat.data_module.setup._setup_field_data_and_transform", fake)
     cfg = OmegaConf.create({"dataset": {"dataset_type": "field_cosmo_peakweather"}})
     S.setup_data_and_transform(cfg, logging.getLogger("t"))
     assert called["hit"] == "field_cosmo_peakweather"
@@ -199,16 +197,12 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_obs_source_callables_are_picklable() -> None:
     import types
 
-    from oat.data_module.field_cosmo_peakweather_dataset import (
-        FieldCosmoPeakWeatherDataset,
-    )
-    from oat.data_module.field_era5_meteostat_dataset import (
-        FieldERA5MeteostatDataset,
-    )
+    from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+    from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 
     # bound-method sentinel: the methods exist and are not lambdas.
     # lambdas cannot be pickled; bound methods can be if their instance is.
-    for cls in (FieldCosmoPeakWeatherDataset, FieldERA5MeteostatDataset):
+    for cls in (CosmoPeakWeatherDataset, ERA5MeteostatDataset):
         assert hasattr(cls, "_obs_values") and hasattr(cls, "_obs_mask")
         assert cls._obs_values.__name__ == "_obs_values"
         assert cls._obs_mask.__name__ == "_obs_mask"

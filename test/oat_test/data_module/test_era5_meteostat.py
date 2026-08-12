@@ -79,9 +79,9 @@ def _smoke_config():
 
 
 def test_era5_field_dataset_smoke():
-    from oat.data_module.field_era5_meteostat_dataset import FieldERA5MeteostatDataset
+    from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 
-    ds = FieldERA5MeteostatDataset(_smoke_config())
+    ds = ERA5MeteostatDataset(_smoke_config())
     sample = ds[0]
     fields = sample["fields"]
 

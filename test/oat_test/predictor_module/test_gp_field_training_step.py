@@ -7,7 +7,7 @@ import torch
 from hydra import compose, initialize_config_dir
 
 from oat.data_module.field import Field
-from oat.data_module.field_setup import field_collate
+from oat.data_module.setup import collate
 from oat.predictor_module.gp_predictor import setup_gp_predictor
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[3] / "configs")
@@ -80,7 +80,7 @@ def test_gp_field_training_step_runs(model_name, overrides):
         (IdentityTransform(), IdentityTransform()),
     )
 
-    batch = field_collate(
+    batch = collate(
         [
             _make_sample(0, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
             _make_sample(1, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
@@ -165,7 +165,7 @@ def test_gp_field_training_step_runs_under_precision_64(model_name, overrides):
     )
     predictor.double()
 
-    batch = field_collate(
+    batch = collate(
         [
             _make_sample(0, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
             _make_sample(1, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
