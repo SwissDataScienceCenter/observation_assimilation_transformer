@@ -517,7 +517,15 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     data_cfg = cfg.dataset
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
     if model_cfg.global_encoder.type == "Point":
-        global_input_chans = len(data_cfg.nwp_vars)
+        # Point encoder consumes pre-sampled global tokens; the channel count is
+        # the number of inputs on the global-role field. That is nwp-only by
+        # default but may include topo.* if added to that field, so derive it
+        # from the field spec rather than assuming len(nwp_vars).
+        if "roles" in data_cfg and "fields" in data_cfg:
+            global_role = data_cfg.roles["global"]
+            global_input_chans = len(data_cfg.fields[global_role].inputs)
+        else:
+            global_input_chans = len(data_cfg.nwp_vars)
     d_model = model_cfg.d_model
 
     global_encoder_kwargs = OmegaConf.to_container(

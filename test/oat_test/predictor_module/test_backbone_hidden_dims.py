@@ -60,6 +60,24 @@ def test_configurable_width_overrides_default():
     assert list(te.hidden_dims) == [8, 8]
 
 
+def test_point_in_channels_from_global_field_inputs():
+    # The global field may carry topo.* alongside nwp.*; the Point encoder's
+    # in_channels must track the field's input count, not len(nwp_vars).
+    cfg = _cfg(32)
+    cfg.dataset.roles = {"global": "nwp"}
+    cfg.dataset.fields = {
+        "nwp": {"inputs": ["nwp.a", "nwp.b", "topo.t1", "topo.t2", "topo.t3"]}
+    }
+    ge, _, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
+    assert ge.in_channels == 5
+
+
+def test_point_in_channels_falls_back_to_nwp_vars_without_fields():
+    # No roles/fields (e.g. non-field configs): fall back to len(nwp_vars).
+    ge, _, _ = setup_backbone_cfgs(_cfg(32), _FIELD_EXTENT)
+    assert ge.in_channels == 2
+
+
 def test_configurable_num_layers():
     cfg = _cfg(
         32,
