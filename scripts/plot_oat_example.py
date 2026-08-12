@@ -25,8 +25,8 @@ import pandas as pd
 from omegaconf import OmegaConf
 from typing import Any
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.data_module.setup import setup_data_and_transform
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
