@@ -88,3 +88,89 @@ def test_gp_field_training_step_runs(model_name, overrides):
     )
     loss = predictor.training_step(batch, 0)
     assert torch.isfinite(loss)
+
+
+class ValuesToDoubleTransform:
+    """Mimics a real ``NestedTransform`` of ``FieldValueTransform``s after the
+    predictor has been cast to double precision: the inner per-field
+    transforms are ``nn.Module``s whose buffers get promoted to float64 by
+    ``predictor.double()``, so applying them to float32 ``Field.values``
+    upcasts the result -- but ``Field.coords`` is passed through untouched
+    (see ``FieldValueTransform.forward``), so it stays float32. This is what
+    lets ``time_emb`` (derived from ``coords``) end up float32 while every
+    other tensor in the batch is float64 under ``trainer.precision=64``.
+    """
+
+    def __call__(self, batch: dict) -> dict:
+        def cast_group(group: dict) -> dict:
+            return {
+                "fields": {
+                    name: Field(
+                        f.coords,
+                        f.values.double(),
+                        f.var_names,
+                        f.mask.double() if f.mask is not None else None,
+                    )
+                    for name, f in group["fields"].items()
+                }
+            }
+
+        return {
+            k: (cast_group(v) if k in ("observation_data", "query_data") else v)
+            for k, v in batch.items()
+        }
+
+    def inverse(self, x):
+        return x
+
+
+@pytest.mark.parametrize(
+    "model_name,overrides",
+    [
+        ("gp_baseline", ["model/topographic_encoder=mlp"]),
+        ("deep_gp_baseline", ["model/topographic_encoder=mlp"]),
+        (
+            "gp_oat_baseline",
+            ["model/global_encoder=point", "model/topographic_encoder=mlp"],
+        ),
+        (
+            "deep_gp_oat_baseline",
+            ["model/global_encoder=point", "model/topographic_encoder=mlp"],
+        ),
+    ],
+)
+def test_gp_field_training_step_runs_under_precision_64(model_name, overrides):
+    """Regression test for a time_emb/coords dtype mismatch under
+    trainer.precision=64: Field.coords (and thus the reconstructed time
+    embedding) must be cast to match the dtype of the other, already
+    transformed tensors in the batch, not left at float32.
+    """
+    with initialize_config_dir(config_dir=CONFIG_DIR, version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                f"model={model_name}",
+                "predictor=gp_predictor",
+                "dataset=cosmo_peakweather/field_temp",
+                "trainer.precision=64",
+                *overrides,
+            ],
+        )
+
+    predictor = setup_gp_predictor(
+        cfg,
+        FIELD_EXTENT,
+        list(cfg.dataset.obs_vars),
+        (ValuesToDoubleTransform(), ValuesToDoubleTransform()),
+    )
+    predictor.double()
+
+    batch = field_collate(
+        [
+            _make_sample(0, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
+            _make_sample(1, 4, 3, cfg.dataset.nwp_vars, cfg.dataset.topo_vars),
+        ]
+    )
+    loss = predictor.training_step(batch, 0)
+    assert torch.isfinite(loss)
+    assert loss.dtype == torch.float64

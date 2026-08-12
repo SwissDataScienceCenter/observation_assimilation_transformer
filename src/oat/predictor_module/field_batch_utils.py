@@ -50,9 +50,11 @@ def _unwrap_fields_to_model_batch(
             "global_tokens": f[roles["global"]].values,
         }
 
-    t_hours = batch["observation_data"]["fields"][roles["target"]].coords[:, 0, 2]
+    query_obs = batch["query_data"]["fields"][roles["target"]]
+    t_hours = query_obs.coords[:, 0, 2]
+    time_emb = _time_embedding_from_epoch_hours(t_hours).to(query_obs.values.dtype)
     out: dict[str, Any] = {
-        "global_data": {"time_emb": _time_embedding_from_epoch_hours(t_hours)},
+        "global_data": {"time_emb": time_emb},
         "query_data": grp("query_data"),
     }
     if requires_observation:
