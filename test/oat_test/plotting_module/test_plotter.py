@@ -60,15 +60,11 @@ def _make_dataset(
             "mask_obs": torch.ones(n_stations, n_vars),
         },
     }
-
-    def _get_query(query_coords, idx):
-        return {
-            "coords": torch.zeros(1, 2),
-            "topo": torch.zeros(1, 1, 32, 32),
-            "geo": torch.zeros(1, 3),
-        }
-
-    ds.get_query.side_effect = _get_query
+    ds.get_query.return_value = {
+        "coords": torch.zeros(1, 2),
+        "topo": torch.zeros(1, 1, 32, 32),
+        "geo": torch.zeros(1, 3),
+    }
     config = MagicMock()
     config.obs_plot_config = plot_config
     ds.config = config
