@@ -104,9 +104,7 @@ def main() -> None:
         len(eval_indices),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(
-        dataset, dataset.config.obs_vars, logger, required=True
-    )
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
 
     if args.time is not None:
         time_idx = _resolve_time_idx(dataset, args.time)

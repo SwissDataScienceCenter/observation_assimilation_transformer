@@ -282,9 +282,7 @@ def main() -> None:
         plot_config=load_plot_config(dataset),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(
-        dataset, dataset.config.obs_vars, logger, required=True
-    )
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
     nwp_plotter = PlotterCls(
         predictor=nwp_predictor,
         dataset=dataset,

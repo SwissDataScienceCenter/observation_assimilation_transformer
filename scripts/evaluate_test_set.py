@@ -33,7 +33,6 @@ from oat.predictor_module.checkpoint_utils import (
     resolve_checkpoint,
 )
 from scripts.plotter_utils import (
-    is_field_path,
     maybe_build_nwp_baseline,
     select_plotter_cls,
 )
@@ -176,21 +175,9 @@ def main() -> None:
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
     if is_interpolator:
-        if is_field_path(dataset):
-            logger.warning(
-                "--model interpolator is not yet supported on the Field data "
-                "path; skipping."
-            )
-            raise SystemExit(0)
-        from oat.model_module.baseline import NWPInterpolatorConfig
-        from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
+        from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-        predictor = NWPInterpolatorPredictor(
-            config=nwp_config,
-            output_var_names=dataset.config.obs_vars,
-            input_transform=dataset.get_baseline_pre_transform(),
-        ).eval()
+        predictor = create_baseline_predictor(dataset).eval()
 
     split_loader = val_loader if args.split == "val" else test_loader
     split_ds = split_loader.dataset  # EvalDataset
@@ -223,9 +210,7 @@ def main() -> None:
 
     nwp_predictor = None
     if args.baseline and not is_interpolator:
-        nwp_predictor = maybe_build_nwp_baseline(
-            dataset, dataset.config.obs_vars, logger
-        )
+        nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
 
     var_names = list(predictor.var_to_indx.keys())
 
