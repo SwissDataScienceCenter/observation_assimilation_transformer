@@ -22,9 +22,6 @@ from torch import Tensor
 
 from oat.data_module.dataset import DatasetBase
 from oat.data_module.dataset_helpers import (
-    ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
-)
-from oat.data_module.dataset_helpers import (
     build_obs_variable_support as _build_obs_variable_support,
 )
 from oat.data_module.dataset_helpers import (
@@ -35,6 +32,16 @@ from oat.data_module.meteostat_observations import MeteostatObservations
 from oat.data_module.sources import PointSetSource, RasterSource
 
 _LOG = logging.getLogger(__name__)
+
+# (deps, fn) where fn(*dep_tensors) -> tensor (H, W). Wind speed/direction
+# derived from the ERA5 10u/10v wind components.
+DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    "wind_speed": (["10u", "10v"], lambda u, v: torch.sqrt(u**2 + v**2)),
+    "wind_direction": (
+        ["10u", "10v"],
+        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
+    ),
+}
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
 # name -> [..., N] column dict and returning the obs-unit tensor). Copied from

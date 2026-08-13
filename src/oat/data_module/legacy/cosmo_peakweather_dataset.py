@@ -21,10 +21,21 @@ from oat.data_module import transform, statistics
 import logging as _logging
 from tqdm import tqdm
 from oat.data_module.dataset_helpers import (
-    COSMO_DERIVED_FEATURES as DERIVED_FEATURES,
     build_obs_variable_support as _build_obs_variable_support,
     dtype_map,
 )
+
+# (deps, fn) where fn(*dep_tensors) -> tensor (H, W). Wind speed/direction
+# derived from the COSMO U/V 10m wind components. Duplicated (not imported)
+# from oat.data_module.cosmo_peakweather_dataset — legacy stays decoupled
+# from the live field path.
+DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    "wind_speed": (["U_10M", "V_10M"], lambda u, v: torch.sqrt(u**2 + v**2)),
+    "wind_direction": (
+        ["U_10M", "V_10M"],
+        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
+    ),
+}
 
 # Mapping from obs variable name → (list of required NWP vars, conversion fn).
 # fn receives a dict {nwp_var: tensor(H, W)} and returns tensor(H, W).

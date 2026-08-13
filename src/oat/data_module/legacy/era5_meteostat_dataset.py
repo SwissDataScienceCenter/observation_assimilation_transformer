@@ -17,15 +17,24 @@ from tqdm import tqdm
 
 from oat.data_module import statistics, transform
 from oat.data_module.dataset_helpers import (
-    ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
-)
-from oat.data_module.dataset_helpers import (
     build_obs_variable_support as _build_obs_variable_support,
 )
 from oat.data_module.dataset_helpers import (
     dtype_map,
 )
 from oat.data_module.meteostat_observations import MeteostatObservations
+
+# (deps, fn) where fn(*dep_tensors) -> tensor (H, W). Wind speed/direction
+# derived from the ERA5 10u/10v wind components. Duplicated (not imported)
+# from oat.data_module.era5_meteostat_dataset — legacy stays decoupled from
+# the live field path.
+DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
+    "wind_speed": (["10u", "10v"], lambda u, v: torch.sqrt(u**2 + v**2)),
+    "wind_direction": (
+        ["10u", "10v"],
+        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
+    ),
+}
 
 _log = _logging.getLogger(__name__)
 

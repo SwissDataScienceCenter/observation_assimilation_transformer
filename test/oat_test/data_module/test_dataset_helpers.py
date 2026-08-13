@@ -22,8 +22,3 @@ def test_build_obs_variable_support_missing_var_raises():
         assert False, "expected KeyError"
     except KeyError:
         pass
-
-
-def test_derived_features_are_dataset_specific():
-    assert dh.COSMO_DERIVED_FEATURES["wind_speed"][0] == ["U_10M", "V_10M"]
-    assert dh.ERA5_DERIVED_FEATURES["wind_speed"][0] == ["10u", "10v"]

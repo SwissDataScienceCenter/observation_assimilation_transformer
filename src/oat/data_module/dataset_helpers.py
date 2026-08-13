@@ -6,7 +6,6 @@ files can move to a ``legacy`` package without dragging the newer "field" path
 files along with them.
 """
 
-from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -18,23 +17,6 @@ dtype_map = {
     "float64": torch.float64,
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
-}
-
-# (deps, fn) where fn(*dep_tensors) → tensor (H, W)
-COSMO_DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
-    "wind_speed": (["U_10M", "V_10M"], lambda u, v: torch.sqrt(u**2 + v**2)),
-    "wind_direction": (
-        ["U_10M", "V_10M"],
-        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
-    ),
-}
-
-ERA5_DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
-    "wind_speed": (["10u", "10v"], lambda u, v: torch.sqrt(u**2 + v**2)),
-    "wind_direction": (
-        ["10u", "10v"],
-        lambda u, v: (torch.rad2deg(torch.atan2(u, v)) + 180.0) % 360.0,
-    ),
 }
 
 
