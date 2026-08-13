@@ -19,6 +19,7 @@ Usage
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,32 +29,20 @@ import torch
 from matplotlib.lines import Line2D
 from omegaconf import OmegaConf
 
-from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.data_module.setup import setup_data_and_transform
-from oat.model_module.baseline import NWPInterpolatorConfig
-from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import _add_borders, build_domain_grid
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.checkpoint_utils import load_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
+from scripts.plotter_utils import (
+    is_field_path,
+    load_plot_config,
+    maybe_build_nwp_baseline,
+    select_plotter_cls,
+)
 
 _PROJECT_ROOT = Path(__file__).parents[1]
 OUT_DIR = _PROJECT_ROOT / "data/figures"
 _CHECKPOINTS_YAML = _PROJECT_ROOT / "configs/checkpoints.yaml"
-_PLOT_CONFIG_PATHS = {
-    ERA5MeteostatDataset: _PROJECT_ROOT
-    / "configs/dataset/era5_meteostat/plot_config.yaml",
-    CosmoPeakWeatherDataset: _PROJECT_ROOT
-    / "configs/dataset/cosmo_peakweather/plot_config.yaml",
-}
-
-
-def _load_plot_config(dataset):
-    path = _PLOT_CONFIG_PATHS.get(type(dataset))
-    if path and path.exists():
-        return OmegaConf.load(path).obs_plot_config
-    return None
 
 
 def _load_units(dataset_name: str) -> dict[str, str]:
@@ -99,6 +88,13 @@ def main() -> None:
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
+    if is_field_path(dataset):
+        logger.warning(
+            "This figure's first column is an NWP baseline field, which is "
+            "not yet supported on the Field data path; skipping."
+        )
+        sys.exit(0)
+
     test_ds = test_loader.dataset
     obs_station_indices = list(test_ds.observed_indices)
     eval_indices = list(test_ds.eval_indices)
@@ -108,11 +104,7 @@ def main() -> None:
         len(eval_indices),
     )
 
-    nwp_predictor = NWPInterpolatorPredictor(
-        config=NWPInterpolatorConfig(field_extent=dataset.nwp_extent),
-        output_var_names=dataset.config.obs_vars,
-        input_transform=dataset.get_baseline_pre_transform(),
-    ).eval()
+    nwp_predictor = maybe_build_nwp_baseline(dataset, dataset.config.obs_vars, logger)
 
     if args.time is not None:
         time_idx = _resolve_time_idx(dataset, args.time)
@@ -125,11 +117,12 @@ def main() -> None:
     time_iso = dataset.times[time_idx].strftime("%Y-%m-%dT%H")
 
     variables = args.variables or list(predictor_oat.var_to_indx.keys())
-    plot_config = _load_plot_config(dataset)
+    plot_config = load_plot_config(dataset)
     units = _load_units(args.dataset)
     logger.info("Variables (rows): %s at %s", variables, time_iso)
 
-    plotter = OATPlotter(
+    PlotterCls = select_plotter_cls(dataset)
+    plotter = PlotterCls(
         predictor=predictor_oat,
         dataset=dataset,
         obs_station_indices=obs_station_indices,
