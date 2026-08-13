@@ -22,7 +22,7 @@ from oat.data_module.dataset_helpers import (
 from oat.data_module.dataset_helpers import (
     dtype_map,
 )
-from oat.data_module.meteostat_observations import MeteostatObservations
+from oat.data_module.era5_meteostat_dataset import MeteostatObservations
 
 # (deps, fn) where fn(*dep_tensors) -> tensor (H, W). Wind speed/direction
 # derived from the ERA5 10u/10v wind components. Duplicated (not imported)

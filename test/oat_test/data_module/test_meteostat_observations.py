@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from oat.data_module.meteostat_observations import MeteostatObservations
+from oat.data_module.era5_meteostat_dataset import MeteostatObservations
 
 
 def _make_obs_parquet(path):
