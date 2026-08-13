@@ -7,8 +7,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from oat.data_module.data_split import _slice_field
+from oat.data_module.field import Field
+from oat.data_module.setup import collate
+
 if TYPE_CHECKING:
     from oat.predictor_module.base_predictor import BasePredictor
+
+
+def _field_to_device(field: Field, device: torch.device) -> Field:
+    """Return a copy of *field* with its tensors moved to *device*."""
+    mask = field.mask.to(device) if field.mask is not None else None
+    return Field(
+        field.coords.to(device), field.values.to(device), list(field.var_names), mask
+    )
 
 
 class OATPlotter:
@@ -17,8 +29,10 @@ class OATPlotter:
     Args:
         predictor: Any BasePredictor implementation (e.g. OATPredictor or
             NWPInterpolatorPredictor).
-        dataset: Dataset instance with `station_coords`, `obs_tensor`,
-            `obs_mask_tensor`, `times`, `__getitem__`, and `get_query()`.
+        dataset: Field-path `DatasetBase` instance with `station_coords`,
+            `obs_tensor`, `obs_mask_tensor`, `times`, `roles()`, `__getitem__`
+            returning `{"index", "fields"}`, and `get_query(coords, idx)`
+            returning `dict[str, Field]`.
         obs_station_indices: Station indices (into dataset.stations) used as
             observation context for every forward pass. If None, all stations
             in the dataset are used.
@@ -91,21 +105,34 @@ class OATPlotter:
         p = predictor if predictor is not None else self.predictor
         p = p.to(self.device)
 
-        raw = self.dataset[time_idx]
+        roles = self.dataset.roles()
+        target_name = roles["target"]
 
-        obs_raw = raw["observation_data"]
-        obs_data = {k: v[self.obs_indices] for k, v in obs_raw.items()}
+        all_fields = self.dataset[time_idx]["fields"]
+        obs_idx = torch.as_tensor(self.obs_indices, dtype=torch.long)
+        obs_fields = {n: _slice_field(f, obs_idx) for n, f in all_fields.items()}
 
-        query_data = self.dataset.get_query(query_coords)
+        query_fields = self.dataset.get_query(query_coords, time_idx)
+        coords = next(iter(query_fields.values())).coords  # [N_q, 3]: (x, y, t)
+        n_obs_vars = len(all_fields[target_name].var_names)
+        query_fields[target_name] = Field(
+            coords,
+            torch.zeros(coords.shape[0], n_obs_vars),
+            list(all_fields[target_name].var_names),
+            torch.zeros(coords.shape[0], n_obs_vars),
+        )
 
-        def _add_batch(d: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-            return {k: v.unsqueeze(0).to(self.device) for k, v in d.items()}
-
-        batch = {
-            "global_data": _add_batch(raw["global_data"]),
-            "observation_data": _add_batch(obs_data),
-            "query_data": _add_batch(query_data),
+        sample = {
+            "index": time_idx,
+            "observation_data": {"fields": obs_fields},
+            "query_data": {"fields": query_fields},
         }
+        batch = collate([sample])
+        for group in ("observation_data", "query_data"):
+            batch[group]["fields"] = {
+                n: _field_to_device(f, self.device)
+                for n, f in batch[group]["fields"].items()
+            }
 
         if stage == "oat":
             samples = p.predict_step(batch, batch_idx=0, n_samples=self.n_samples)
@@ -466,7 +493,9 @@ class OATPlotter:
         cmap = var_cfg.get("cmap", "viridis") if plot_type == "mean" else None
         vmin = var_cfg.get("vmin") if plot_type == "mean" else None
         vmax = var_cfg.get("vmax") if plot_type == "mean" else None
-        mesh = ax.pcolormesh(xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto")
+        mesh = ax.pcolormesh(
+            xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
+        )
 
         ax.set_xlim(center[0] - extent, center[0] + extent)
         ax.set_ylim(center[1] - extent, center[1] + extent)
@@ -636,8 +665,14 @@ class OATPlotter:
         samples_b = self._run_inference(time_idx, query_coords, predictor=other)
 
         diff = (
-            samples_a[:, :, var_idx].mean(dim=1) - samples_b[:, :, var_idx].mean(dim=1)
-        ).detach().cpu().numpy()
+            (
+                samples_a[:, :, var_idx].mean(dim=1)
+                - samples_b[:, :, var_idx].mean(dim=1)
+            )
+            .detach()
+            .cpu()
+            .numpy()
+        )
         field = diff.reshape(y_grid.shape)
 
         vmax = float(np.abs(field).max()) or 1.0
@@ -851,28 +886,45 @@ class OATPlotter:
             )  # [B, S, n_samples, V]
             y_obs_b = torch.stack(
                 [
-                    torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
-                    for t in chunk_list
-                ]
-            ).to(self.device)  # [B, S, V]
-            mask_b = torch.stack(
-                [
                     torch.stack(
-                        [self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices]
+                        [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
                     )
                     for t in chunk_list
                 ]
-            ).float().to(self.device)  # [B, S, V]
+            ).to(
+                self.device
+            )  # [B, S, V]
+            mask_b = (
+                torch.stack(
+                    [
+                        torch.stack(
+                            [
+                                self.dataset.obs_mask_tensor[t, s]
+                                for s in eval_station_indices
+                            ]
+                        )
+                        for t in chunk_list
+                    ]
+                )
+                .float()
+                .to(self.device)
+            )  # [B, S, V]
 
             count_b = mask_b.sum(dim=0)  # [S, V]
-            crps_sum += mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
-            mae_sum += point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            crps_sum += (
+                mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            )
+            mae_sum += (
+                point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            )
             mask_count += count_b
 
             if reference is not None:
                 y_hat_ref_b = torch.stack(
-                    [self._run_inference(t, eval_coords, predictor=reference)
-                     for t in chunk_list]
+                    [
+                        self._run_inference(t, eval_coords, predictor=reference)
+                        for t in chunk_list
+                    ]
                 )
                 ref_crps_sum += mc_crps(y_obs_b, y_hat_ref_b, mask_b, aggregation="station") * count_b  # type: ignore[operator]
 
@@ -881,8 +933,10 @@ class OATPlotter:
 
         denom = mask_count.clamp(min=1e-8)
         no_obs = mask_count == 0  # [S, V] — station has no valid obs for this variable
-        crps_per_station = (crps_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
-        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))    # [S, V]
+        crps_per_station = (crps_sum / denom).masked_fill(
+            no_obs, float("nan")
+        )  # [S, V]
+        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
         crps_global = crps_sum.sum() / mask_count.sum().clamp(min=1e-8)
         mae_global = mae_sum.sum() / mask_count.sum().clamp(min=1e-8)
 
@@ -896,7 +950,9 @@ class OATPlotter:
         if reference is not None:
             ref_crps_per_station = (ref_crps_sum / denom).masked_fill(no_obs, float("nan"))  # type: ignore[operator]
             ref_crps_global = ref_crps_sum.sum() / mask_count.sum().clamp(min=1e-8)  # type: ignore[union-attr]
-            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
+            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(
+                min=1e-8
+            )
             result["crpss"] = crpss_per_station.masked_fill(no_obs, float("nan"))
             result["crpss_global"] = 1.0 - crps_global / ref_crps_global.clamp(min=1e-8)
 
@@ -939,8 +995,10 @@ class OATPlotter:
         pos = 0
         for chunk in batched(time_indices, batch_size):
             for t in chunk:
-                y_obs = self.dataset.obs_tensor[t, eval_station_indices].unsqueeze(0).to(
-                    self.device
+                y_obs = (
+                    self.dataset.obs_tensor[t, eval_station_indices]
+                    .unsqueeze(0)
+                    .to(self.device)
                 )  # [1, S, V]
                 mask = (
                     self.dataset.obs_mask_tensor[t, eval_station_indices]
@@ -999,15 +1057,30 @@ class OATPlotter:
 
         samples_nwp = self._run_inference(time_idx, query_coords, predictor=other)
         nwp_mean = (
-            samples_nwp[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_nwp[:, :, var_idx]
+            .mean(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
 
         samples_oat = self._run_inference(time_idx, query_coords)
         oat_mean = (
-            samples_oat[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_oat[:, :, var_idx]
+            .mean(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
         oat_std = (
-            samples_oat[:, :, var_idx].std(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_oat[:, :, var_idx]
+            .std(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
 
         diff = oat_mean - nwp_mean
@@ -1045,7 +1118,9 @@ class OATPlotter:
             fig.suptitle(title)
 
         mesh_nwp = axes[0].pcolormesh(
-            xs, ys, nwp_mean,
+            xs,
+            ys,
+            nwp_mean,
             cmap=var_cfg.get("cmap", "viridis"),
             vmin=var_cfg.get("vmin"),
             vmax=var_cfg.get("vmax"),

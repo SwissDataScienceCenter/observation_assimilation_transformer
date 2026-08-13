@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import matplotlib.pyplot as plt
 
+from oat.data_module.field import Field
 from oat.plotting_module.plotter import OATPlotter
 
 
@@ -36,6 +37,25 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     return predictor
 
 
+def _make_field_dict(n_points: int, n_vars: int, idx: int, coords_xy: torch.Tensor):
+    t_col = torch.full((n_points, 1), float(idx))
+    coords3 = torch.cat([coords_xy, t_col], dim=-1)
+    obs_names = ["temp", "wspd"][:n_vars]
+    return {
+        "obs": Field(
+            coords3,
+            torch.zeros(n_points, n_vars),
+            obs_names,
+            torch.ones(n_points, n_vars),
+        ),
+        "nwp": Field(coords3, torch.zeros(n_points, n_vars), obs_names, None),
+        "geo": Field(coords3, torch.zeros(n_points, 3), ["x", "y", "dem"], None),
+        "topo": Field(
+            coords3, torch.zeros(n_points, 5), [f"topo{i}" for i in range(5)], None
+        ),
+    }
+
+
 def _make_dataset(
     n_stations: int = 5,
     n_times: int = 4,
@@ -47,26 +67,22 @@ def _make_dataset(
     ds.obs_tensor = torch.zeros(n_times, n_stations, n_vars)
     ds.obs_mask_tensor = torch.ones(n_times, n_stations, n_vars)
     ds.times = pd.date_range("2022-01-01", periods=n_times, freq="h", tz="UTC")
-    ds.__getitem__.return_value = {
-        "global_data": {
-            "global_field": torch.zeros(4, 8, 8),
-            "time_emb": torch.zeros(4),
-        },
-        "observation_data": {
-            "coords": torch.zeros(n_stations, 2),
-            "geo": torch.zeros(n_stations, 3),
-            "topo": torch.zeros(n_stations, 1, 32, 32),
-            "obs": torch.zeros(n_stations, n_vars),
-            "mask_obs": torch.ones(n_stations, n_vars),
-        },
+    ds.roles.return_value = {
+        "target": "obs",
+        "global": "nwp",
+        "geo_bias": "geo",
+        "topo": "topo",
+    }
+    station_xy = torch.zeros(n_stations, 2)
+    ds.__getitem__.side_effect = lambda idx: {
+        "index": idx,
+        "fields": _make_field_dict(n_stations, n_vars, idx, station_xy),
     }
 
-    def _get_query(query_coords):
-        return {
-            "coords": torch.zeros(1, 2),
-            "topo": torch.zeros(1, 1, 32, 32),
-            "geo": torch.zeros(1, 3),
-        }
+    def _get_query(query_coords, idx):
+        fields = _make_field_dict(query_coords.shape[0], n_vars, idx, query_coords)
+        del fields["obs"]  # get_query only returns query:true fields
+        return fields
 
     ds.get_query.side_effect = _get_query
     config = MagicMock()
