@@ -28,6 +28,7 @@ class NWPInterpolatorPredictor(BasePredictor):
         self.metrics_fn = {"point_mae": point_mae}
 
     def _normalize_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        assert self.field_roles is not None
         return _unwrap_fields_to_model_batch(
             batch, self.field_roles, self.model.requires_observation
         )
