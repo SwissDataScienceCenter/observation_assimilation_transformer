@@ -28,11 +28,9 @@ def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
 
         return FieldCosmoPeakWeatherDataset(cfg.dataset)
     if dataset_type == "era5_meteostat":
-        from oat.data_module.era5_meteostat_dataset import (
-            ERA5MeteostatDataset as FieldERA5MeteostatDataset,
-        )
+        from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 
-        return FieldERA5MeteostatDataset(cfg.dataset)
+        return ERA5MeteostatDataset(cfg.dataset)
     if dataset_type == "legacy_cosmo_peakweather":
         return CosmoPeakWeatherDataset(cfg.dataset)
     if dataset_type == "legacy_era5_meteostat":

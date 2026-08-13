@@ -18,7 +18,11 @@ from tqdm import tqdm
 from oat.data_module import statistics, transform
 from oat.data_module.dataset_helpers import (
     ERA5_DERIVED_FEATURES as DERIVED_FEATURES,
+)
+from oat.data_module.dataset_helpers import (
     build_obs_variable_support as _build_obs_variable_support,
+)
+from oat.data_module.dataset_helpers import (
     dtype_map,
 )
 from oat.data_module.meteostat_observations import MeteostatObservations
@@ -260,12 +264,18 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             dtype=dtype_map[self.config.dtype],
         )
         self.station_geo = self._get_geo(self.station_coords)
-        self.obs_ds._obs = None  # free 17.6 GB DataFrame; obs_tensor is in shared memory
+        self.obs_ds._obs = (
+            None  # free 17.6 GB DataFrame; obs_tensor is in shared memory
+        )
 
     def _mark_shared_memory(self) -> None:
         for attr in (
-            "topo_field", "topo_on_nwp_grid", "station_coords", "station_geo",
-            "obs_tensor", "obs_mask_tensor",
+            "topo_field",
+            "topo_on_nwp_grid",
+            "station_coords",
+            "station_geo",
+            "obs_tensor",
+            "obs_mask_tensor",
         ):
             if hasattr(self, attr):
                 getattr(self, attr).share_memory_()
@@ -306,7 +316,9 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
             "topo": self._extract_patches(
                 self.station_coords, self.topo_field, self.topo_grid, self.topo_extent
             ),
-            "obs": self.obs_tensor[idx].to(dtype_map[self.config.dtype]).nan_to_num(nan=0.0),
+            "obs": self.obs_tensor[idx]
+            .to(dtype_map[self.config.dtype])
+            .nan_to_num(nan=0.0),
             "mask_obs": self.obs_mask_tensor[idx].to(dtype_map[self.config.dtype]),
         }
 
@@ -540,7 +552,9 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         nwp_vars_set = set(self.config.nwp_vars)
         if "wind_speed" in nwp_vars_set:
             _wind_deps: list[str] = ["wind_speed"]
-            _wind_fn: Callable[[dict[str, Any]], torch.Tensor] = lambda nwp: nwp["wind_speed"]
+            _wind_fn: Callable[[dict[str, Any]], torch.Tensor] = lambda nwp: nwp[
+                "wind_speed"
+            ]
         else:
             _wind_deps = ["10u", "10v"]
             _wind_fn = lambda nwp: torch.sqrt(nwp["10u"] ** 2 + nwp["10v"] ** 2)
