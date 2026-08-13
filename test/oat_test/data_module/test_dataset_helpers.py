@@ -1,6 +1,14 @@
-import torch
 from types import SimpleNamespace
+
+import torch
+
 from oat.data_module import dataset_helpers as dh
+from oat.data_module.cosmo_peakweather_dataset import (
+    DERIVED_FEATURES as COSMO_DERIVED_FEATURES,
+)
+from oat.data_module.era5_meteostat_dataset import (
+    DERIVED_FEATURES as ERA5_DERIVED_FEATURES,
+)
 
 
 def test_dtype_map_has_expected_entries():
@@ -22,3 +30,17 @@ def test_build_obs_variable_support_missing_var_raises():
         assert False, "expected KeyError"
     except KeyError:
         pass
+
+
+def test_derived_features_wind_speed_from_u_v():
+    deps, fn = COSMO_DERIVED_FEATURES["wind_speed"]
+    assert deps == ["U_10M", "V_10M"]
+    u, v = torch.tensor([3.0]), torch.tensor([4.0])
+    torch.testing.assert_close(fn(u, v), torch.tensor([5.0]))
+
+
+def test_derived_features_wind_speed_from_10u_10v():
+    deps, fn = ERA5_DERIVED_FEATURES["wind_speed"]
+    assert deps == ["10u", "10v"]
+    u, v = torch.tensor([3.0]), torch.tensor([4.0])
+    torch.testing.assert_close(fn(u, v), torch.tensor([5.0]))

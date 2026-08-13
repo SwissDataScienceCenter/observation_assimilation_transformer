@@ -4,16 +4,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from oat.data_module.cosmo_peakweather_dataset import DERIVED_FEATURES
 from oat.data_module.field import Field
-
-
-def test_derived_features_wind_speed_from_u_v():
-    deps, fn = DERIVED_FEATURES["wind_speed"]
-    assert deps == ["U_10M", "V_10M"]
-    u, v = torch.tensor([3.0]), torch.tensor([4.0])
-    torch.testing.assert_close(fn(u, v), torch.tensor([5.0]))
-
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _DATA_DIR = "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked"

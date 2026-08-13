@@ -5,18 +5,9 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from oat.data_module.era5_meteostat_dataset import DERIVED_FEATURES
 from oat.data_module.field import Field
 from oat.data_module.field_spec import parse_field_config, validate_field_config
 from oat.data_module.sources import SourceInfo
-
-
-def test_derived_features_wind_speed_from_10u_10v():
-    deps, fn = DERIVED_FEATURES["wind_speed"]
-    assert deps == ["10u", "10v"]
-    u, v = torch.tensor([3.0]), torch.tensor([4.0])
-    torch.testing.assert_close(fn(u, v), torch.tensor([5.0]))
-
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
