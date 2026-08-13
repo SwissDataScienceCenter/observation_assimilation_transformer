@@ -493,9 +493,7 @@ class OATPlotter:
         cmap = var_cfg.get("cmap", "viridis") if plot_type == "mean" else None
         vmin = var_cfg.get("vmin") if plot_type == "mean" else None
         vmax = var_cfg.get("vmax") if plot_type == "mean" else None
-        mesh = ax.pcolormesh(
-            xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
-        )
+        mesh = ax.pcolormesh(xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto")
 
         ax.set_xlim(center[0] - extent, center[0] + extent)
         ax.set_ylim(center[1] - extent, center[1] + extent)
@@ -665,14 +663,8 @@ class OATPlotter:
         samples_b = self._run_inference(time_idx, query_coords, predictor=other)
 
         diff = (
-            (
-                samples_a[:, :, var_idx].mean(dim=1)
-                - samples_b[:, :, var_idx].mean(dim=1)
-            )
-            .detach()
-            .cpu()
-            .numpy()
-        )
+            samples_a[:, :, var_idx].mean(dim=1) - samples_b[:, :, var_idx].mean(dim=1)
+        ).detach().cpu().numpy()
         field = diff.reshape(y_grid.shape)
 
         vmax = float(np.abs(field).max()) or 1.0
@@ -886,45 +878,28 @@ class OATPlotter:
             )  # [B, S, n_samples, V]
             y_obs_b = torch.stack(
                 [
+                    torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
+                    for t in chunk_list
+                ]
+            ).to(self.device)  # [B, S, V]
+            mask_b = torch.stack(
+                [
                     torch.stack(
-                        [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
+                        [self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices]
                     )
                     for t in chunk_list
                 ]
-            ).to(
-                self.device
-            )  # [B, S, V]
-            mask_b = (
-                torch.stack(
-                    [
-                        torch.stack(
-                            [
-                                self.dataset.obs_mask_tensor[t, s]
-                                for s in eval_station_indices
-                            ]
-                        )
-                        for t in chunk_list
-                    ]
-                )
-                .float()
-                .to(self.device)
-            )  # [B, S, V]
+            ).float().to(self.device)  # [B, S, V]
 
             count_b = mask_b.sum(dim=0)  # [S, V]
-            crps_sum += (
-                mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
-            )
-            mae_sum += (
-                point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
-            )
+            crps_sum += mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            mae_sum += point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
             mask_count += count_b
 
             if reference is not None:
                 y_hat_ref_b = torch.stack(
-                    [
-                        self._run_inference(t, eval_coords, predictor=reference)
-                        for t in chunk_list
-                    ]
+                    [self._run_inference(t, eval_coords, predictor=reference)
+                     for t in chunk_list]
                 )
                 ref_crps_sum += mc_crps(y_obs_b, y_hat_ref_b, mask_b, aggregation="station") * count_b  # type: ignore[operator]
 
@@ -933,10 +908,8 @@ class OATPlotter:
 
         denom = mask_count.clamp(min=1e-8)
         no_obs = mask_count == 0  # [S, V] — station has no valid obs for this variable
-        crps_per_station = (crps_sum / denom).masked_fill(
-            no_obs, float("nan")
-        )  # [S, V]
-        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
+        crps_per_station = (crps_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
+        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))    # [S, V]
         crps_global = crps_sum.sum() / mask_count.sum().clamp(min=1e-8)
         mae_global = mae_sum.sum() / mask_count.sum().clamp(min=1e-8)
 
@@ -950,9 +923,7 @@ class OATPlotter:
         if reference is not None:
             ref_crps_per_station = (ref_crps_sum / denom).masked_fill(no_obs, float("nan"))  # type: ignore[operator]
             ref_crps_global = ref_crps_sum.sum() / mask_count.sum().clamp(min=1e-8)  # type: ignore[union-attr]
-            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(
-                min=1e-8
-            )
+            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
             result["crpss"] = crpss_per_station.masked_fill(no_obs, float("nan"))
             result["crpss_global"] = 1.0 - crps_global / ref_crps_global.clamp(min=1e-8)
 
@@ -995,10 +966,8 @@ class OATPlotter:
         pos = 0
         for chunk in batched(time_indices, batch_size):
             for t in chunk:
-                y_obs = (
-                    self.dataset.obs_tensor[t, eval_station_indices]
-                    .unsqueeze(0)
-                    .to(self.device)
+                y_obs = self.dataset.obs_tensor[t, eval_station_indices].unsqueeze(0).to(
+                    self.device
                 )  # [1, S, V]
                 mask = (
                     self.dataset.obs_mask_tensor[t, eval_station_indices]
@@ -1057,30 +1026,15 @@ class OATPlotter:
 
         samples_nwp = self._run_inference(time_idx, query_coords, predictor=other)
         nwp_mean = (
-            samples_nwp[:, :, var_idx]
-            .mean(dim=1)
-            .detach()
-            .cpu()
-            .numpy()
-            .reshape(y_grid.shape)
+            samples_nwp[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
         )
 
         samples_oat = self._run_inference(time_idx, query_coords)
         oat_mean = (
-            samples_oat[:, :, var_idx]
-            .mean(dim=1)
-            .detach()
-            .cpu()
-            .numpy()
-            .reshape(y_grid.shape)
+            samples_oat[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
         )
         oat_std = (
-            samples_oat[:, :, var_idx]
-            .std(dim=1)
-            .detach()
-            .cpu()
-            .numpy()
-            .reshape(y_grid.shape)
+            samples_oat[:, :, var_idx].std(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
         )
 
         diff = oat_mean - nwp_mean
@@ -1118,9 +1072,7 @@ class OATPlotter:
             fig.suptitle(title)
 
         mesh_nwp = axes[0].pcolormesh(
-            xs,
-            ys,
-            nwp_mean,
+            xs, ys, nwp_mean,
             cmap=var_cfg.get("cmap", "viridis"),
             vmin=var_cfg.get("vmin"),
             vmax=var_cfg.get("vmax"),
