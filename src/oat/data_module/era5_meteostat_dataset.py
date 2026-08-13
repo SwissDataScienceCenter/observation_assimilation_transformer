@@ -121,8 +121,9 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
 # name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# legacy.ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping`` for
-# use with DatasetBase.get_baseline_pre_transform.
+# legacy.ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping``;
+# surfaced on the dataset via the obs_to_nwp property for the NWPInterpolator
+# baseline.
 ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temp": (["2t"], lambda n: n["2t"] - 273.15),
     "wspd": (["10u", "10v"], lambda n: torch.sqrt(n["10u"] ** 2 + n["10v"] ** 2)),
@@ -184,6 +185,12 @@ class ERA5MeteostatDataset(DatasetBase):
             else dict(config)
         )
         return parse_field_config(cast(dict[str, Any], container))
+
+    @property
+    def obs_to_nwp(
+        self,
+    ) -> dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]]:
+        return ERA5_OBS_TO_NWP
 
     # -- NWP --
     def _load_nwp(self, config: Any, dtype: torch.dtype) -> None:

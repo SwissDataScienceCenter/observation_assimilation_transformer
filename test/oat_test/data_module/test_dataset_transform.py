@@ -110,14 +110,3 @@ def test_nwp_extent_and_target_coord_source() -> None:
     ext = ds.nwp_extent
     assert set(ext) == {"min", "max"} and ext["min"].shape == (2,)
     assert ds.target_coord_source() == "stations"
-
-
-def test_baseline_pre_transform_maps_nwp_to_obs_units():
-    ds, _ = _build_dataset()
-    # temperature obs (degC) from nwp T_2M (Kelvin): subtract 273.15
-    mapping = {"temperature": (["T_2M"], lambda nwp: nwp["T_2M"] - 273.15)}
-    pre = ds.get_baseline_pre_transform(nwp_field="nwp", obs_to_nwp=mapping)
-    sample = ds[0]
-    new = pre({"fields": sample["fields"]})
-    expected = sample["fields"]["nwp"].values[:, 0] - 273.15
-    assert torch.allclose(new["fields"]["nwp"].values[:, 0], expected)

@@ -46,8 +46,8 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
 # name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# legacy.cosmo_peakweather_dataset._OBS_NWP_MAPPING for use with
-# DatasetBase.get_baseline_pre_transform.
+# legacy.cosmo_peakweather_dataset._OBS_NWP_MAPPING; surfaced on the dataset
+# via the obs_to_nwp property for the NWPInterpolator baseline.
 COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15),
     "wind_u": (["U_10M"], lambda n: n["U_10M"]),
@@ -110,6 +110,12 @@ class CosmoPeakWeatherDataset(DatasetBase):
             else dict(config)
         )
         return parse_field_config(cast(dict[str, Any], container))
+
+    @property
+    def obs_to_nwp(
+        self,
+    ) -> dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]]:
+        return COSMO_OBS_TO_NWP
 
     # -- NWP --
     def _load_nwp(self, config: Any, dtype: torch.dtype) -> None:

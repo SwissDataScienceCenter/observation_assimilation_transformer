@@ -384,37 +384,3 @@ class DatasetBase(Dataset[dict[str, Any]]):
         leaves = {n: T.FieldValueTransform(inner[n]) for n in inner}
         post_transform = T.NestedTransform({"fields": leaves})
         return post_transform, output_transform
-
-    def get_baseline_pre_transform(
-        self,
-        nwp_field: str,
-        obs_to_nwp: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]],
-    ) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        """Return a closure mapping an NWP field's values to obs-unit channels.
-
-        The named ``nwp_field``'s ``[N, C]`` values are replaced (channel
-        order = the obs field's ``out``) by applying, per obs channel, the
-        mapping function on a name -> column dict of the NWP field's
-        channels. Used to build an NWP-only baseline prediction in obs units.
-        """
-        nwp_vars = list(self.field_config.fields[nwp_field].out)
-        obs_out = list(self.field_config.fields[self._obs_field_name()].out)
-        for ov in obs_out:
-            if ov not in obs_to_nwp:
-                raise ValueError(f"no NWP mapping for obs var {ov!r}")
-            missing = [d for d in obs_to_nwp[ov][0] if d not in nwp_vars]
-            if missing:
-                raise ValueError(
-                    f"NWP deps {missing} for {ov!r} not in field {nwp_field!r}"
-                )
-        mapping = {ov: obs_to_nwp[ov] for ov in obs_out}
-
-        def _pre(sample: dict[str, Any]) -> dict[str, Any]:
-            fields = dict(sample["fields"])
-            f = fields[nwp_field]
-            nwp = {v: f.values[..., i] for i, v in enumerate(nwp_vars)}
-            new_vals = torch.stack([mapping[ov][1](nwp) for ov in obs_out], dim=-1)
-            fields[nwp_field] = Field(f.coords, new_vals, obs_out, f.mask)
-            return {**sample, "fields": fields}
-
-        return _pre
