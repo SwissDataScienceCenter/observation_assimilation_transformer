@@ -51,8 +51,12 @@ def test_forward_batched_and_multi_point(config: NWPInterpolatorConfig) -> None:
 
 
 def test_forward_tolerates_extra_trailing_channels(obs_to_nwp: dict) -> None:
-    # Extra global channels (e.g. topo.* appended after the NWP scalars) are
-    # tolerated: they enter `cols` and are simply unused.
+    # A trailing global channel that no obs var depends on (e.g. topo.* named
+    # in nwp_names alongside the NWP scalars) is tolerated: it still enters
+    # `cols` positionally but no conversion fn references its name, so it's
+    # unused. This requires the extra channel be named in nwp_names and have
+    # a matching column in global_tokens; positionally-extra tensor columns
+    # beyond len(nwp_names) are ignored, and fewer would IndexError.
     config = NWPInterpolatorConfig(
         nwp_names=["T_2M", "U_10M", "V_10M", "topo.DEM"],
         obs_names=["temperature"],

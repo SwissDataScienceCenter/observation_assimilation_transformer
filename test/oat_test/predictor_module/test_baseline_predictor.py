@@ -1,12 +1,14 @@
 # test/oat_test/predictor_module/test_baseline_predictor.py
+import os
 import types
 from typing import Any
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from oat.data_module.field import Field
-from oat.data_module.field_spec import parse_field_config
+from oat.data_module.field_spec import FieldConfig, parse_field_config
 from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.predictor_module.baseline_predictor import (
     NWPInterpolatorPredictor,
@@ -113,3 +115,76 @@ def test_create_baseline_predictor_builds_from_dataset() -> None:
         "geo_bias": "geo",
         "topo": "topo",
     }
+
+
+def _compose_field_config(dataset_config_name: str) -> FieldConfig:
+    """Compose a live dataset config via Hydra and parse its field schema.
+
+    No data I/O: this only parses the YAML-derived dataset config dict, it
+    never opens the underlying zarr/parquet dataset files.
+    """
+    from hydra import compose, initialize_config_dir
+
+    cfg_dir = os.path.abspath("configs")
+    with initialize_config_dir(version_base=None, config_dir=cfg_dir):
+        cfg = compose(
+            config_name="config", overrides=[f"dataset={dataset_config_name}"]
+        )
+    container = OmegaConf.to_container(cfg.dataset, resolve=True)
+    assert isinstance(container, dict)
+    return parse_field_config(container)
+
+
+@pytest.mark.parametrize(
+    "dataset_config_name,obs_to_nwp_module,obs_to_nwp_attr",
+    [
+        (
+            "cosmo_peakweather/temp",
+            "oat.data_module.cosmo_peakweather_dataset",
+            "COSMO_OBS_TO_NWP",
+        ),
+        (
+            "cosmo_peakweather/temp_precip",
+            "oat.data_module.cosmo_peakweather_dataset",
+            "COSMO_OBS_TO_NWP",
+        ),
+        (
+            "era5_meteostat/temp",
+            "oat.data_module.era5_meteostat_dataset",
+            "ERA5_OBS_TO_NWP",
+        ),
+        (
+            "era5_meteostat/temp_precip",
+            "oat.data_module.era5_meteostat_dataset",
+            "ERA5_OBS_TO_NWP",
+        ),
+    ],
+)
+def test_create_baseline_predictor_builds_from_live_dataset_configs(
+    dataset_config_name: str, obs_to_nwp_module: str, obs_to_nwp_attr: str
+) -> None:
+    """Binds the real per-dataset obs_to_nwp table to the real field configs.
+
+    Guards against future drift: someone adding an obs var with no entry in
+    the live COSMO/ERA5 obs_to_nwp table, or dropping an NWP input a mapping
+    depends on from a field config, should fail here with a named test
+    failure instead of surfacing only as a runtime ValueError in a plot/eval
+    script (via ``maybe_build_nwp_baseline``/``create_baseline_predictor``).
+    """
+    import importlib
+
+    obs_to_nwp = getattr(importlib.import_module(obs_to_nwp_module), obs_to_nwp_attr)
+    field_config = _compose_field_config(dataset_config_name)
+    dataset = types.SimpleNamespace(field_config=field_config, obs_to_nwp=obs_to_nwp)
+
+    built = create_baseline_predictor(dataset)
+
+    assert isinstance(built, NWPInterpolatorPredictor)
+    roles = field_config.roles
+    expected_nwp_names = list(field_config.fields[roles["global"]].out)
+    expected_obs_names = list(field_config.fields[roles["target"]].out)
+    assert expected_nwp_names, "global field has no output channels"
+    assert expected_obs_names, "target field has no output channels"
+    assert built.model.nwp_names == expected_nwp_names
+    assert built.output_var_names == expected_obs_names
+    assert built.model.obs_names == expected_obs_names

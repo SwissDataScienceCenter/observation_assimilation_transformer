@@ -60,9 +60,8 @@ def maybe_build_nwp_baseline(
 
     Returns None (with a warning) for legacy grid-path datasets: the baseline
     now assumes pre-sampled global tokens (``DatasetBase.field_config``),
-    which only Field-path datasets provide. Reviving the grid path is out of
-    scope (see ``NWPInterpolator``'s deprecated ``InterpolationGlobalEncoder``
-    wrapper).
+    which only Field-path datasets provide. Reviving the grid path for this
+    baseline is out of scope.
 
     OATPlotter._run_inference's `predictor if predictor is not None else
     self.predictor` fallback means a bare None returned here is silently

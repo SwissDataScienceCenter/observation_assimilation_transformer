@@ -75,7 +75,9 @@ def test_maybe_build_nwp_baseline_builds_predictor_on_field_path():
 
 def test_maybe_build_nwp_baseline_warns_and_returns_none_on_legacy_path(caplog):
     with caplog.at_level(logging.WARNING):
-        result = maybe_build_nwp_baseline(_legacy_dataset(), logging.getLogger(__name__))
+        result = maybe_build_nwp_baseline(
+            _legacy_dataset(), logging.getLogger(__name__)
+        )
     assert result is None
     assert "not supported" in caplog.text
 
