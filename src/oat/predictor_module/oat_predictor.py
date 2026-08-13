@@ -495,7 +495,7 @@ class OATPredictor(BasePredictor):
 def _resolve_point_hidden_dims(kwargs: dict[str, Any], d_model: int) -> list[int]:
     """Build the MLP hidden stack for the Point/MLP encoders from config knobs.
 
-    Pops ``num_hidden_layers`` (default 2) and ``hidden_width`` (default ``None``)
+    Pops ``num_hidden_layers`` (default 0) and ``hidden_width`` (default ``None``)
     off ``kwargs`` and returns ``num_hidden_layers`` layers each of width
     ``hidden_width``. When ``hidden_width`` is not specified it defaults to
     ``d_model // 2``, mirroring the old topographic encoder.

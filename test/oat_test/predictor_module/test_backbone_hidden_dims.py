@@ -43,20 +43,23 @@ def test_width_defaults_to_half_d_model_when_unspecified():
 
 
 def test_default_when_knobs_omitted():
-    # No num_hidden_layers / hidden_width keys at all -> 2 layers of d_model//2.
+    # No num_hidden_layers / hidden_width keys at all -> 0 hidden layers
+    # (single output linear), matching the current num_hidden_layers default.
     ge, te, _ = setup_backbone_cfgs(_cfg(32), _FIELD_EXTENT)
-    assert list(ge.hidden_dims) == [16, 16]
-    assert list(te.hidden_dims) == [16, 16]
+    assert list(ge.hidden_dims) == []
+    assert list(te.hidden_dims) == []
 
 
 def test_configurable_width_overrides_default():
+    # num_hidden_layers must be set explicitly now (its own default is 0);
+    # hidden_width overrides the d_model//2 default width.
     cfg = _cfg(
         32,
-        ge_extra={"hidden_width": 64},
-        te_extra={"hidden_width": 8},
+        ge_extra={"num_hidden_layers": 2, "hidden_width": 64},
+        te_extra={"num_hidden_layers": 2, "hidden_width": 8},
     )
     ge, te, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
-    assert list(ge.hidden_dims) == [64, 64]  # 2 layers (default) of width 64
+    assert list(ge.hidden_dims) == [64, 64]
     assert list(te.hidden_dims) == [8, 8]
 
 
