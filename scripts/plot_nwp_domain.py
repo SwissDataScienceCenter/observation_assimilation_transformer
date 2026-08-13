@@ -212,7 +212,9 @@ def main() -> None:
         plot_config=load_plot_config(dataset),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, dataset.config.obs_vars, logger)
+    nwp_predictor = maybe_build_nwp_baseline(
+        dataset, dataset.config.obs_vars, logger, required=True
+    )
 
     ckpt_tag = Path(args.checkpoint).parent.name
     fig = plotter.plot_domain_overview(

@@ -3,6 +3,7 @@
 import logging
 import types
 
+import pytest
 import torch
 
 from oat.plotting_module import OATPlotter
@@ -67,6 +68,15 @@ def test_maybe_build_nwp_baseline_warns_and_returns_none_on_construction_failure
         )
     assert result is None
     assert "unavailable" in caplog.text
+
+
+def test_maybe_build_nwp_baseline_required_raises_systemexit_on_failure(caplog):
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(SystemExit):
+            maybe_build_nwp_baseline(
+                _legacy_dataset(), ["temperature"], logging.getLogger(__name__),
+                required=True,
+            )
 
 
 def test_load_plot_config_returns_none_for_unrecognized_dataset_type():

@@ -50,11 +50,15 @@ def is_field_path(dataset: Any) -> bool:
 
 def select_plotter_cls(dataset: Any) -> type:
     """OATPlotter for Field-path datasets, LegacyOATPlotter otherwise."""
-    return OATPlotter if is_field_path(dataset) else LegacyOATPlotter  # type: ignore
+    return OATPlotter if is_field_path(dataset) else LegacyOATPlotter
 
 
 def maybe_build_nwp_baseline(
-    dataset: Any, output_var_names: list[str], logger: logging.Logger
+    dataset: Any,
+    output_var_names: list[str],
+    logger: logging.Logger,
+    *,
+    required: bool = False,
 ) -> Any | None:
     """Build the NWP-interpolator baseline predictor, or None + a warning.
 
@@ -65,15 +69,29 @@ def maybe_build_nwp_baseline(
     NWPInterpolator wraps InterpolationGlobalEncoder, which today
     unconditionally raises NotImplementedError (the grid-encoder
     deprecation guard added elsewhere on this branch collaterally broke
-    this baseline too — confirmed live: NWPInterpolator(NWPInterpolatorConfig(...))
+    this baseline too — confirmed live: `NWPInterpolator(NWPInterpolatorConfig(...))`
     raises NotImplementedError regardless of data path). Reviving that
     guard is out of scope here; this just keeps scripts from crashing on it.
+
+    IMPORTANT (found in final review): OATPlotter._run_inference's
+    `predictor if predictor is not None else self.predictor` fallback means
+    a bare None returned here is silently interpreted as "use the primary
+    model", not "no baseline". Callers whose entire output depends on a
+    real baseline (plot_oat_example.py, plot_nwp_domain.py,
+    plot_assimilation_panel.py) MUST pass required=True, which raises
+    SystemExit(0) instead of returning None — otherwise they'd silently
+    render the primary model's own output as if it were the NWP baseline,
+    with no error. Only evaluate_test_set.py's --baseline flag (genuinely
+    optional, already gated on `if reference is not None`) uses the
+    default required=False.
     """
     if is_field_path(dataset):
         logger.warning(
             "NWP baseline comparison is not yet supported on the Field data "
             "path; skipping."
         )
+        if required:
+            raise SystemExit(0)
         return None
     from oat.model_module.baseline import NWPInterpolatorConfig
     from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
@@ -87,6 +105,8 @@ def maybe_build_nwp_baseline(
         ).eval()
     except NotImplementedError as exc:
         logger.warning("NWP baseline comparison is unavailable: %s", exc)
+        if required:
+            raise SystemExit(0) from exc
         return None
 
 
