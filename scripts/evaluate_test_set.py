@@ -27,13 +27,15 @@ import torch
 from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
-from oat.model_module.baseline import NWPInterpolatorConfig
-from oat.plotting_module import OATPlotter
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.checkpoint_utils import (
     _DEFAULT_REGISTRY,
     load_checkpoint,
     resolve_checkpoint,
+)
+from scripts.plotter_utils import (
+    is_field_path,
+    maybe_build_nwp_baseline,
+    select_plotter_cls,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
@@ -61,8 +63,12 @@ def _parse_args() -> argparse.Namespace:
         description="Aggregate test-set metrics for an OAT checkpoint."
     )
     p.add_argument("checkpoint", nargs="?", default=None, help="Path to .ckpt file")
-    p.add_argument("--dataset", default=None, help="Dataset key in configs/checkpoints.yaml")
-    p.add_argument("--model", default=None, help="Model key in configs/checkpoints.yaml")
+    p.add_argument(
+        "--dataset", default=None, help="Dataset key in configs/checkpoints.yaml"
+    )
+    p.add_argument(
+        "--model", default=None, help="Model key in configs/checkpoints.yaml"
+    )
     p.add_argument(
         "--split",
         choices=["val", "test"],
@@ -124,8 +130,12 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         global_key = f"{key}_global"
         if global_key not in metrics:
             continue
-        per_var = torch.nanmean(metrics[key], dim=0)  # average over stations, ignoring NaN → [V]
-        vals = "".join(f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names)))
+        per_var = torch.nanmean(
+            metrics[key], dim=0
+        )  # average over stations, ignoring NaN → [V]
+        vals = "".join(
+            f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names))
+        )
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
 
@@ -147,7 +157,9 @@ def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tens
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
@@ -156,7 +168,9 @@ def main() -> None:
 
     if is_interpolator:
         # Borrow the data config from a sibling checkpoint; build predictor below.
-        cfg = OmegaConf.load(Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml")
+        cfg = OmegaConf.load(
+            Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml"
+        )
         predictor = None
     else:
         if args.checkpoint is None:
@@ -174,6 +188,15 @@ def main() -> None:
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
     if is_interpolator:
+        if is_field_path(dataset):
+            logger.warning(
+                "--model interpolator is not yet supported on the Field data "
+                "path; skipping."
+            )
+            raise SystemExit(0)
+        from oat.model_module.baseline import NWPInterpolatorConfig
+        from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
+
         nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
         predictor = NWPInterpolatorPredictor(
             config=nwp_config,
@@ -197,10 +220,14 @@ def main() -> None:
 
     logger.info(
         "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d",
-        args.split, len(time_indices), len(obs_indices), len(eval_indices),
+        args.split,
+        len(time_indices),
+        len(obs_indices),
+        len(eval_indices),
     )
 
-    plotter = OATPlotter(
+    PlotterCls = select_plotter_cls(dataset)
+    plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
         obs_station_indices=obs_indices,
@@ -211,12 +238,9 @@ def main() -> None:
 
     nwp_predictor = None
     if args.baseline and not is_interpolator:
-        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-        nwp_predictor = NWPInterpolatorPredictor(
-            config=nwp_config,
-            output_var_names=dataset.config.obs_vars,
-            input_transform=dataset.get_baseline_pre_transform(),
-        ).eval()
+        nwp_predictor = maybe_build_nwp_baseline(
+            dataset, dataset.config.obs_vars, logger
+        )
 
     var_names = list(predictor.var_to_indx.keys())
 
@@ -270,7 +294,10 @@ def main() -> None:
 
     # Build per-station CSV
     coords = dataset.station_coords[eval_indices].numpy()  # [S, 2]
-    rows: dict = {"station_x": coords[:, 0].tolist(), "station_y": coords[:, 1].tolist()}
+    rows: dict = {
+        "station_x": coords[:, 0].tolist(),
+        "station_y": coords[:, 1].tolist(),
+    }
     for key in ("crps", "mae", "crpss"):
         if key not in metrics:
             continue
@@ -299,7 +326,10 @@ def main() -> None:
         if global_key not in metrics:
             continue
         summary[global_key] = metrics[global_key].item()
-        per_var = {var: torch.nanmean(metrics[key][:, vi]).item() for vi, var in enumerate(var_names)}
+        per_var = {
+            var: torch.nanmean(metrics[key][:, vi]).item()
+            for vi, var in enumerate(var_names)
+        }
         summary[key] = per_var
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2))
