@@ -20,6 +20,9 @@ stations: null
 start_date: null
 end_date: null
 
+# Legacy-only: builds the regular lat/lon reference grid for
+# legacy.ERA5MeteostatDataset (dataset_type: legacy_era5_meteostat). Unused
+# by the live field-based ERA5MeteostatDataset (dataset_type: era5_meteostat).
 nwp_lat_min: 34.0
 nwp_lat_max: 71.75
 nwp_lon_min: -24.75
@@ -27,6 +30,8 @@ nwp_lon_max: 45.0
 nwp_lat_res: 0.25
 nwp_lon_res: 0.25
 
+# Legacy-only: grid patch extraction size in legacy.ERA5MeteostatDataset.
+# Unused by the live field-based ERA5MeteostatDataset.
 patch_size:
   - 1
   - 1

@@ -10,7 +10,7 @@ defaults:
 
 model_cls: oat.model_module.model.OAT
 d_model: 32
-pre_oat_loss_weight: .2
+pre_oat_loss_weight: .1
 num_samples: 100
 mask_innovations: true
 transform_type: keep_support
