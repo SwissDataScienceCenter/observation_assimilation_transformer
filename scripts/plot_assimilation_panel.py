@@ -19,7 +19,6 @@ Usage
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,7 +33,6 @@ from oat.plotting_module.geo_overlays import _add_borders, build_domain_grid
 from oat.predictor_module.checkpoint_utils import load_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.plotter_utils import (
-    is_field_path,
     load_plot_config,
     maybe_build_nwp_baseline,
     select_plotter_cls,
@@ -87,13 +85,6 @@ def main() -> None:
 
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
-
-    if is_field_path(dataset):
-        logger.warning(
-            "This figure's first column is an NWP baseline field, which is "
-            "not yet supported on the Field data path; skipping."
-        )
-        sys.exit(0)
 
     test_ds = test_loader.dataset
     obs_station_indices = list(test_ds.observed_indices)

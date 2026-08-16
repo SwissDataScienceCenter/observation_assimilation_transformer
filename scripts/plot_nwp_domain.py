@@ -29,7 +29,6 @@ from oat.data_module.setup import setup_data_and_transform
 from oat.predictor_module.checkpoint_utils import load_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.plotter_utils import (
-    is_field_path,
     load_plot_config,
     maybe_build_nwp_baseline,
     select_plotter_cls,
@@ -156,14 +155,6 @@ def main() -> None:
 
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
-        sys.exit(0)
-
-    if is_field_path(dataset):
-        logger.warning(
-            "This script's domain overview compares against an NWP "
-            "baseline, which is not yet supported on the Field data path; "
-            "skipping."
-        )
         sys.exit(0)
 
     obs_station_indices = None
