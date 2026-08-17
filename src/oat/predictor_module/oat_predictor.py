@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any, Dict, Literal, Type, Optional, List
 from importlib import import_module
 import logging
@@ -573,7 +574,7 @@ def setup_oat_cfg(
     cfg: DictConfig,
     field_extent: Dict,
     logger: logging.Logger,
-    project_index_coords=None,
+    project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> model.OATConfig | model.UninformedOATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset

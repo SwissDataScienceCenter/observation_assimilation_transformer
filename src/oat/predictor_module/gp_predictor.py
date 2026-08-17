@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 from importlib import import_module
 
@@ -255,7 +256,7 @@ def setup_gp_predictor(
     field_extent: Dict,
     obs_vars: List[str],
     transforms: Tuple[Transform, Transform],
-    project_index_coords=None,
+    project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> "GPPredictor":
     data_cfg = cfg.dataset
     model_cfg = cfg.model
