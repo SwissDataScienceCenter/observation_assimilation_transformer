@@ -137,7 +137,7 @@ class ERA5MeteostatDataset(DatasetBase):
 
     Accepts the same ``config`` shape as ``legacy.ERA5MeteostatDataset``
     (data paths, variable lists, station/time filters, ``catalog``) plus the field
-    schema (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an
+    schema (``coord_sources``, ``fields``, ``roles``). Builds an
     obs ``PointSetSource``, an nwp ``PointSetSource`` (native ERA5 lon/lat
     grid points) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.

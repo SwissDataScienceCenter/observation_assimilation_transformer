@@ -23,5 +23,3 @@ roles:
   global: nwp
   geo_bias: geo
   topo: topo
-
-transform_type: real

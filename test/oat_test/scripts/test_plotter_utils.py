@@ -40,7 +40,6 @@ def _field_dataset_with_baseline_support():
                 "nwp": {"coords": "stations", "inputs": ["nwp.T_2M"], "query": True},
             },
             "roles": {"target": "obs", "global": "nwp"},
-            "transform_type": "real",
         }
     )
     return types.SimpleNamespace(

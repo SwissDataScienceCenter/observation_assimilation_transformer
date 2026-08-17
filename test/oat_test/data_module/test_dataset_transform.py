@@ -38,7 +38,6 @@ def _build_keep_support_dataset() -> DatasetBase:
                 "obs": {"coords": "stations", "inputs": ["obs.A", "obs.B"]},
             },
             "roles": {"target": "obs"},
-            "transform_type": "keep_support",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
@@ -58,8 +57,8 @@ def _build_keep_support_dataset() -> DatasetBase:
 
 
 def test_get_transform_real_standardizes_all_and_logs_obs():
-    ds, _ = _build_dataset()  # transform_type == "real"
-    post, output = ds.get_transform(num_data_points=2)
+    ds, _ = _build_dataset()  # type defaults to "real"
+    post, output = ds.get_transform(num_data_points=2, type="real")
     assert isinstance(post, NestedTransform)
     fields_tr = post.transform_dict["fields"].transform_dict
     # every field has a FieldValueTransform leaf
@@ -79,7 +78,7 @@ def test_get_transform_real_standardizes_all_and_logs_obs():
 
 def test_get_transform_keep_support_offsets_only_strictly_positive_var():
     ds = _build_keep_support_dataset()
-    _, output = ds.get_transform(num_data_points=len(ds))
+    _, output = ds.get_transform(num_data_points=len(ds), type="keep_support")
     assert isinstance(output, ComposedTransform)
     obs_pre = output.transforms[0]
     assert isinstance(obs_pre, TranslateScaleTransform)
@@ -96,9 +95,9 @@ def test_get_transform_keep_support_offsets_only_strictly_positive_var():
 
 def test_target_point_indices_restricts_stats() -> None:
     ds, _ = _build_dataset()  # existing helper: obs field on 'stations' coord source
-    inner_all, _ = ds.compute_field_leaves(num_data_points=len(ds))
+    inner_all, _ = ds.compute_field_leaves(num_data_points=len(ds), type="real")
     inner_sub, _ = ds.compute_field_leaves(
-        num_data_points=len(ds), target_point_indices=np.array([0])
+        num_data_points=len(ds), target_point_indices=np.array([0]), type="real"
     )
     # restricting to station 0 changes the obs standardization stats
     obs_name = ds.field_config.roles["target"]

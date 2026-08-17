@@ -81,13 +81,14 @@ class TrainDataset(Dataset[dict[str, Any]]):
             "query_data": {"fields": query_fields},
         }
 
-    def get_transform(self, num_data_points: int) -> Any:
+    def get_transform(self, num_data_points: int, type: str = "real") -> Any:
         # Field path assembles the two-group transform in setup.py; this
         # delegates stats gathering to the base dataset over train stations.
         return self.dataset.get_transform(
             num_data_points=num_data_points,
             data_indices=self._time_indices,
             target_point_indices=self.train_indices,
+            type=type,
         )
 
 

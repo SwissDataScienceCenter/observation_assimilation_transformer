@@ -44,7 +44,7 @@ def test_dispatcher_overrides_compose_into_field_config():
     assert cfg.dataset.dataset_type == "cosmo_peakweather"
     assert cfg.model.global_encoder.type == "Point"
     assert cfg.model.topographic_encoder.type == "MLP"
-    assert cfg.dataset.transform_type == "keep_support"
+    assert cfg.model.transform_type == "keep_support"
     assert dict(cfg.model.output_head.variable_to_distribution) == dict(
         cfg.dataset.obs_variable_to_distribution
     )

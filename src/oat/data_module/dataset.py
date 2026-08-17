@@ -313,6 +313,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         num_data_points: int,
         data_indices: Sequence[int] | None = None,
         target_point_indices: Sequence[int] | None = None,
+        type: str = "real",
     ) -> tuple[dict[str, T.Transform], T.Transform]:
         """Gather per-field running stats and compose the obs output transform.
 
@@ -320,7 +321,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         statistics over ``Field.values``. The obs field (``roles["target"]``)
         additionally gets a support-aware pre-transform — log (``real``) or a
         zero-avoiding offset (``keep_support``) — applied before its stats are
-        gathered.
+        gathered. ``type`` selects which pre-transform to use.
 
         If ``target_point_indices`` is given, every field whose coord source
         matches ``target_coord_source()`` (i.e. the obs field's coord source)
@@ -339,8 +340,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         obs_name = self._obs_field_name()
         obs_out = list(self.field_config.fields[obs_name].out)
         offset = 1e-3
-        ttype = self.field_config.transform_type
-        obs_pre = self._build_obs_pre(obs_out, ttype, offset)
+        obs_pre = self._build_obs_pre(obs_out, type, offset)
 
         tcs = self.target_coord_source()
         tgt_idx = (
@@ -364,7 +364,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
                 stats[n].update(vals)
 
         output_transform = self._compose_output_transform(
-            obs_pre, stats[obs_name], obs_out, ttype
+            obs_pre, stats[obs_name], obs_out, type
         )
         inner: dict[str, T.Transform] = {}
         for n in self.field_config.fields:
@@ -378,11 +378,13 @@ class DatasetBase(Dataset[dict[str, Any]]):
         num_data_points: int,
         data_indices: Sequence[int] | None = None,
         target_point_indices: Sequence[int] | None = None,
+        type: str = "real",
     ) -> tuple[T.NestedTransform, T.Transform]:
         """Compute data-driven per-field transforms (log/offset + standardize).
 
         Delegates to :meth:`compute_field_leaves` — see there for the stats
-        gathering (and optional ``target_point_indices`` scoping) details.
+        gathering, ``type`` selection, and optional ``target_point_indices``
+        scoping details.
 
         Returns:
             ``(post_transform, output_transform)`` — ``post_transform``
@@ -392,7 +394,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
             tensors (e.g. model outputs).
         """
         inner, output_transform = self.compute_field_leaves(
-            num_data_points, data_indices, target_point_indices
+            num_data_points, data_indices, target_point_indices, type=type
         )
         leaves = {n: T.FieldValueTransform(inner[n]) for n in inner}
         post_transform = T.NestedTransform({"fields": leaves})

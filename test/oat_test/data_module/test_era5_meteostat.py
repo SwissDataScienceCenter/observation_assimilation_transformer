@@ -29,7 +29,6 @@ def _compose_dataset():
 def test_temp_config_parses_and_validates():
     cfg = _compose_dataset()
     fc = parse_field_config(cfg)
-    assert fc.transform_type == "real"
     assert fc.roles["target"] == "obs"
     # validate against the catalog-declared vars
     cat = cfg.catalog
@@ -60,7 +59,6 @@ _FIELD_SCHEMA = {
         },
     },
     "roles": {"target": "obs", "geo_bias": "geo", "topo": "topo"},
-    "transform_type": "real",
 }
 
 

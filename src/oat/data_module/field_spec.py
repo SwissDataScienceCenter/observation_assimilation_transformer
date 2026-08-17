@@ -20,6 +20,7 @@ class InputRef:
 
 class SourceRef(NamedTuple):
     """An ``InputRef`` narrowed to the source-kind case (source/name non-None)."""
+
     source: str
     name: str
 
@@ -49,7 +50,6 @@ class FieldConfig:
     nwp_coord_source: str | None
     fields: dict[str, FieldSpec]
     roles: dict[str, str]
-    transform_type: str
 
 
 def parse_input_ref(ref: str) -> InputRef:
@@ -102,7 +102,6 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
         nwp_coord_source=nwp_coord_source,
         fields=fields,
         roles=roles,
-        transform_type=str(cfg["transform_type"]),
     )
 
 

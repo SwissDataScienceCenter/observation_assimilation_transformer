@@ -18,7 +18,6 @@ def _cfg(fields, roles=None):
             "coord_sources": {"stations": {"from": "obs"}, "nwp_grid": {"from": "nwp"}},
             "fields": fields,
             "roles": roles or {"target": "obs"},
-            "transform_type": "real",
         }
     )
 

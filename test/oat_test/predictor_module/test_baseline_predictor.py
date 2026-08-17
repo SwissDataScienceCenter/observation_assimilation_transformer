@@ -97,7 +97,6 @@ def _fake_dataset() -> Any:
                 "geo_bias": "geo",
                 "topo": "topo",
             },
-            "transform_type": "real",
         }
     )
     obs_to_nwp = {"temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15)}

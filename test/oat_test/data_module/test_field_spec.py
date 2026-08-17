@@ -44,10 +44,8 @@ def test_parse_field_config_full():
             },
         },
         "roles": {"target": "obs"},
-        "transform_type": "real",
     }
     fc = parse_field_config(cfg)
-    assert fc.transform_type == "real"
     assert fc.coord_sources == frozenset({"stations", "nwp_grid"})
     assert fc.nwp_coord_source == "nwp_grid"
     # out defaults to input leaf names when omitted
@@ -75,7 +73,6 @@ def test_parse_field_config_k_override():
             },
         },
         "roles": {"target": "nwp"},
-        "transform_type": "real",
     }
     fc = parse_field_config(cfg)
     assert fc.fields["nwp"].k == 4

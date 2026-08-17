@@ -45,7 +45,6 @@ def _build_dataset():
                 },
             },
             "roles": {"target": "obs", "geo_bias": "geo"},
-            "transform_type": "real",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
@@ -130,7 +129,6 @@ def _build_dataset_k2():
                 },
             },
             "roles": {"target": "obs", "geo_bias": "geo"},
-            "transform_type": "real",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z"])
