@@ -243,7 +243,10 @@ class OATPredictor(BasePredictor):
         batch = self.input_transform(batch)
         if self.field_roles is not None:
             batch = _unwrap_fields_to_model_batch(
-                batch, self.field_roles, self.model.requires_observation
+                batch,
+                self.field_roles,
+                self.model.requires_observation,
+                project_index_coords=self.project_index_coords,
             )
         return batch
 
@@ -566,9 +569,22 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     return global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg
 
 
-def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -> model.OATConfig | model.UninformedOATConfig:
+def setup_oat_cfg(
+    cfg: DictConfig,
+    field_extent: Dict,
+    logger: logging.Logger,
+    project_index_coords=None,
+) -> model.OATConfig | model.UninformedOATConfig:
     model_cfg = cfg.model
     data_cfg = cfg.dataset
+    from oat.predictor_module.field_batch_utils import (
+        assert_geo_first_two_are_coords,
+        index_projection_dim,
+    )
+
+    if project_index_coords is not None:
+        assert_geo_first_two_are_coords(data_cfg)
+    proj_dim = index_projection_dim(project_index_coords)
     logger.info("Setting up model configs...")
     d_model = model_cfg.d_model
     global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(cfg, field_extent)
@@ -603,7 +619,7 @@ def setup_oat_cfg(cfg: DictConfig, field_extent: Dict, logger: logging.Logger) -
     masking_cfg = model.MaskingConfig(**model_cfg.masking)
 
     transformer_cfg = model.TransformerConfig(
-        d_geo_bias=len(data_cfg.geo_vars),
+        d_geo_bias=len(data_cfg.geo_vars) - 2 + proj_dim,
         d_model=d_model,
         dim_feedforward=2 * d_model,
         **model_cfg.transformer)
