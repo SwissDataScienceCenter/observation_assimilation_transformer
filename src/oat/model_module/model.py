@@ -21,7 +21,7 @@ from oat.model_module import (
 )
 
 
-def _search_coords(group: dict) -> torch.Tensor:
+def _search_coords(group: dict[str, torch.Tensor]) -> torch.Tensor:
     """Coords for neighbour search: projected ``search_coords`` if present,
     else raw ``coords`` (unchanged behaviour for non-projecting datasets)."""
     return group.get("search_coords", group["coords"])
