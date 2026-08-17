@@ -53,3 +53,29 @@ def test_set_index_projection_stores_override():
     assert p.project_index_coords is not None
     out = p.project_index_coords(torch.tensor([[0.0, 90.0]]))
     assert torch.allclose(out[0], torch.tensor([0.0, 0.0, 1.0]), atol=1e-6)
+
+
+def test_eval_reestablishes_projection_after_load():
+    """The eval path re-attaches the projection to an already-built predictor
+    (which after load_from_checkpoint has project_index_coords=None)."""
+    from oat.predictor_module.base_predictor import BasePredictor
+
+    class _Stub(BasePredictor):
+        def __init__(self):
+            super().__init__(output_var_names=["t"], field_roles={"a": "b"})
+
+        def _normalize_batch(self, batch):
+            return batch
+
+    class _GeoDataset(DatasetBase):
+        def __init__(self):
+            pass
+
+        def project_index_coords(self, coords):
+            return _sphere_proj(coords)
+
+    loaded = _Stub()                 # simulates load_from_checkpoint result
+    assert loaded.project_index_coords is None
+    # eval script rebuilds the dataset then calls set_index_projection:
+    loaded.set_index_projection(_GeoDataset())
+    assert loaded.project_index_coords is not None

@@ -114,6 +114,7 @@ def _load_gp_predictor(
     import logging
 
     from oat.data_module.setup import setup_data_and_transform
+    from oat.predictor_module.field_batch_utils import resolve_index_projection
     from oat.predictor_module.gp_predictor import setup_gp_predictor
 
     logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ def _load_gp_predictor(
         field_extent={k: v.tolist() for k, v in dataset.nwp_extent.items()},
         obs_vars=list(dataset.config.obs_vars),
         transforms=(input_transform, output_transform),
+        project_index_coords=resolve_index_projection(dataset),
     )
     state = torch.load(path, map_location=map_location, weights_only=False)
     predictor.load_state_dict(state["state_dict"])

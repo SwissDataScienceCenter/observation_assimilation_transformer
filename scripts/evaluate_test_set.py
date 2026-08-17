@@ -179,6 +179,9 @@ def main() -> None:
 
         predictor = create_baseline_predictor(dataset).eval()
 
+    if not is_interpolator and hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+
     split_loader = val_loader if args.split == "val" else test_loader
     split_ds = split_loader.dataset  # EvalDataset
 
