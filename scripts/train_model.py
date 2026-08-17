@@ -216,11 +216,14 @@ def main(cfg: DictConfig) -> None:
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
     elif _is_gp_model(cfg):
+        from oat.predictor_module.field_batch_utils import resolve_index_projection
+
         predictor = setup_gp_predictor(
             cfg=cfg,
             field_extent=field_extent,
             obs_vars=list(dataset.config.obs_vars),
             transforms=[input_transform, output_transform],
+            project_index_coords=resolve_index_projection(dataset),
         )
 
         profiler = setup_profiler(cfg=cfg)

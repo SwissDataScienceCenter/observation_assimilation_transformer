@@ -53,7 +53,10 @@ class GPPredictor(BasePredictor):
         batch = self.input_transform(batch)
         if self.field_roles is not None:
             batch = _unwrap_fields_to_model_batch(
-                batch, self.field_roles, self.model.requires_observation
+                batch,
+                self.field_roles,
+                self.model.requires_observation,
+                project_index_coords=self.project_index_coords,
             )
         return batch
 
@@ -252,9 +255,19 @@ def setup_gp_predictor(
     field_extent: Dict,
     obs_vars: List[str],
     transforms: Tuple[Transform, Transform],
+    project_index_coords=None,
 ) -> "GPPredictor":
     data_cfg = cfg.dataset
     model_cfg = cfg.model
+
+    from oat.predictor_module.field_batch_utils import (
+        assert_geo_first_two_are_coords,
+        index_projection_dim,
+    )
+
+    if project_index_coords is not None:
+        assert_geo_first_two_are_coords(data_cfg)
+    geo_dim = len(data_cfg.geo_vars) - 2 + index_projection_dim(project_index_coords)
 
     gp_topography_cfg = None
     if bool(model_cfg.get("use_topography", False)):
@@ -286,6 +299,7 @@ def setup_gp_predictor(
 
     gp_config = GPBaselineConfig(
         obs_vars=obs_vars,
+        geo_dim=geo_dim,
         nwp_vars=list(data_cfg.nwp_vars),
         use_nwp=bool(model_cfg.use_nwp),
         use_time_emb=bool(model_cfg.use_time_emb),
@@ -347,7 +361,7 @@ def setup_gp_predictor(
         else None
     )
 
-    return GPPredictor(
+    predictor = GPPredictor(
         gp_model=gp_model,
         input_transform=transforms[0],
         output_transform=transforms[1],
@@ -359,3 +373,5 @@ def setup_gp_predictor(
         scheduler_params=sched_params,
         field_roles=field_roles,
     )
+    predictor.project_index_coords = project_index_coords
+    return predictor

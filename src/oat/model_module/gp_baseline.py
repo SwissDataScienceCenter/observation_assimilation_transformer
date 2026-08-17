@@ -102,6 +102,7 @@ class GPBaselineConfig:
     mean_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
+    geo_dim: int = 3
     mean_groups: List[str] = field(default_factory=lambda: ["nwp", "topo"])
     stationary_cov_groups: List[str] = field(
         default_factory=lambda: [
@@ -149,8 +150,8 @@ class GPBaseline(nn.Module):
         offset = 0
 
         # geo
-        geo_indices = list(range(offset, offset + 3))
-        offset += 3
+        geo_indices = list(range(offset, offset + config.geo_dim))
+        offset += config.geo_dim
         if "geo" in config.mean_groups:
             mean_indices += geo_indices
         if "geo" in config.stationary_cov_groups:

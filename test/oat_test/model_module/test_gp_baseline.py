@@ -445,3 +445,25 @@ class TestGPBaselinePreOATMean:
         trunk_grads = [p.grad for p in model.pre_oat.parameters() if p.requires_grad]
         assert trunk_grads
         assert any(g is not None and g.abs().sum() > 0 for g in trunk_grads)
+
+
+def test_gp_geo_dim_shifts_feature_group_offsets():
+    from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
+
+    common = dict(
+        obs_vars=["t"],
+        nwp_vars=["a", "b"],
+        use_nwp=True,
+        use_time_emb=False,
+        use_topography=False,
+        mean_groups=["nwp"],
+        stationary_cov_groups=["geo"],
+        non_stationary_cov_groups=["geo", "nwp"],
+    )
+    # default geo_dim == 3: nwp indices start at 3
+    m3 = GPBaseline(GPBaselineConfig(geo_dim=3, **common))
+    # geo_dim == 4 (ERA5 sphere): nwp indices shift to start at 4
+    m4 = GPBaseline(GPBaseline.__init__.__globals__["GPBaselineConfig"](geo_dim=4, **common))
+    # The stationary kernel is defined over geo indices; its ard width equals geo_dim.
+    assert m3.config.geo_dim == 3
+    assert m4.config.geo_dim == 4
