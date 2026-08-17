@@ -184,3 +184,14 @@ def test_introspection():
     assert ds.roles()["target"] == "obs"
     assert ds.sources_info()["obs"].has_mask is True
     assert ds.sources_info()["nwp"].available_vars == ["T_2M"]
+
+
+def test_project_index_coords_default_is_identity():
+    import torch
+    from oat.data_module.dataset import DatasetBase
+
+    coords = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    # Call the unbound default directly — no instance construction needed.
+    out = DatasetBase.project_index_coords(object.__new__(DatasetBase), coords)
+    assert out.shape == coords.shape
+    assert torch.equal(out, coords)

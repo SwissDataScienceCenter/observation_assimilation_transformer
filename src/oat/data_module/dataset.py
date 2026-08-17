@@ -101,6 +101,19 @@ class DatasetBase(Dataset[dict[str, Any]]):
     def roles(self) -> dict[str, str]:
         return dict(self.field_config.roles)
 
+    def project_index_coords(self, coords: Tensor) -> Tensor:
+        """Map spatial coords into the space where Euclidean ops are meaningful.
+
+        Default: identity — coordinates are already treated as Euclidean.
+        Datasets whose coordinates are geographic (lon/lat) override this.
+
+        Args:
+            coords: (..., 2) spatial coordinates.
+        Returns:
+            (..., D) coordinates for neighbor search / geo-bias (D may differ).
+        """
+        return coords
+
     @property
     def variable_names(self) -> dict[str, dict[str, list[str]]]:
         return {"fields": {n: list(f.out) for n, f in self.field_config.fields.items()}}
