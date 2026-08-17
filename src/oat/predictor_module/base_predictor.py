@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -22,7 +23,7 @@ class BasePredictor(pl.LightningModule, ABC):
             i: v for i, v in enumerate(output_var_names)
         }
         self.field_roles = field_roles
-        self.project_index_coords = None
+        self.project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None
 
     @abstractmethod
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
