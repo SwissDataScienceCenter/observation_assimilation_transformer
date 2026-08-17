@@ -209,16 +209,9 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
 
     if model_type == "baseline":
-        from oat.model_module.baseline import NWPInterpolatorConfig
         from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-        baseline_config = NWPInterpolatorConfig(field_extent=field_extent, **cfg.model)
-        pre_transform = dataset.get_baseline_pre_transform()
-        predictor = create_baseline_predictor(
-            config=baseline_config,
-            obs_vars=list(dataset.config.obs_vars),
-            pre_transform=pre_transform,
-        )
+        predictor = create_baseline_predictor(dataset)
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)

@@ -77,4 +77,11 @@ EOF
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Cap intra-op math threads to each rank's CPU allocation. Without this, OpenMP/MKL
+# default to the whole node's core count per rank; with 4 ranks that oversubscribes
+# cores badly (~370 threads/rank observed) and thrashes the CPU-bound data/stats
+# setup that runs redundantly on every rank before training starts.
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
+export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
+
 srun python -m scripts.train "${ARGS[@]}"

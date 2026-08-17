@@ -1,33 +1,116 @@
+"""ERA5-Meteostat dataset that emits a dict of ``Field`` per sample.
+
+Thin concrete subclass of ``DatasetBase``: reuses the existing ERA5 NWP /
+topography / Meteostat-observation loaders from
+``legacy/era5_meteostat_dataset.py`` and wires them into three ``Source``
+objects (obs, nwp, topo) consumed by the config-driven field assembly in
+``DatasetBase``.
+"""
+
 from __future__ import annotations
 
-import logging as _logging
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 import torch
 import xarray as xr
-from anemoi.datasets import open_dataset
-from scipy.spatial import cKDTree
-from torch.nn.functional import grid_sample
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
+from omegaconf import OmegaConf
+from torch import Tensor
 
-from oat.data_module import statistics, transform
-from oat.data_module.meteostat_observations import MeteostatObservations
-from oat.data_module.support import VariableSupport
+from oat.data_module.dataset import DatasetBase
+from oat.data_module.dataset_helpers import (
+    build_obs_variable_support as _build_obs_variable_support,
+)
+from oat.data_module.dataset_helpers import (
+    dtype_map,
+)
+from oat.data_module.field_spec import FieldConfig, parse_field_config
+from oat.data_module.sources import PointSetSource, RasterSource
 
-_log = _logging.getLogger(__name__)
+_LOG = logging.getLogger(__name__)
 
-dtype_map = {
-    "float32": torch.float32,
-    "float64": torch.float64,
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-}
 
+class MeteostatObservations:
+    """Parquet-backed Meteostat station-observation loader."""
+
+    def __init__(self, obs_path: str, station_meta_path: str) -> None:
+        meta = pd.read_parquet(station_meta_path)
+        if "station" in meta.columns:
+            meta = meta.set_index("station")
+        self.stations_table: pd.DataFrame = meta.dropna(
+            subset=["latitude", "longitude", "elevation"]
+        )[["latitude", "longitude", "elevation"]].copy()
+        self.stations_table.index = self.stations_table.index.astype(str)
+
+        obs = pd.read_parquet(obs_path)
+        obs["time"] = pd.to_datetime(obs["time"], utc=True)
+        obs["station"] = obs["station"].astype(str)
+        obs = obs[obs["station"].isin(set(self.stations_table.index))]
+        self._stations: np.ndarray = np.array(
+            sorted(obs["station"].unique()), dtype=str
+        )
+        self._obs: pd.DataFrame | None = obs.set_index(["time", "station"]).sort_index()
+
+    @property
+    def stations(self) -> np.ndarray:
+        return self._stations
+
+    def get_observations(
+        self,
+        first_date: pd.Timestamp,
+        last_date: pd.Timestamp,
+        parameters: list[str],
+        stations: np.ndarray | list[str],
+        return_mask: bool = True,
+        as_numpy: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray] | np.ndarray:
+        if self._obs is None:
+            raise RuntimeError(
+                "Observation DataFrame has been freed to reduce memory. "
+                "Create a fresh MeteostatObservations object to access raw observations."
+            )
+        if not as_numpy:
+            raise NotImplementedError("Only as_numpy=True is supported.")
+
+        stations = [str(s) for s in stations]
+        end_exclusive = last_date.ceil("h")
+        times = pd.date_range(
+            first_date.floor("h"),
+            end_exclusive,
+            freq="1h",
+            tz="UTC",
+            inclusive="left",
+        )
+        T, N, V = len(times), len(stations), len(parameters)
+        obs_arr = np.full((T, N, V), np.nan, dtype=np.float32)
+
+        try:
+            time_unit = self._obs.index.get_level_values("time").unit
+            first_ts = first_date.as_unit(time_unit)
+            last_ts = last_date.as_unit(time_unit) - pd.Timedelta(1, unit=time_unit)
+            window = self._obs.loc[first_ts:last_ts, parameters]
+        except KeyError:
+            window = pd.DataFrame(columns=parameters)
+
+        if not window.empty:
+            unstacked = window.unstack(level="station")
+            for vi, param in enumerate(parameters):
+                if param not in unstacked.columns.get_level_values(0):
+                    continue
+                param_data = unstacked[param].reindex(index=times, columns=stations)
+                obs_arr[:, :, vi] = param_data.to_numpy(
+                    dtype=np.float32, na_value=np.nan
+                )
+
+        mask = ~np.isnan(obs_arr)
+        return (obs_arr, mask) if return_mask else obs_arr
+
+
+# (deps, fn) where fn(*dep_tensors) -> tensor (H, W). Wind speed/direction
+# derived from the ERA5 10u/10v wind components.
 DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
     "wind_speed": (["10u", "10v"], lambda u, v: torch.sqrt(u**2 + v**2)),
     "wind_direction": (
@@ -36,151 +119,149 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
     ),
 }
 
-
-def _build_obs_variable_support(catalog: Any, obs_vars: list[str]) -> VariableSupport:
-    cat = catalog.obs_vars
-    missing = [v for v in obs_vars if v not in cat]
-    if missing:
-        raise KeyError(f"Observation variables missing from catalog: {missing}")
-    return VariableSupport(
-        lower_bounds=torch.tensor(
-            [cat[v].get("lower_bound", float("-inf")) for v in obs_vars],
-            dtype=torch.float32,
-        ),
-        upper_bounds=torch.tensor(
-            [cat[v].get("upper_bound", float("inf")) for v in obs_vars],
-            dtype=torch.float32,
-        ),
-        lower_open=torch.tensor(
-            [cat[v].get("lower_open", False) for v in obs_vars], dtype=torch.bool
-        ),
-        upper_open=torch.tensor(
-            [cat[v].get("upper_open", False) for v in obs_vars], dtype=torch.bool
-        ),
-    )
+# Mapping from obs variable name -> (required NWP vars, conversion fn taking a
+# name -> [..., N] column dict and returning the obs-unit tensor). Copied from
+# legacy.ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping``;
+# surfaced on the dataset via the obs_to_nwp property for the NWPInterpolator
+# baseline.
+ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
+    "temp": (["2t"], lambda n: n["2t"] - 273.15),
+    "wspd": (["10u", "10v"], lambda n: torch.sqrt(n["10u"] ** 2 + n["10v"] ** 2)),
+    "wpgt": (["10u", "10v"], lambda n: torch.sqrt(n["10u"] ** 2 + n["10v"] ** 2)),
+    "prcp": (["tp"], lambda n: n["tp"] * 1000.0),
+}
 
 
-@dataclass
-class ERA5MeteostatConfig:
-    nwp_path: str
-    topo_path: str
-    obs_path: str
-    station_meta_path: str
-    nwp_vars: list[str]
-    topo_vars: list[str]
-    obs_vars: list[str]
-    coord_vars: list[str]
-    geo_vars: list[str]
-    nwp_lat_min: float = 34.0
-    nwp_lat_max: float = 72.0
-    nwp_lon_min: float = -25.0
-    nwp_lon_max: float = 50.0
-    nwp_lat_res: float = 0.25
-    nwp_lon_res: float = 0.25
-    patch_size: tuple[int, int] = (32, 32)
-    stations: list[str] | None = None
-    start_date: str | None = None
-    end_date: str | None = None
-    use_time_embedding: bool = True
-    dtype: str = "float32"
-    catalog: Any = None  # OmegaConf DictConfig with obs_vars bounds
-    obs_plot_config: Any = None
+class ERA5MeteostatDataset(DatasetBase):
+    """``DatasetBase`` wired to the existing ERA5 / Meteostat loaders.
 
+    Accepts the same ``config`` shape as ``legacy.ERA5MeteostatDataset``
+    (data paths, variable lists, station/time filters, ``catalog``) plus the field
+    schema (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an
+    obs ``PointSetSource``, an nwp ``PointSetSource`` (native ERA5 lon/lat
+    grid points) and a topo ``RasterSource``, then delegates assembly to
+    ``DatasetBase``.
 
-class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
+    CRS note: unlike the COSMO field dataset (Swiss LV95 eastings/northings),
+    all coordinates here are geographic ``[longitude, latitude]`` in degrees.
+    """
 
     def __init__(self, config: Any) -> None:
         self.config = config
-        self.catalog = self.config.catalog
-        self.obs_var_support = _build_obs_variable_support(
-            self.catalog, list(self.config.obs_vars)
+        self.catalog = config.catalog
+        obs_var_support = _build_obs_variable_support(
+            self.catalog, [str(v) for v in config.obs_vars]
         )
-        self._load_datasets()
-        self._setup_spatial_grids()
-        self._load_topo()
-        self._load_observations()
+        dtype = dtype_map[str(config.dtype)]
+
+        self._load_nwp(config, dtype)
+        self._load_topo(config, dtype)
+        self._load_obs(config, dtype)
+
+        field_config = self._parse_field_config(config)
+        sources = {
+            "obs": self._build_obs_source(),
+            "nwp": self._build_nwp_source(),
+            "topo": self._build_topo_source(),
+        }
+        coord_source_coords = self._build_coord_source_coords(field_config)
+
+        super().__init__(
+            field_config=field_config,
+            coord_source_coords=coord_source_coords,
+            sources=sources,
+            times=self.times,
+            obs_var_support=obs_var_support,
+            dtype=dtype,
+        )
         self._mark_shared_memory()
 
-    @property
-    def variable_names(self) -> dict[str, dict[str, list[str] | None]]:
-        return {
-            "global_data": {
-                "global_field": list(self.config.nwp_vars)
-                + list(self.config.topo_vars),
-                "time_emb": (
-                    ["sin_day", "cos_day", "sin_year", "cos_year"]
-                    if self.config.use_time_embedding
-                    else None
-                ),
-            },
-            "observation_data": {
-                "coords": list(self.config.coord_vars),
-                "geo": list(self.config.geo_vars),
-                "topo": list(self.config.topo_vars),
-                "obs": list(self.config.obs_vars),
-                "mask_obs": list(self.config.obs_vars),
-            },
-        }
+    # -- field schema --
+    @staticmethod
+    def _parse_field_config(config: Any) -> FieldConfig:
+        container = (
+            OmegaConf.to_container(config, resolve=True)
+            if OmegaConf.is_config(config)
+            else dict(config)
+        )
+        return parse_field_config(cast(dict[str, Any], container))
 
     @property
-    def station_names(self) -> list[str]:
-        return list(self.stations.tolist())
+    def obs_to_nwp(
+        self,
+    ) -> dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]]:
+        return ERA5_OBS_TO_NWP
 
-    @property
-    def station_info(self) -> pd.DataFrame:
-        return self.obs_ds.stations_table.loc[self.stations]
+    # -- NWP --
+    def _load_nwp(self, config: Any, dtype: torch.dtype) -> None:
+        from anemoi.datasets import open_dataset
 
-    def _load_datasets(self) -> None:
-        self.nwp_ds = open_dataset(self.config.nwp_path)
-
-        source_vars: list[str] = list(
+        self.nwp_ds = open_dataset(config.nwp_path)
+        nwp_vars = [str(v) for v in config.nwp_vars]
+        source_vars = list(
             dict.fromkeys(
-                [v for v in self.config.nwp_vars if v not in DERIVED_FEATURES]
+                [v for v in nwp_vars if v not in DERIVED_FEATURES]
                 + [
                     dep
-                    for v in self.config.nwp_vars
+                    for v in nwp_vars
                     if v in DERIVED_FEATURES
                     for dep in DERIVED_FEATURES[v][0]
                 ]
             )
         )
-        missing = [v for v in source_vars if v not in self.nwp_ds.name_to_index]
-        if missing:
+        missing_vars = [v for v in source_vars if v not in self.nwp_ds.name_to_index]
+        if missing_vars:
             raise KeyError(
-                f"NWP variables (or deps) not in dataset: {missing}. "
-                f"Available: {list(self.nwp_ds.name_to_index.keys())}"
+                f"NWP variables (or their dependencies) not in dataset: "
+                f"{missing_vars}. Available: {list(self.nwp_ds.name_to_index.keys())}"
             )
-        self._source_vars = source_vars
+        self._nwp_out_vars = nwp_vars
+        self._nwp_source_vars = source_vars
         self.nwp_var_idx = [self.nwp_ds.name_to_index[v] for v in source_vars]
 
+        # ERA5 longitudes are stored in [0, 360); wrap to [-180, 180] so the
+        # nwp coord source shares the same lon/lat convention as topo/obs.
+        nwp_lons = np.where(
+            self.nwp_ds.longitudes > 180,
+            self.nwp_ds.longitudes - 360,
+            self.nwp_ds.longitudes,
+        )
+        self.nwp_lonlat = torch.tensor(
+            np.column_stack([nwp_lons, self.nwp_ds.latitudes]), dtype=dtype
+        )
+
+        self._setup_time_axis(config)
+
+    def _setup_time_axis(self, config: Any) -> None:
         self.obs_ds = MeteostatObservations(
-            obs_path=self.config.obs_path,
-            station_meta_path=self.config.station_meta_path,
+            obs_path=config.obs_path,
+            station_meta_path=config.station_meta_path,
         )
         self.stations = (
-            np.array(list(self.config.stations), dtype=str)
-            if self.config.stations is not None
+            np.array(list(config.stations), dtype=str)
+            if config.stations is not None
             else self.obs_ds.stations
         )
 
         all_times = pd.to_datetime(self.nwp_ds.dates).tz_localize("UTC")
-        if self.config.start_date is not None or self.config.end_date is not None:
+        if config.start_date is not None or config.end_date is not None:
             start = (
-                pd.to_datetime(self.config.start_date).tz_localize("UTC")
-                if self.config.start_date
+                pd.to_datetime(config.start_date).tz_localize("UTC")
+                if config.start_date
                 else all_times.min()
             )
             end = (
-                pd.to_datetime(self.config.end_date).tz_localize("UTC")
-                if self.config.end_date
+                pd.to_datetime(config.end_date).tz_localize("UTC")
+                if config.end_date
                 else all_times.max()
             )
             mask = (all_times >= start) & (all_times <= end)
             self.times = all_times[mask]
             if len(self.times) == 0:
                 raise ValueError(
-                    f"No NWP times in [{start}, {end}]. "
-                    f"Available: {all_times.min()} - {all_times.max()}"
+                    f"No NWP times found within the requested date range "
+                    f"({start} to {end}). Available time range is "
+                    f"{all_times.min()} to {all_times.max()}."
                 )
             self.time_indices = np.where(mask)[0]
         else:
@@ -189,92 +270,80 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
 
         missing_dates = self.nwp_ds.missing
         if missing_dates is not None and len(missing_dates) > 0:
-            bad = np.isin(self.time_indices, np.asarray(list(missing_dates)))
-            self.times = self.times[~bad]
-            self.time_indices = self.time_indices[~bad]
+            missing_arr = np.asarray(list(missing_dates))
+            missing_idx = np.isin(self.time_indices, missing_arr)
+            self.times = self.times[~missing_idx]
+            self.time_indices = self.time_indices[~missing_idx]
 
-    def _setup_spatial_grids(self) -> None:
-        ref_lats = np.arange(
-            self.config.nwp_lat_min,
-            self.config.nwp_lat_max + 1e-9,
-            self.config.nwp_lat_res,
+    def _nwp_values(self, time_idx: int) -> Tensor:
+        nwp_idx = int(self.time_indices[time_idx])
+        raw = self.nwp_ds[nwp_idx][self.nwp_var_idx]
+        raw = raw.reshape(len(self._nwp_source_vars), -1)
+        raw_t = torch.from_numpy(raw).to(self.dtype)
+        source = {var: raw_t[i] for i, var in enumerate(self._nwp_source_vars)}
+        channels = [
+            (
+                DERIVED_FEATURES[v][1](*[source[d] for d in DERIVED_FEATURES[v][0]])
+                if v in DERIVED_FEATURES
+                else source[v]
+            )
+            for v in self._nwp_out_vars
+        ]
+        return torch.stack(channels, dim=0)
+
+    def _build_nwp_source(self) -> PointSetSource:
+        units = {v: str(self.catalog.nwp_vars[v].unit) for v in self._nwp_out_vars}
+        return PointSetSource(
+            self.nwp_lonlat,
+            self._nwp_out_vars,
+            values_fn=self._nwp_values,
+            units=units,
+            native_coord_source="nwp_grid",
         )
-        ref_lons = np.arange(
-            self.config.nwp_lon_min,
-            self.config.nwp_lon_max + 1e-9,
-            self.config.nwp_lon_res,
-        )
-        self._ref_lats = ref_lats
-        self._ref_lons = ref_lons
-        self.nwp_shape = (len(ref_lats), len(ref_lons))
 
-        nwp_lons = np.where(
-            self.nwp_ds.longitudes > 180,
-            self.nwp_ds.longitudes - 360,
-            self.nwp_ds.longitudes,
-        )
-        tree = cKDTree(np.column_stack([nwp_lons, self.nwp_ds.latitudes]))
-        grid_lon, grid_lat = np.meshgrid(ref_lons, ref_lats)
-        _, self.nwp_indices = tree.query(
-            np.column_stack([grid_lon.ravel(), grid_lat.ravel()])
-        )
+    # -- topo --
+    def _load_topo(self, config: Any, dtype: torch.dtype) -> None:
+        self._topo_vars = [str(v) for v in config.topo_vars]
+        topo_ds = xr.open_zarr(config.topo_path)
 
-        self.nwp_extent = {
-            "min": torch.tensor(
-                [float(ref_lons[0]), float(ref_lats[0])], dtype=torch.float32
-            ),
-            "max": torch.tensor(
-                [float(ref_lons[-1]), float(ref_lats[-1])], dtype=torch.float32
-            ),
-        }
-
-    def _load_topo(self) -> None:
-        topo_ds = xr.open_zarr(self.config.topo_path)
-
+        # Data vars are (latitude, longitude); RasterSource.build_index does
+        # row * W + col with row from y (=latitude), col from x (=longitude),
+        # and assumes strictly increasing (origin, res) axes. Flip to
+        # ascending latitude first (mirrors legacy.ERA5MeteostatDataset._load_topo)
+        # so origin=(lon[0], lat[0]) / res=(dlon, dlat) index correctly; a
+        # lat/lon swap or descending-latitude origin here would silently
+        # misalign every topo lookup.
         if float(topo_ds.latitude[0]) > float(topo_ds.latitude[-1]):
             topo_ds = topo_ds.isel(latitude=slice(None, None, -1))
+        self.topo_ds = topo_ds[self._topo_vars]
 
-        topo_vars = list(self.config.topo_vars)
+        topo_arr = np.stack([self.topo_ds[v].values for v in self._topo_vars], axis=0)
+        self.topo_field = torch.from_numpy(np.nan_to_num(topo_arr, nan=0.0)).to(dtype)
 
-        self.topo_extent = {
-            "min": torch.tensor(
-                [float(topo_ds.longitude[0]), float(topo_ds.latitude[0])],
-                dtype=torch.float32,
-            ),
-            "max": torch.tensor(
-                [float(topo_ds.longitude[-1]), float(topo_ds.latitude[-1])],
-                dtype=torch.float32,
-            ),
-        }
-
-        _log.info("Loading topo into memory (%d variables) ...", len(topo_vars))
-        self.topo_field = torch.from_numpy(
-            np.nan_to_num(
-                np.stack([topo_ds[v].values for v in topo_vars], axis=0), nan=0.0
-            )
-        ).to(dtype_map[self.config.dtype])
-
-        nwp_sel = topo_ds.sel(
-            latitude=self._ref_lats, longitude=self._ref_lons, method="nearest"
+    def _build_topo_source(self) -> RasterSource:
+        units = {v: str(self.catalog.topo_vars[v].unit) for v in self._topo_vars}
+        lon = self.topo_ds.longitude.values
+        lat = self.topo_ds.latitude.values
+        return RasterSource(
+            self.topo_field,
+            origin=(float(lon[0]), float(lat[0])),
+            res=(float(lon[1] - lon[0]), float(lat[1] - lat[0])),
+            var_names=self._topo_vars,
+            units=units,
         )
-        self.topo_on_nwp_grid = torch.from_numpy(
-            np.nan_to_num(
-                np.stack([nwp_sel[v].values for v in topo_vars], axis=0), nan=0.0
+
+    # -- obs --
+    def _load_obs(self, config: Any, dtype: torch.dtype) -> None:
+        if self.times is None or len(self.times) == 0:
+            raise ValueError(
+                "ERA5MeteostatDataset._load_obs called with no valid "
+                "times available (self.times is empty)."
             )
-        ).to(dtype_map[self.config.dtype])
-
-        topo_res = abs(float(topo_ds.latitude[1] - topo_ds.latitude[0]))
-        h, w = self.config.patch_size
-        gy = torch.linspace(-(h // 2) * topo_res, (h // 2) * topo_res, h)
-        gx = torch.linspace(-(w // 2) * topo_res, (w // 2) * topo_res, w)
-        lat_off, lon_off = torch.meshgrid(gy, gx, indexing="ij")  # (h, w)
-        self.topo_grid = torch.stack([lon_off, lat_off], dim=-1)  # (h, w, 2)
-
-    def _load_observations(self) -> None:
+        self._obs_vars = [str(v) for v in config.obs_vars]
         obs_arr, mask_arr = self.obs_ds.get_observations(
             first_date=self.times[0],
             last_date=self.times[-1] + pd.Timedelta(hours=1),
-            parameters=list(self.config.obs_vars),
+            parameters=self._obs_vars,
             stations=self.stations,
             return_mask=True,
             as_numpy=True,
@@ -283,331 +352,64 @@ class ERA5MeteostatDataset(Dataset[dict[str, torch.Tensor]]):
         self.obs_tensor = torch.from_numpy(obs_arr[local_indices])
         self.obs_mask_tensor = torch.from_numpy(mask_arr[local_indices])
 
-        obs_vars = list(self.config.obs_vars)
         for wind_var in ("wspd", "wpgt"):
-            if wind_var in obs_vars:
-                self.obs_tensor[..., obs_vars.index(wind_var)] /= 3.6
+            if wind_var in self._obs_vars:
+                self.obs_tensor[..., self._obs_vars.index(wind_var)] /= 3.6
 
+        coord_vars = [str(v) for v in config.coord_vars]
         meta = self.obs_ds.stations_table.loc[self.stations]
-        self.station_coords = torch.tensor(
-            meta[["longitude", "latitude"]].values.copy(),
-            dtype=dtype_map[self.config.dtype],
+        self.station_coords = torch.tensor(meta[coord_vars].values.copy(), dtype=dtype)
+        # Free the big obs DataFrame; obs_tensor is already in shared memory.
+        self.obs_ds._obs = None
+
+    def _obs_values(self, t: int) -> Tensor:
+        return self.obs_tensor[t].T.nan_to_num(nan=0.0)
+
+    def _obs_mask(self, t: int) -> Tensor:
+        return self.obs_mask_tensor[t].T
+
+    def _build_obs_source(self) -> PointSetSource:
+        # Note: full spawn-DDP picklability of open zarr/anemoi handles is
+        # pre-existing (shared with the old legacy.ERA5MeteostatDataset) and out
+        # of scope; this task only removes the newly-introduced lambda
+        # unpicklability.
+        units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}
+        return PointSetSource(
+            self.station_coords,
+            self._obs_vars,
+            values_fn=self._obs_values,
+            mask_fn=self._obs_mask,
+            units=units,
+            native_coord_source="stations",
         )
-        self.station_geo = self._get_geo(self.station_coords)
-        self.obs_ds._obs = None  # free 17.6 GB DataFrame; obs_tensor is in shared memory
+
+    # -- coord sources --
+    def _build_coord_source_coords(
+        self, field_config: FieldConfig
+    ) -> dict[str, Tensor]:
+        return {
+            name: (
+                self.nwp_lonlat
+                if name == field_config.nwp_coord_source
+                else self.station_coords
+            )
+            for name in field_config.coord_sources
+        }
+
+    @staticmethod
+    def _share(tensor: Any) -> None:
+        if tensor is not None:
+            tensor.share_memory_()
 
     def _mark_shared_memory(self) -> None:
         for attr in (
-            "topo_field", "topo_on_nwp_grid", "station_coords", "station_geo",
-            "obs_tensor", "obs_mask_tensor",
+            "topo_field",
+            "station_coords",
+            "obs_tensor",
+            "obs_mask_tensor",
+            "nwp_lonlat",
         ):
-            if hasattr(self, attr):
-                getattr(self, attr).share_memory_()
-
-    def __len__(self) -> int:
-        return len(self.times)
-
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        time = self.times[idx]
-        nwp_idx = self.time_indices[idx]
-
-        raw = self.nwp_ds[int(nwp_idx)][self.nwp_var_idx]
-        raw = raw.reshape(len(self.nwp_var_idx), -1)
-        raw_grid = torch.from_numpy(
-            raw[:, self.nwp_indices].reshape(len(self.nwp_var_idx), *self.nwp_shape)
-        ).to(dtype_map[self.config.dtype])
-
-        src = {var: raw_grid[i] for i, var in enumerate(self._source_vars)}
-        nwp_channels = [
-            (
-                DERIVED_FEATURES[v][1](*[src[d] for d in DERIVED_FEATURES[v][0]])
-                if v in DERIVED_FEATURES
-                else src[v]
-            )
-            for v in self.config.nwp_vars
-        ]
-        global_field = torch.cat(
-            [torch.stack(nwp_channels, dim=0), self.topo_on_nwp_grid], dim=0
-        )
-
-        global_data: dict[str, torch.Tensor] = {"global_field": global_field}
-        if self.config.use_time_embedding:
-            global_data["time_emb"] = self._get_time_embedding(time)
-
-        observation_data = {
-            "coords": self.station_coords,
-            "geo": self.station_geo,
-            "topo": self._extract_patches(
-                self.station_coords, self.topo_field, self.topo_grid, self.topo_extent
-            ),
-            "obs": self.obs_tensor[idx].to(dtype_map[self.config.dtype]).nan_to_num(nan=0.0),
-            "mask_obs": self.obs_mask_tensor[idx].to(dtype_map[self.config.dtype]),
-        }
-
-        return {
-            "index": idx,
-            "global_data": global_data,
-            "observation_data": observation_data,
-        }
-
-    def get_query(self, query_coords: torch.Tensor) -> dict[str, torch.Tensor]:
-        return {
-            "coords": query_coords,
-            "topo": self._extract_patches(
-                query_coords, self.topo_field, self.topo_grid, self.topo_extent
-            ),
-            "geo": self._get_geo(query_coords),
-        }
-
-    def _extract_patches(
-        self,
-        positions: torch.Tensor,
-        field: torch.Tensor,
-        grid: torch.Tensor,
-        extent: dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        grid_pos = positions.unsqueeze(1).unsqueeze(1) + grid
-        return grid_sample(
-            field.unsqueeze(0).expand(positions.shape[0], -1, -1, -1),
-            self._normalize_positions(grid_pos, extent["min"], extent["max"]),
-            align_corners=True,
-            mode="bilinear",
-            padding_mode="border",
-        )
-
-    def _get_geo(self, coords: torch.Tensor) -> torch.Tensor:
-        zero_grid = torch.zeros(1, 1, 2, dtype=coords.dtype, device=coords.device)
-        elev = self._extract_patches(
-            coords, self.topo_field[0:1], zero_grid, self.topo_extent
-        )[:, 0, 0, 0]
-        return torch.cat([coords, elev.unsqueeze(1)], dim=1)
-
-    @staticmethod
-    def _normalize_positions(
-        pos: torch.Tensor, min_val: torch.Tensor, max_val: torch.Tensor
-    ) -> torch.Tensor:
-        return 2.0 * (pos - min_val) / (max_val - min_val) - 1.0
-
-    def _get_time_embedding(self, dt: pd.Timestamp) -> torch.Tensor:
-        dt = pd.to_datetime(dt)
-        secs = dt.hour * 3600 + dt.minute * 60 + dt.second
-        doy = dt.dayofyear + secs / 86400.0
-        return torch.tensor(
-            [
-                np.sin(2 * np.pi * secs / 86400.0),
-                np.cos(2 * np.pi * secs / 86400.0),
-                np.sin(2 * np.pi * doy / 365.2425),
-                np.cos(2 * np.pi * doy / 365.2425),
-            ],
-            dtype=dtype_map[self.config.dtype],
-        )
-
-    def get_transform(
-        self,
-        num_data_points: int,
-        dataloader: DataLoader[dict[str, torch.Tensor]] | None = None,
-        type: str = "real",
-        data_indices: np.ndarray[Any, np.dtype[np.intp]] | None = None,
-    ) -> tuple[transform.NestedTransform, transform.Transform]:
-
-        def _collect_stats(
-            pre_t: transform.NestedTransform,
-            dl: DataLoader[dict[str, torch.Tensor]] | None,
-            n: int | None,
-        ) -> dict[str, Any]:
-            num_points = n if n is not None else len(self)
-            stats: dict[str, Any] = {
-                "observation_data": {
-                    "obs": statistics.RunningFeatureStats(
-                        len(list(self.config.obs_vars)), feature_dim=-1
-                    ),
-                    "topo": statistics.RunningFeatureStats(
-                        len(list(self.config.topo_vars)), feature_dim=-3
-                    ),
-                    "geo": statistics.RunningFeatureStats(
-                        self.station_geo.shape[-1], feature_dim=-1
-                    ),
-                },
-                "global_data": {
-                    "global_field": statistics.RunningFeatureStats(
-                        len(list(self.config.nwp_vars))
-                        + len(list(self.config.topo_vars)),
-                        feature_dim=-3,
-                    ),
-                },
-            }
-
-            def _gather(
-                sample: dict[str, Any] | torch.Tensor,
-                gatherer: statistics.RunningFeatureStats | dict[str, Any],
-            ) -> None:
-                if isinstance(gatherer, statistics.RunningFeatureStats):
-                    gatherer.update(sample)  # type: ignore[arg-type]
-                elif isinstance(gatherer, dict):
-                    for k, v in gatherer.items():
-                        _gather(sample[k], v)  # type: ignore[index]
-
-            if dl is not None:
-                bs = dl.batch_size
-                for i, batch in tqdm(
-                    enumerate(dl), total=num_points // bs, desc="Gathering statistics"  # type: ignore[operator]
-                ):
-                    if i * bs >= num_points:
-                        break
-                    _gather(pre_t(batch), stats)
-            else:
-                pool = (
-                    data_indices if data_indices is not None else np.arange(len(self))
-                )
-                for idx in tqdm(
-                    pool[torch.randperm(len(pool))[:num_points].numpy()],
-                    desc="Gathering statistics",
-                ):
-                    _gather(pre_t(self[int(idx)]), stats)
-            return stats
-
-        offset = 1e-3
-
-        if type == "real":
-            log_indices = [
-                i
-                for i, v in enumerate(self.config.obs_vars)
-                if self.obs_var_support.lower_bounds[i] >= 0.0
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            log_t = transform.LogTransform(
-                apply_to=log_indices, feature_dim=-1, offset=offset
-            )
-            pre_t = transform.NestedTransform({"observation_data": {"obs": log_t}})
-            stats = _collect_stats(pre_t, dataloader, num_data_points)
-
-            topo_t = stats["observation_data"]["topo"].get_standard_transform()
-            geo_t = stats["observation_data"]["geo"].get_standard_transform()
-            gf_t = stats["global_data"]["global_field"].get_standard_transform()
-            output_transform = transform.ComposedTransform(
-                [log_t, stats["observation_data"]["obs"].get_standard_transform()]
-            )
-            post_transform = transform.NestedTransform(
-                {
-                    "observation_data": {
-                        "obs": output_transform,
-                        "topo": topo_t,
-                        "geo": geo_t,
-                    },
-                    "query_data": {
-                        "obs": output_transform,
-                        "topo": topo_t,
-                        "geo": geo_t,
-                    },
-                    "global_data": {
-                        "global_field": gf_t,
-                    },
-                }
-            )
-        elif type == "keep_support":
-            # Shift strictly-positive variables away from zero before standardising
-            # so that the support constraint is preserved after the inverse transform.
-            apply_offset_vars = ["wspd", "wpgt"]
-            offset_indices = [
-                i for i, v in enumerate(self.config.obs_vars) if v in apply_offset_vars
-            ]
-            offset_arr = torch.zeros(len(list(self.config.obs_vars)))
-            offset_arr[offset_indices] = offset
-            scale_arr = torch.ones(len(list(self.config.obs_vars)))
-            offset_t = transform.TranslateScaleTransform(
-                translate=offset_arr, scale=scale_arr, channel_dim=-1
-            )
-            pre_t = transform.NestedTransform({"observation_data": {"obs": offset_t}})
-            stats = _collect_stats(pre_t, dataloader, num_data_points)
-
-            translate_arr = -stats["observation_data"]["obs"].mean.clone()
-            # Variables with zero lower bound and infinite upper bound are only
-            # scaled (not translated) to preserve their non-negativity.
-            only_scale_indices = [
-                i
-                for i in range(len(list(self.config.obs_vars)))
-                if self.obs_var_support.lower_bounds[i] == 0.0
-                and self.obs_var_support.upper_bounds[i] == float("inf")
-            ]
-            translate_arr[only_scale_indices] = 0.0
-            scale_arr = 1.0 / stats["observation_data"]["obs"].std.clone()
-
-            output_transform = transform.ComposedTransform(
-                [
-                    offset_t,
-                    transform.TranslateScaleTransform(
-                        translate=translate_arr, scale=scale_arr, channel_dim=-1
-                    ),
-                ]
-            )
-            topo_t = stats["observation_data"]["topo"].get_standard_transform()
-            geo_t = stats["observation_data"]["geo"].get_standard_transform()
-            gf_t = stats["global_data"]["global_field"].get_standard_transform()
-            post_transform = transform.NestedTransform(
-                {
-                    "observation_data": {
-                        "obs": output_transform,
-                        "topo": topo_t,
-                        "geo": geo_t,
-                    },
-                    "query_data": {
-                        "obs": output_transform,
-                        "topo": topo_t,
-                        "geo": geo_t,
-                    },
-                    "global_data": {
-                        "global_field": gf_t,
-                    },
-                }
-            )
-        else:
-            raise ValueError(
-                f"Unsupported transform type: {type!r}. "
-                "Supported: 'real', 'keep_support'."
-            )
-
-        return post_transform, output_transform
-
-    def get_baseline_pre_transform(
-        self,
-    ) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        nwp_vars_set = set(self.config.nwp_vars)
-        if "wind_speed" in nwp_vars_set:
-            _wind_deps: list[str] = ["wind_speed"]
-            _wind_fn: Callable[[dict[str, Any]], torch.Tensor] = lambda nwp: nwp["wind_speed"]
-        else:
-            _wind_deps = ["10u", "10v"]
-            _wind_fn = lambda nwp: torch.sqrt(nwp["10u"] ** 2 + nwp["10v"] ** 2)
-
-        _mapping: dict[
-            str, tuple[list[str], Callable[[dict[str, Any]], torch.Tensor]]
-        ] = {
-            "temp": (["2t"], lambda nwp: nwp["2t"] - 273.15),
-            "wspd": (_wind_deps, _wind_fn),
-            "wpgt": (_wind_deps, _wind_fn),
-            "prcp": (["tp"], lambda nwp: nwp["tp"] * 1000.0),
-        }
-        for obs_var in self.config.obs_vars:
-            if obs_var not in _mapping:
-                raise ValueError(f"No ERA5 mapping for obs variable {obs_var!r}.")
-            deps, _ = _mapping[obs_var]
-            missing = [d for d in deps if d not in self.config.nwp_vars]
-            if missing:
-                raise ValueError(
-                    f"ERA5 deps {missing} for {obs_var!r} not in config.nwp_vars."
-                )
-
-        nwp_vars = list(self.config.nwp_vars)
-        obs_vars = list(self.config.obs_vars)
-
-        def _pre(sample: dict[str, Any]) -> dict[str, Any]:
-            nwp_fields = sample["global_data"]["global_field"]
-            nwp = {v: nwp_fields[..., i, :, :] for i, v in enumerate(nwp_vars)}
-            new_field = torch.stack([_mapping[v][1](nwp) for v in obs_vars], dim=-3)
-
-            return {
-                **sample,
-                "global_data": {**sample["global_data"], "global_field": new_field},
-            }
-
-        return _pre
+            self._share(getattr(self, attr, None))
+        for idx, w in self._index_cache.values():
+            self._share(idx)
+            self._share(w)

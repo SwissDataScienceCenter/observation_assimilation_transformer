@@ -25,9 +25,9 @@ from omegaconf import OmegaConf
 from pyproj import Transformer
 from shapely.geometry import Polygon
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.data_split import create_splits
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+from oat.data_module.legacy.data_split import create_splits
+from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.plotting_module.geo_overlays import _add_borders
 
 _CFG_DIR = Path(__file__).parent.parent / "configs" / "dataset"

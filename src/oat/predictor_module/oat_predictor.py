@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from oat.model_module import model
 from oat.model_module.model import (
@@ -21,13 +21,18 @@ from oat.predictor_module.schedulers import estimate_total_steps
 from oat.data_module.transform import Transform
 from oat.data_module.support import VariableSupport
 from oat.predictor_module.base_predictor import BasePredictor
+from oat.predictor_module.field_batch_utils import (
+    _time_embedding_from_epoch_hours,
+    _unwrap_fields_to_model_batch,
+)
 from oat.predictor_module.functional_metrics import (
-    sample_mae, 
+    sample_mae,
     point_mae,
     mc_crps
 )
 
 logger = logging.getLogger(__name__)
+
 
 class OATPredictor(BasePredictor):
     
@@ -103,8 +108,9 @@ class OATPredictor(BasePredictor):
                  lr_scheduler_params: Optional[dict] = None,
                  oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
                  oat_loss_scheduler_params:  Optional[dict]  = None,
+                 field_roles: dict | None = None,
                  ):
-        super().__init__(output_var_names=output_var_names)
+        super().__init__(output_var_names=output_var_names, field_roles=field_roles)
 
         self.save_hyperparameters()
 
@@ -234,7 +240,12 @@ class OATPredictor(BasePredictor):
             self.log("pre_oat_loss_weight", oat_weight, prog_bar=False, on_step=True, on_epoch=False)
 
     def _normalize_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        return self.input_transform(batch)
+        batch = self.input_transform(batch)
+        if self.field_roles is not None:
+            batch = _unwrap_fields_to_model_batch(
+                batch, self.field_roles, self.model.requires_observation
+            )
+        return batch
 
     def _unnormalize_pred_and_target(self, y_hat: dict[str, torch.Tensor], y_true: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -481,6 +492,21 @@ class OATPredictor(BasePredictor):
             return optimizer
 
 
+def _resolve_point_hidden_dims(kwargs: dict[str, Any], d_model: int) -> list[int]:
+    """Build the MLP hidden stack for the Point/MLP encoders from config knobs.
+
+    Pops ``num_hidden_layers`` (default 0) and ``hidden_width`` (default ``None``)
+    off ``kwargs`` and returns ``num_hidden_layers`` layers each of width
+    ``hidden_width``. When ``hidden_width`` is not specified it defaults to
+    ``d_model // 2``, mirroring the old topographic encoder.
+    """
+    n_layers = int(kwargs.pop("num_hidden_layers", 0))
+    width = kwargs.pop("hidden_width", None)
+    if width is None:
+        width = d_model // 2
+    return [int(width)] * n_layers
+
+
 def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[model.GlobalEncoderConfig, model.TopographicEncoderConfig, model.NwpTopoFusionConfig]:
     """Build the configs for the uninformed trunk (Eq. 1-7).
 
@@ -490,17 +516,42 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
     model_cfg = cfg.model
     data_cfg = cfg.dataset
     global_input_chans = len(data_cfg.nwp_vars) + len(data_cfg.topo_vars)
+    if model_cfg.global_encoder.type == "Point":
+        # Point encoder consumes pre-sampled global tokens; the channel count is
+        # the number of inputs on the global-role field. That is nwp-only by
+        # default but may include topo.* if added to that field, so derive it
+        # from the field spec rather than assuming len(nwp_vars).
+        if "roles" in data_cfg and "fields" in data_cfg:
+            global_role = data_cfg.roles["global"]
+            global_input_chans = len(data_cfg.fields[global_role].inputs)
+        else:
+            global_input_chans = len(data_cfg.nwp_vars)
     d_model = model_cfg.d_model
+
+    global_encoder_kwargs = OmegaConf.to_container(
+        model_cfg.global_encoder, resolve=True
+    )
+    if global_encoder_kwargs.get("type") == "Point":
+        global_encoder_kwargs["hidden_dims"] = _resolve_point_hidden_dims(
+            global_encoder_kwargs, d_model
+        )
     global_encoder_cfg = model.GlobalEncoderConfig(
-        **model_cfg.global_encoder,
+        **global_encoder_kwargs,
         in_channels=global_input_chans,
         out_channels=d_model // 2,
         field_extent_max=field_extent['max'],
         field_extent_min=field_extent['min']
         )
 
+    topography_encoder_kwargs = OmegaConf.to_container(
+        model_cfg.topographic_encoder, resolve=True
+    )
+    if topography_encoder_kwargs.get("type") == "MLP":
+        topography_encoder_kwargs["hidden_dims"] = _resolve_point_hidden_dims(
+            topography_encoder_kwargs, d_model
+        )
     topography_encoder_cfg = model.TopographicEncoderConfig(
-        **model_cfg.topographic_encoder,
+        **topography_encoder_kwargs,
         in_channels=len(data_cfg.topo_vars),
         out_channels=d_model // 2,
         )
@@ -629,6 +680,11 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         oat_loss_sched_cls = None
         oat_loss_sched_params = None
 
+    field_roles = (
+        OmegaConf.to_container(cfg.dataset.roles, resolve=True)
+        if "roles" in cfg.dataset
+        else None
+    )
 
     predictor = OATPredictor(
         oat_model_cfg=model_cfg,
@@ -641,7 +697,8 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         lr_scheduler_class=sched_cls,
         lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
         oat_loss_scheduler_class=oat_loss_sched_cls,
-        oat_loss_scheduler_params=oat_loss_sched_params
+        oat_loss_scheduler_params=oat_loss_sched_params,
+        field_roles=field_roles
     )
 
     return predictor

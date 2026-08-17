@@ -1,4 +1,1 @@
-mode: bilinear
-padding_mode: border
-
 model_cls: oat.model_module.baseline.NWPInterpolator

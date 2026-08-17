@@ -54,6 +54,11 @@ class CNNTopographyEncoder(TopographyEncoder):
             use_batchnorm: Whether a batch norm is applied after every
                 convolution.
         """
+        raise NotImplementedError(
+            "CNNTopographyEncoder is deprecated with the old grid data path (used "
+            "by the OOTG baseline). Use MLPTopographyEncoder (topographic_encoder "
+            "type 'MLP'). Revive by removing this guard."
+        )
         super().__init__(in_channels=in_channels, out_channels=out_channels)
 
         # TODO add kwargs for some act (eg LeakyReLU)
@@ -129,3 +134,33 @@ class CNNTopographyEncoder(TopographyEncoder):
             out_flat = out.reshape(1, -1)
         out_flat = self.embedding_head(out_flat)
         return out_flat
+
+
+class MLPTopographyEncoder(TopographyEncoder):
+    """Point-wise MLP topo encoder: [..., C] -> [..., out_channels]."""
+
+    def __init__(
+        self,
+        *,
+        in_channels: int,
+        out_channels: int,
+        hidden_dims: list[int] | tuple[int, ...] | None = None,
+        act_fn: str = "GELU",
+        use_layernorm: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(in_channels=in_channels, out_channels=out_channels)
+        dims = list(hidden_dims or [])
+        layers: list[nn.Module] = []
+        d = in_channels
+        for h in dims:
+            layers.append(nn.Linear(d, h))
+            if use_layernorm:
+                layers.append(nn.LayerNorm(h))
+            layers.append(get_activation(act_fn))
+            d = h
+        layers.append(nn.Linear(d, out_channels))
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, topography: torch.Tensor) -> torch.Tensor:
+        return self.model(topography)

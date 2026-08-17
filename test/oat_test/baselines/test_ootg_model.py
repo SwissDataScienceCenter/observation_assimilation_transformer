@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 _TNPDIR = Path(__file__).parents[4] / "deps" / "gridded-tnp"
@@ -89,14 +90,6 @@ def test_gradients_flow():
 C_TOPO, HP, WP = 3, 16, 16
 
 
-def _topo_batch(dim_y, dim_gridded_y, c_topo=C_TOPO, hp=HP, wp=WP):
-    b = _batch(dim_y, dim_gridded_y)
-    Nc, Nt = b.xc.shape[1], b.xt.shape[1]
-    topo_c = torch.randn(1, Nc, c_topo, hp, wp)
-    topo_t = torch.randn(1, Nt, c_topo, hp, wp)
-    return b, topo_c, topo_t
-
-
 def _tiny_topo(dim_y=1, dim_gridded_y=2, v2d=None):
     return build_ootg_model(
         dim_y=dim_y, dim_gridded_y=dim_gridded_y,
@@ -109,23 +102,6 @@ def _tiny_topo(dim_y=1, dim_gridded_y=2, v2d=None):
     )
 
 
-def test_topo_forward_returns_joint_same_shape():
-    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
-    b, topo_c, topo_t = _topo_batch(1, 2)
-    dist = model(b.xc, b.yc, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
-    assert isinstance(dist, JointMixedDistribution)
-    assert dist.mean.shape == b.yt.shape
-
-
-def test_topo_gradient_flows_to_topo_encoder():
-    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
-    b, topo_c, topo_t = _topo_batch(1, 2)
-    dist = model(b.xc, b.yc, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
-    (-dist.log_prob(b.yt).sum()).backward()
-    grads = [p.grad for p in model.encoder.topo_encoder.parameters() if p.requires_grad]
-    assert any(g is not None and g.abs().sum() > 0 for g in grads)
-
-
 def test_use_topo_false_keeps_five_arg_forward():
     # default build (use_topo=False) still uses the original signature
     model = _tiny(dim_y=1, v2d={"temperature": "normal"})
@@ -134,11 +110,6 @@ def test_use_topo_false_keeps_five_arg_forward():
     assert dist.mean.shape == b.yt.shape
 
 
-def test_topo_empty_context_forward():
-    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"}).eval()
-    b, _, topo_t = _topo_batch(1, 2)
-    xc = torch.randn(1, 0, 2)
-    yc = torch.randn(1, 0, 1)
-    topo_c = torch.randn(1, 0, C_TOPO, HP, WP)
-    dist = model(xc, yc, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
-    assert dist.mean.shape == b.yt.shape
+def test_ootg_topo_is_deprecated():
+    with pytest.raises(NotImplementedError, match="deprecated"):
+        _tiny_topo(dim_y=1, v2d={"temperature": "normal"})

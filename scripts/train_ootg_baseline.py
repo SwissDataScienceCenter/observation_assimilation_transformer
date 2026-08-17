@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from oat.baselines.ootg_generator import compute_norm_stats, make_ootg_generator
 from oat.baselines.ootg_model import build_ootg_model
 from oat.baselines.ootg_predictor import OOTGPredictor
-from oat.data_module.data_split import create_splits
+from oat.data_module.legacy.data_split import create_splits
 from oat.data_module.setup import _instantiate_dataset
 
 log = logging.getLogger(__name__)

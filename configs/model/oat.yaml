@@ -1,6 +1,6 @@
 defaults:
-  - global_encoder: mlp
-  - topographic_encoder: default
+  - global_encoder: point
+  - topographic_encoder: mlp
   - nwp_topo_fusion: default
   - innovation_fusion: default
   - masking: knn
@@ -14,4 +14,3 @@ pre_oat_loss_weight: .1
 num_samples: 100
 mask_innovations: true
 transform_type: keep_support
-

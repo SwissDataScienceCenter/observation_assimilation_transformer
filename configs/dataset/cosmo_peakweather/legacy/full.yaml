@@ -1,0 +1,27 @@
+defaults:
+  - cosmo_peakweather/legacy/settings@_here_
+  - cosmo_peakweather/catalog@catalog
+  - cosmo_peakweather/plot_config@_here_
+  - _self_
+
+nwp_vars:
+  - TOT_PREC_1H
+  - CLCT
+  - T_2M
+  - T_G
+  - U_10M
+  - V_10M
+  - wind_speed
+  # - VMAX_10M
+
+obs_vars:
+  - precipitation
+  - temperature
+  - wind_speed
+
+obs_variable_to_distribution:
+  precipitation: "zero_inflated_lognormal"
+  temperature: "normal"
+  wind_speed: "lognormal"
+
+station_type: null # with null, all stations are taken, among which there are rain gauges
