@@ -38,6 +38,13 @@ def _unwrap_fields_to_model_batch(
 ) -> dict[str, Any]:
     """Unwrap a field-collated batch into the shapes OAT/GP models expect."""
 
+    required = ("target", "global", "geo_bias", "topo")
+    missing = [k for k in required if k not in roles]
+    if missing:
+        raise ValueError(
+            f"field roles missing required keys {missing}; got {sorted(roles)}"
+        )
+
     def grp(group: str) -> dict[str, torch.Tensor]:
         f = batch[group]["fields"]
         obs = f[roles["target"]]
