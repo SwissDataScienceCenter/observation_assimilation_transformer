@@ -216,6 +216,25 @@ class TestGPBaselineFeatureExtraction:
         qry_feats = model._extract_features(global_data, query_data)
         assert obs_feats.shape[-1] == qry_feats.shape[-1]
 
+    def test_extra_global_channels_are_sliced_to_nwp_prefix(self):
+        # The global-role field may append extra context channels (e.g. topo.*)
+        # after the NWP scalars (see validate_field_config_against_scalars).
+        # The GP feature vector must consume only the len(nwp_vars) prefix, so
+        # the config-derived offsets for time_emb/topo/oat stay aligned.
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True))
+        B, N_obs = 2, 10
+        global_data, obs_data, _ = make_batch(B=B, N_obs=N_obs)
+        obs_data["global_tokens"] = torch.cat(
+            [obs_data["global_tokens"], torch.randn(B, N_obs, 2)], dim=-1
+        )
+        feats = model._extract_features(global_data, obs_data)
+        assert feats.shape == (B, N_obs, model.feature_dim)
+        # NWP block keeps the leading nwp_vars channels, extras are dropped.
+        assert torch.equal(feats[..., 3:6], obs_data["global_tokens"][..., :3])
+        # time_emb still lands at its configured offset (6:10), unshifted.
+        time_emb = global_data["time_emb"].unsqueeze(1).expand(-1, N_obs, -1)
+        assert torch.equal(feats[..., 6:10], time_emb)
+
 
 class TestGPBaselineForward:
     def test_forward_output_shape(self):
@@ -229,6 +248,20 @@ class TestGPBaselineForward:
     def test_requires_observation_flag(self):
         model = GPBaseline(make_config())
         assert model.requires_observation is True
+
+    def test_forward_with_extra_global_channels(self):
+        model = GPBaseline(make_config(num_samples=5))
+        B, N_obs, N_q = 2, 10, 6
+        global_data, obs_data, query_data = make_batch(B=B, N_obs=N_obs, N_q=N_q)
+        obs_data["global_tokens"] = torch.cat(
+            [obs_data["global_tokens"], torch.randn(B, N_obs, 2)], dim=-1
+        )
+        query_data["global_tokens"] = torch.cat(
+            [query_data["global_tokens"], torch.randn(B, N_q, 2)], dim=-1
+        )
+        out = model.forward(global_data, obs_data, query_data, num_samples=5)
+        assert out["samples"].shape == (B, N_q, 5, 1)
+        assert torch.isfinite(out["samples"]).all()
 
 
 class TestGPBaselineForwardWithLossCRPS:

@@ -318,7 +318,13 @@ class GPBaseline(nn.Module):
         parts: list[torch.Tensor] = [local_data["geo"]]
 
         if self.config.use_nwp:
-            parts.append(local_data["global_tokens"])
+            # The global-role field may carry extra context channels (e.g.
+            # topo.*) after the nwp_vars prefix (allowed by
+            # validate_field_config_against_scalars). Only the nwp prefix
+            # belongs to this feature group -- appending the full tensor would
+            # grow the feature vector and shift every subsequent group offset
+            # (time_emb/topo/oat) computed in __init__.
+            parts.append(local_data["global_tokens"][..., : len(self.config.nwp_vars)])
 
         if self.config.use_time_emb:
             num_points = local_data["geo"].shape[1]
