@@ -192,6 +192,9 @@ def main() -> None:
         cfg, logger
     )
 
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
         sys.exit(0)

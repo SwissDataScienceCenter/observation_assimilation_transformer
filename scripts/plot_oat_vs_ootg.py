@@ -89,6 +89,9 @@ def main() -> None:
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, val_loader, _test_loader, *_ = setup_data_and_transform(cfg, logger)
 
+    if hasattr(predictor_oat, "set_index_projection"):
+        predictor_oat.set_index_projection(dataset)
+
     if args.times is not None:
         time_indices = [_resolve_time_idx(dataset, t) for t in args.times]
     else:

@@ -46,7 +46,10 @@ def resolve_index_projection(
     from oat.data_module.dataset import DatasetBase
 
     ds = getattr(dataset, "dataset", dataset)
-    if type(ds).project_index_coords is DatasetBase.project_index_coords:
+    if (
+        getattr(type(ds), "project_index_coords", None)
+        is DatasetBase.project_index_coords
+    ):
         return None
     return ds.project_index_coords
 

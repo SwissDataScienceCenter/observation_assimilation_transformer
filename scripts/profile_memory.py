@@ -59,7 +59,14 @@ def main(cfg: DictConfig) -> None:
     field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
 
     # ── model (single GPU, no DDP) ────────────────────────────────────────
-    oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
+    from oat.predictor_module.field_batch_utils import resolve_index_projection
+
+    oat_model_cfg = setup_oat_cfg(
+        cfg,
+        field_extent,
+        logger,
+        project_index_coords=resolve_index_projection(dataset),
+    )
     predictor = setup_oat_predictor(
         model_cfg=oat_model_cfg,
         estimated_total_step=1,
