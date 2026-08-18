@@ -374,9 +374,11 @@ class ERA5MeteostatDataset(DatasetBase):
 
         for wind_var in ("wspd", "wpgt"):
             if wind_var in self._obs_vars:
+                # Convert from m/s to km/h for consistency with legacy.ERA5MeteostatDataset
                 self.obs_tensor[..., self._obs_vars.index(wind_var)] /= 3.6
 
         coord_vars = [str(v) for v in config.coord_vars]
+        
         meta = self.obs_ds.stations_table.loc[self.stations]
         self.station_coords = torch.tensor(meta[coord_vars].values.copy(), dtype=dtype)
         # Free the big obs DataFrame; obs_tensor is already in shared memory.

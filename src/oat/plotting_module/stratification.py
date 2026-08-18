@@ -87,6 +87,29 @@ def season_labels(times: Any) -> NDArray:
     return np.array([_MONTH_TO_SEASON[int(m)] for m in months], dtype=object)
 
 
+_ELEVATION_NAMES = ("dem", "elevation")
+
+
+def _station_elevation(dataset: Any) -> NDArray:
+    """Read per-station elevation from the dataset's geo-bias field.
+
+    Field datasets (post-#116) hold per-station statics in ``fields``, not on
+    a ``station_geo`` attribute -- pull the elevation channel straight from
+    the geo-bias field of one sample (its values don't vary across time).
+    """
+    geo_name = dataset.roles()["geo_bias"]
+    geo_field = dataset.field_config.fields[geo_name]
+    try:
+        channel = next(i for i, v in enumerate(geo_field.out) if v in _ELEVATION_NAMES)
+    except StopIteration as exc:
+        raise ValueError(
+            f"No elevation-like channel (one of {_ELEVATION_NAMES}) found in "
+            f"geo-bias field {geo_name!r} outputs {list(geo_field.out)!r}"
+        ) from exc
+    sample = dataset[0]["fields"][geo_name]
+    return np.asarray(sample.values[:, channel].cpu().numpy())
+
+
 def collect_station_covariates(
     dataset: Any, eval_indices: list[int], obs_indices: list[int]
 ) -> dict[str, NDArray]:
@@ -94,7 +117,7 @@ def collect_station_covariates(
     coords = dataset.station_coords.cpu().numpy()
     eval_coords = coords[eval_indices]
     obs_coords = coords[obs_indices]
-    geo = dataset.station_geo.cpu().numpy()  # [N, 3] easting, northing, dem
+    elevation = _station_elevation(dataset)
     lon, lat = detect_lonlat(eval_coords)
     # Reproject both sides to WGS84 so nearest-obs distance is geodesic km.
     obs_lonlat = (
@@ -108,7 +131,7 @@ def collect_station_covariates(
         "station_y": eval_coords[:, 1],
         "lon": lon,
         "lat": lat,
-        "elevation": geo[eval_indices, 2],
+        "elevation": elevation[eval_indices],
         "nearest_obs_dist": nearest_obs_distance(
             np.column_stack([lon, lat]), obs_lonlat
         ),
