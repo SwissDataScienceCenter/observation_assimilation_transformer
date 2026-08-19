@@ -319,6 +319,7 @@ class ERA5MeteostatDataset(DatasetBase):
             values_fn=self._nwp_values,
             units=units,
             native_coord_source="nwp_grid",
+            project_fn=self.project_index_coords,
         )
 
     # -- topo --
@@ -403,6 +404,7 @@ class ERA5MeteostatDataset(DatasetBase):
             mask_fn=self._obs_mask,
             units=units,
             native_coord_source="stations",
+            project_fn=self.project_index_coords,
         )
 
     # -- coord sources --

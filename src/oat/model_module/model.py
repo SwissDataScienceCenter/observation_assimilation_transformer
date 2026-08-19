@@ -46,6 +46,8 @@ class GlobalEncoderConfig:
     num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
     act_fn: str = "GELU"
+    use_layernorm: bool = False
+    use_batchnorm: bool = False
 
 
 @dataclass
@@ -362,6 +364,8 @@ class UninformedOAT(nn.Module):
                     "out_channels": config.global_encoder.out_channels,
                     "hidden_dims": config.global_encoder.hidden_dims,
                     "act_fn": config.global_encoder.act_fn,
+                    "use_layernorm": config.global_encoder.use_layernorm,
+                    "use_batchnorm": config.global_encoder.use_batchnorm,
                 },
             )
 

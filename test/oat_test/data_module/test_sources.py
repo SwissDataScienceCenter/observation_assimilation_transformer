@@ -92,6 +92,24 @@ def test_pointset_build_interp_outside_hull_fallback():
     assert interpolated.item() == 0.0  # nearest to (0,0) -> value 0
 
 
+def test_pointset_project_fn_applied():
+    coords = torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+    vals = torch.tensor([[0.0, 1.0, 2.0, 3.0]])
+    # Scale x by 10 — changes which point is "nearest" to (0.6, 0.0).
+    # Without projection: nearest is index 1 (1.0, 0.0).
+    # With projection (x*10): source pts become (0,0),(10,0),(0,1),(10,1);
+    # query (6,0) is still nearest to (10,0)=index 1.
+    scale_x = lambda xy: torch.stack([xy[..., 0] * 10, xy[..., 1]], dim=-1)
+    src = PointSetSource(coords, ["v"], lambda t: vals, project_fn=scale_x)
+    idx = src.build_index(torch.tensor([[0.6, 0.0]]))
+    assert idx.item() == 1
+
+    # Without projection: (0.2, 0.0) nearest to (0,0)=index 0.
+    # With projection: query (2,0) nearest to (0,0)=index 0.
+    idx2 = src.build_index(torch.tensor([[0.2, 0.0]]))
+    assert idx2.item() == 0
+
+
 def test_raster_build_interp_bilinear_midpoint():
     raster = torch.arange(9.0).reshape(1, 3, 3)  # value = y*3 + x
     src = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["dem"])

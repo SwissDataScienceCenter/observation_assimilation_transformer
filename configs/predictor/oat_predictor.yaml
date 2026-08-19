@@ -1,4 +1,4 @@
-lr: 1e-4
+lr: 1e-3
 kwargs:
   optimizer_class: "torch.optim.AdamW"
   optimizer_params:

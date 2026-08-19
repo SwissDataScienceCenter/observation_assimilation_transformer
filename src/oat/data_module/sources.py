@@ -69,6 +69,7 @@ class PointSetSource(Source):
         units: dict[str, str] | None = None,
         mask_fn: Callable[[int], Tensor] | None = None,
         native_coord_source: str | None = None,
+        project_fn: Callable[[Tensor], Tensor] | None = None,
     ) -> None:
         self.var_names = list(var_names)
         self.units = dict(units or {})
@@ -76,9 +77,14 @@ class PointSetSource(Source):
         self._mask_fn = mask_fn
         self.has_mask = mask_fn is not None
         self.native_coord_source = native_coord_source
-        self._pts = coords[..., :2].detach().cpu().numpy()
-        self._tree = cKDTree(self._pts)
+        self._project_fn = project_fn
+        self._pts_2d = coords[..., :2].detach().cpu().numpy()
+        proj = self._project(coords[..., :2]).detach().cpu().numpy()
+        self._tree = cKDTree(proj)
         self._tri: Delaunay | None = None
+
+    def _project(self, xy: Tensor) -> Tensor:
+        return self._project_fn(xy) if self._project_fn is not None else xy
 
     def load(self, time_idx: int) -> Tensor:
         """Delegate to `values_fn` for all variables at the native points."""
@@ -90,13 +96,14 @@ class PointSetSource(Source):
 
     def build_index(self, dst_coords: Tensor) -> Tensor:
         """Nearest native point index for each destination point (cKDTree query)."""
-        _, idx = self._tree.query(dst_coords[..., :2].detach().cpu().numpy())
+        proj = self._project(dst_coords[..., :2]).detach().cpu().numpy()
+        _, idx = self._tree.query(proj)
         return torch.as_tensor(idx, dtype=torch.long)
 
     def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
-        """Barycentric interpolation on Delaunay triangulation."""
+        """Barycentric interpolation on 2D Delaunay triangulation."""
         if self._tri is None:
-            self._tri = Delaunay(self._pts)
+            self._tri = Delaunay(self._pts_2d)
         pts = dst_coords[..., :2].detach().cpu().numpy()
         simplex = self._tri.find_simplex(pts)
         idx = self._tri.simplices[np.maximum(simplex, 0)]  # [M, 3]
@@ -107,10 +114,11 @@ class PointSetSource(Source):
         bary = np.einsum("...ij,...j->...i", r[:, :2], delta)
         bary = np.column_stack([bary, 1.0 - bary.sum(axis=-1)])  # [M, 3]
 
-        # Points outside the convex hull: fall back to nearest neighbor.
+        # Points outside the convex hull: fall back to nearest (projected).
         outside = simplex < 0
         if outside.any():
-            _, nn = self._tree.query(pts[outside])
+            proj = self._project(dst_coords[outside, :2]).detach().cpu().numpy()
+            _, nn = self._tree.query(proj)
             idx[outside] = nn[:, np.newaxis]
             bary[outside] = np.array([1.0, 0.0, 0.0])
 
