@@ -619,6 +619,14 @@ def setup_oat_cfg(
 
     masking_cfg = model.MaskingConfig(**model_cfg.masking)
 
+    if masking_cfg.mode == "radius" and project_index_coords is not None:
+        raise ValueError(
+            "masking.mode='radius' is not compatible with an index-coordinate "
+            "projection. The radius threshold is defined in the original "
+            "coordinate units, which lose their meaning after projection. "
+            "Use masking.mode='knn' instead."
+        )
+
     transformer_cfg = model.TransformerConfig(
         d_geo_bias=len(data_cfg.geo_vars) - 2 + proj_dim,
         d_model=d_model,
