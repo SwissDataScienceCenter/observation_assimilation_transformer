@@ -238,6 +238,7 @@ def build_topographic_encoder(
             hidden_dims=tc.hidden_dims,
             act_fn=tc.act_fn,
             use_layernorm=tc.use_layernorm,
+            use_batchnorm=tc.use_batchnorm,
         )
     raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
 

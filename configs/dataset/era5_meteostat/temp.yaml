@@ -11,4 +11,4 @@ obs_variable_to_distribution:
 
 fields:
   obs: {coords: stations, inputs: [obs.temp]}
-  nwp: {coords: stations, inputs: [nwp.2t], query: true}
+  nwp: {coords: stations, inputs: [nwp.2t], query: true, k: 4}

@@ -27,12 +27,13 @@ DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
 # configs to these clean names and moved the grid-only ones to legacy/.
 DATASET_VARIANTS = (
     "temp",
+    "precip",
     "temp_precip",
 )
 DATASETS = tuple(
     f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
 )
-UNIVARIATE_VARIANTS = ("temp",)
+UNIVARIATE_VARIANTS = ("temp","precip")
 
 
 @dataclass(frozen=True)

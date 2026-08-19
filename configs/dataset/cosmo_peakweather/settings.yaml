@@ -14,7 +14,7 @@ fields:
   nwp:  {coords: stations, inputs: [nwp.T_2M], query: true}
   topo: {coords: stations, inputs: [topo.DEM, topo.TPI_500M, topo.TPI_2000M,
                                     topo.WE_DERIVATIVE_2000M_SIGRATIO1,
-                                    topo.SN_DERIVATIVE_2000M_SIGRATIO1], query: true, k: 4}
+                                    topo.SN_DERIVATIVE_2000M_SIGRATIO1], query: true, k: 1}
   geo:  {coords: stations, inputs: [coords.x, coords.y, topo.DEM],
          out: [swiss_easting, swiss_northing, dem], query: true, k: 4}
 
