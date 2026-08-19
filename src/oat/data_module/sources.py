@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-from scipy.spatial import cKDTree
+from scipy.spatial import Delaunay, cKDTree
 from torch import Tensor
 
 
@@ -42,8 +42,8 @@ class Source(ABC):
     def build_index(self, dst_coords: Tensor) -> Tensor:
         """Long tensor [M] mapping each destination point to a native point index."""
 
-    def build_interp(self, dst_coords: Tensor, k: int) -> tuple[Tensor, Tensor]:
-        """IDW k-NN read: long indices [M, k] and normalized weights [M, k]."""
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Linear interpolation: long indices [M, P] and normalized weights [M, P]."""
         raise NotImplementedError
 
     @property
@@ -76,7 +76,9 @@ class PointSetSource(Source):
         self._mask_fn = mask_fn
         self.has_mask = mask_fn is not None
         self.native_coord_source = native_coord_source
-        self._tree = cKDTree(coords[..., :2].detach().cpu().numpy())
+        self._pts = coords[..., :2].detach().cpu().numpy()
+        self._tree = cKDTree(self._pts)
+        self._tri: Delaunay | None = None
 
     def load(self, time_idx: int) -> Tensor:
         """Delegate to `values_fn` for all variables at the native points."""
@@ -91,15 +93,29 @@ class PointSetSource(Source):
         _, idx = self._tree.query(dst_coords[..., :2].detach().cpu().numpy())
         return torch.as_tensor(idx, dtype=torch.long)
 
-    def build_interp(self, dst_coords: Tensor, k: int) -> tuple[Tensor, Tensor]:
-        """k nearest native points and inverse-distance weights per destination point."""
-        d, idx = self._tree.query(dst_coords[..., :2].detach().cpu().numpy(), k=k)
-        d = d.reshape(-1, k)
-        idx = idx.reshape(-1, k)
-        w = 1.0 / np.maximum(d, 1e-12)
-        w = w / w.sum(axis=-1, keepdims=True)
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Barycentric interpolation on Delaunay triangulation."""
+        if self._tri is None:
+            self._tri = Delaunay(self._pts)
+        pts = dst_coords[..., :2].detach().cpu().numpy()
+        simplex = self._tri.find_simplex(pts)
+        idx = self._tri.simplices[np.maximum(simplex, 0)]  # [M, 3]
+
+        # Barycentric coordinates via the affine transform stored by Delaunay.
+        r = self._tri.transform[np.maximum(simplex, 0)]
+        delta = pts - r[:, 2]
+        bary = np.einsum("...ij,...j->...i", r[:, :2], delta)
+        bary = np.column_stack([bary, 1.0 - bary.sum(axis=-1)])  # [M, 3]
+
+        # Points outside the convex hull: fall back to nearest neighbor.
+        outside = simplex < 0
+        if outside.any():
+            _, nn = self._tree.query(pts[outside])
+            idx[outside] = nn[:, np.newaxis]
+            bary[outside] = np.array([1.0, 0.0, 0.0])
+
         return torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(
-            w, dtype=torch.float32
+            bary, dtype=torch.float32,
         )
 
 
@@ -140,8 +156,8 @@ class RasterSource(Source):
         )
         return row * self._w + col
 
-    def build_interp(self, dst_coords: Tensor, k: int) -> tuple[Tensor, Tensor]:
-        """k nearest raster cells and inverse-distance weights per destination point."""
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Bilinear interpolation over the four surrounding raster cells."""
         xy = dst_coords[..., :2]
         x, y = xy[..., 0], xy[..., 1]
         fx = (x - self._x0) / self._rx
@@ -151,18 +167,18 @@ class RasterSource(Source):
         row0 = torch.floor(fy).long().clamp(0, self._h - 1)
         row1 = (row0 + 1).clamp(0, self._h - 1)
 
-        cols = torch.stack([col0, col1, col0, col1], dim=-1)  # [M, 4]
-        rows = torch.stack([row0, row0, row1, row1], dim=-1)  # [M, 4]
-        flat = rows * self._w + cols  # [M, 4]
+        sx = (fx - col0.to(fx.dtype)).clamp(0.0, 1.0)
+        sy = (fy - row0.to(fy.dtype)).clamp(0.0, 1.0)
 
-        cx = self._x0 + cols.to(xy.dtype) * self._rx
-        cy = self._y0 + rows.to(xy.dtype) * self._ry
-        dist = torch.sqrt((x.unsqueeze(-1) - cx) ** 2 + (y.unsqueeze(-1) - cy) ** 2)
+        w00 = (1.0 - sx) * (1.0 - sy)
+        w10 = sx * (1.0 - sy)
+        w01 = (1.0 - sx) * sy
+        w11 = sx * sy
 
-        order = torch.argsort(dist, dim=-1)[:, :k]
-        flat_k = torch.gather(flat, -1, order)
-        dist_k = torch.gather(dist, -1, order)
-
-        w = 1.0 / torch.clamp(dist_k, min=1e-12)
-        w = w / w.sum(dim=-1, keepdim=True)
-        return flat_k, w
+        flat = torch.stack(
+            [row0 * self._w + col0, row0 * self._w + col1,
+             row1 * self._w + col0, row1 * self._w + col1],
+            dim=-1,
+        )
+        w = torch.stack([w00, w10, w01, w11], dim=-1)
+        return flat, w

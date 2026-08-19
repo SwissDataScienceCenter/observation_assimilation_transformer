@@ -56,12 +56,12 @@ def test_parse_field_config_full():
     assert fc.fields["geo"].inputs[2] == InputRef(
         kind="source", source="topo", name="DEM"
     )
-    # k defaults to 1 (nearest) when omitted
-    assert fc.fields["obs"].k == 1
-    assert fc.fields["nwp"].k == 1
+    # interp defaults to "nearest" when omitted
+    assert fc.fields["obs"].interp == "nearest"
+    assert fc.fields["nwp"].interp == "nearest"
 
 
-def test_parse_field_config_k_override():
+def test_parse_field_config_interp_override():
     cfg = {
         "coord_sources": {"stations": {"from": "obs"}, "nwp_grid": {"from": "nwp"}},
         "fields": {
@@ -69,10 +69,26 @@ def test_parse_field_config_k_override():
                 "coords": "stations",
                 "inputs": ["nwp.T_2M"],
                 "query": True,
-                "k": 4,
+                "interp": "linear",
             },
         },
         "roles": {"target": "nwp"},
     }
     fc = parse_field_config(cfg)
-    assert fc.fields["nwp"].k == 4
+    assert fc.fields["nwp"].interp == "linear"
+
+
+def test_parse_field_config_rejects_bad_interp():
+    cfg = {
+        "coord_sources": {"stations": {"from": "obs"}},
+        "fields": {
+            "nwp": {
+                "coords": "stations",
+                "inputs": ["obs.T"],
+                "interp": "cubic",
+            },
+        },
+        "roles": {},
+    }
+    with pytest.raises(ValueError, match="interp must be one of"):
+        parse_field_config(cfg)

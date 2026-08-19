@@ -12,9 +12,9 @@ coord_sources:
 fields:
   obs:  {coords: stations, inputs: [obs.temp]}
   nwp:  {coords: stations, inputs: [nwp.2t], query: true}
-  topo: {coords: stations, inputs: [topo.elevation, topo.distance_to_coast], query: true, k: 1}
+  topo: {coords: stations, inputs: [topo.elevation, topo.distance_to_coast], query: true}
   geo:  {coords: stations, inputs: [coords.x, coords.y, topo.elevation],
-         out: [longitude, latitude, elevation], query: true, k: 4}
+         out: [longitude, latitude, elevation], query: true, interp: linear}
 
 roles:
   target: obs

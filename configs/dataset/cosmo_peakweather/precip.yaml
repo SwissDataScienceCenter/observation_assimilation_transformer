@@ -22,4 +22,4 @@ fields:
     coords: stations
     inputs: [nwp.TOT_PREC_1H, nwp.CLCT]
     query: true
-    k: 4
+    interp: linear

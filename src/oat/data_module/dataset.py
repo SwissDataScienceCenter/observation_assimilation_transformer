@@ -66,26 +66,28 @@ class DatasetBase(Dataset[dict[str, Any]]):
             for name, src in sources.items()
         }
 
-        # Precompute (source, coord_source, k) indices used by any field.
-        # k=1 -> (idx, None) via build_index; k>1 -> (idx, weights) via
-        # build_interp (IDW). None marks the unweighted nearest read.
-        self._index_cache: dict[tuple[str, str, int], tuple[Tensor, Tensor | None]] = {}
+        self._index_cache: dict[
+            tuple[str, str, str], tuple[Tensor, Tensor | None]
+        ] = {}
         for field in field_config.fields.values():
             for ref in field.source_refs:
-                key = (ref.source, field.coords, field.k)
+                key = (ref.source, field.coords, field.interp)
                 if key not in self._index_cache:
                     self._index_cache[key] = self._build_index_entry(
-                        sources[ref.source], self._coords[field.coords], field.k, dtype
+                        sources[ref.source],
+                        self._coords[field.coords],
+                        field.interp,
+                        dtype,
                     )
 
     @staticmethod
     def _build_index_entry(
-        source: Source, dst_coords: Tensor, k: int, dtype: torch.dtype
+        source: Source, dst_coords: Tensor, interp: str, dtype: torch.dtype
     ) -> tuple[Tensor, Tensor | None]:
-        """Nearest-neighbor index (k=1), or IDW index + weights (k>1)."""
-        if k == 1:
+        """Nearest-neighbor index, or linear interpolation index + weights."""
+        if interp == "nearest":
             return source.build_index(dst_coords), None
-        idx, weights = source.build_interp(dst_coords, k)
+        idx, weights = source.build_interp(dst_coords)
         return idx, weights.to(dtype)
 
     def __len__(self) -> int:
@@ -190,7 +192,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         """Index entries for a field's source inputs, from the precomputed cache."""
         field = self.field_config.fields[name]
         return {
-            ref.source: self._index_cache[(ref.source, field.coords, field.k)]
+            ref.source: self._index_cache[(ref.source, field.coords, field.interp)]
             for ref in field.source_refs
         }
 
@@ -198,16 +200,16 @@ class DatasetBase(Dataset[dict[str, Any]]):
         self,
         name: str,
         dst_coords: Tensor,
-        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]],
+        cache: dict[tuple[str, str], tuple[Tensor, Tensor | None]],
     ) -> dict[str, tuple[Tensor, Tensor | None]]:
-        """Index entries built against ``dst_coords``, memoized per (source, k)."""
+        """Index entries built against ``dst_coords``, memoized per (source, interp)."""
         field = self.field_config.fields[name]
         entries: dict[str, tuple[Tensor, Tensor | None]] = {}
         for ref in field.source_refs:
-            key = (ref.source, field.k)
+            key = (ref.source, field.interp)
             if key not in cache:
                 cache[key] = self._build_index_entry(
-                    self._source_objs[ref.source], dst_coords, field.k, self.dtype
+                    self._source_objs[ref.source], dst_coords, field.interp, self.dtype
                 )
             entries[ref.source] = cache[key]
         return entries
@@ -222,7 +224,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         """Assemble query-only fields at arbitrary coords (not the dataset grid)."""
         query_coords = query_coords.to(self.dtype)
         names = self._query_field_names
-        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]] = {}
+        cache: dict[tuple[str, str], tuple[Tensor, Tensor | None]] = {}
         index_by_field = {
             n: self._fresh_index_entries(n, query_coords, cache) for n in names
         }

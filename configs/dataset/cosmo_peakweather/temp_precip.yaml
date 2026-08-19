@@ -23,4 +23,4 @@ fields:
     coords: stations
     inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
     query: true
-    k: 4
+    interp: linear

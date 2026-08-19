@@ -98,7 +98,7 @@ def test_get_query_only_query_fields_no_obs():
     assert torch.equal(out["geo"].values[:, :2], q)
 
 
-def _build_dataset_k2():
+def _build_dataset_linear():
     stations = torch.tensor([[0.5, 0.0], [2.0, 2.0]])  # 2 stations
     raster = torch.arange(9.0).reshape(1, 3, 3)  # value = row*3 + col
     nwp = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["T"])
@@ -119,7 +119,7 @@ def _build_dataset_k2():
                     "coords": "stations",
                     "inputs": ["nwp.T"],
                     "query": True,
-                    "k": 2,
+                    "interp": "linear",
                 },
                 "geo": {
                     "coords": "stations",
@@ -148,28 +148,27 @@ def _build_dataset_k2():
     return ds, stations, nwp, topo
 
 
-def test_k2_interpolated_nwp_read_matches_idw_and_k1_unaffected():
-    ds, stations, nwp, topo = _build_dataset_k2()
+def test_linear_interpolated_nwp_read_and_nearest_unaffected():
+    ds, stations, nwp, topo = _build_dataset_linear()
     fields = ds[0]["fields"]
 
-    # station 0 at (0.5, 0.0): midway between flat cols 0 (value 0) and 1
-    # (value 1) of row 0 -> IDW with k=2 gives equal weights, mean = 0.5.
-    assert fields["nwp"].values[0, 0].item() == 0.5
-    # station 1 sits exactly on grid point (2, 2) -> flat index 8, value 8,
-    # regardless of which two (tied, distance-0) corners k=2 selects.
-    assert fields["nwp"].values[1, 0].item() == 8.0
+    # station 0 at (0.5, 0.0): midway between col=0 (value 0) and col=1
+    # (value 1) at row=0, bilinear gives mean = 0.5.
+    assert abs(fields["nwp"].values[0, 0].item() - 0.5) < 1e-6
+    # station 1 sits exactly on grid point (2, 2) -> value 8.
+    assert abs(fields["nwp"].values[1, 0].item() - 8.0) < 1e-6
 
-    # k=1 field (geo's topo.DEM) is unaffected: matches build_index directly.
+    # nearest field (geo's topo.DEM) is unaffected: matches build_index.
     idx = topo.build_index(stations)
     expected_dem = topo.load(0)[0][idx]
     assert torch.equal(fields["geo"].values[:, 2], expected_dem)
 
 
-def test_get_query_k2_interpolated_nwp_read():
-    ds, stations, _, _ = _build_dataset_k2()
+def test_get_query_linear_interpolated_nwp_read():
+    ds, stations, _, _ = _build_dataset_linear()
     out = ds.get_query(stations, idx=0)
-    assert out["nwp"].values[0, 0].item() == 0.5
-    assert out["nwp"].values[1, 0].item() == 8.0
+    assert abs(out["nwp"].values[0, 0].item() - 0.5) < 1e-6
+    assert abs(out["nwp"].values[1, 0].item() - 8.0) < 1e-6
 
 
 def test_introspection():
