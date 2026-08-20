@@ -94,7 +94,9 @@ def test_get_transform_keep_support_offsets_only_strictly_positive_var():
 
 
 def test_target_point_indices_restricts_stats() -> None:
-    ds, _ = _build_dataset()  # existing helper: obs field on 'stations' coord source
+    # Both stations must be valid, else the stats gathering already skips
+    # station 1 and restricting to station 0 changes nothing.
+    ds, _ = _build_dataset(all_obs_valid=True)
     inner_all, _ = ds.compute_field_leaves(num_data_points=len(ds), type="real")
     inner_sub, _ = ds.compute_field_leaves(
         num_data_points=len(ds), target_point_indices=np.array([0]), type="real"
@@ -109,3 +111,56 @@ def test_nwp_extent_and_target_coord_source() -> None:
     ext = ds.nwp_extent
     assert set(ext) == {"min", "max"} and ext["min"].shape == (2,)
     assert ds.target_coord_source() == "stations"
+
+
+def _build_masked_obs_dataset() -> DatasetBase:
+    """Obs field where station 1 is always masked out and holds a filler zero.
+
+    The dataset writes an exact zero wherever the mask is 0 (PeakWeather
+    zero-imputes, and `_obs_values` applies `nan_to_num`). Those fillers must
+    not enter the normalization statistics.
+    """
+    stations = torch.tensor([[0.0, 0.0], [10.0, 10.0]])
+    obs = PointSetSource(
+        stations,
+        ["A"],
+        # [C, N]: station 0 is valid (4.0 then 6.0), station 1 is a masked zero
+        values_fn=lambda t: torch.tensor([[4.0 + 2.0 * t, 0.0]]),
+        mask_fn=lambda t: torch.tensor([[1.0, 0.0]]),
+        native_coord_source="stations",
+    )
+    cfg = parse_field_config(
+        {
+            "coord_sources": {"stations": {"from": "obs"}},
+            "fields": {"obs": {"coords": "stations", "inputs": ["obs.A"]}},
+            "roles": {"target": "obs"},
+        }
+    )
+    times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
+    # unbounded support, so the "real" pre-transform leaves the values alone
+    support = VariableSupport(
+        lower_bounds=torch.tensor([-float("inf")]),
+        upper_bounds=torch.tensor([float("inf")]),
+        lower_open=torch.tensor([True]),
+        upper_open=torch.tensor([True]),
+    )
+    return DatasetBase(
+        field_config=cfg,
+        coord_source_coords={"stations": stations},
+        sources={"obs": obs},
+        times=times,
+        obs_var_support=support,
+    )
+
+
+def test_stats_ignore_masked_out_entries() -> None:
+    """Masked-out fillers must not shift the obs mean/std.
+
+    Valid values are 4.0 and 6.0, so mean=5.0 and std=1.0. Counting the two
+    masked zeros instead gives mean=2.5 and std=2.598.
+    """
+    ds = _build_masked_obs_dataset()
+    _, output = ds.compute_field_leaves(num_data_points=len(ds), type="real")
+    # the standardization must be centred on the valid values only
+    assert torch.allclose(output(torch.tensor([[5.0]])), torch.zeros(1, 1), atol=1e-4)
+    assert torch.allclose(output(torch.tensor([[6.0]])), torch.ones(1, 1), atol=1e-4)

@@ -320,7 +320,9 @@ class DatasetBase(Dataset[dict[str, Any]]):
         """Gather per-field running stats and compose the obs output transform.
 
         Samples ``num_data_points`` items and gathers per-field running
-        statistics over ``Field.values``. The obs field (``roles["target"]``)
+        statistics over ``Field.values``. Entries that a field's ``mask`` marks
+        invalid are skipped, because they hold a filler value (zero) instead of
+        a measurement. The obs field (``roles["target"]``)
         additionally gets a support-aware pre-transform — log (``real``) or a
         zero-avoiding offset (``keep_support``) — applied before its stats are
         gathered. ``type`` selects which pre-transform to use.
@@ -352,6 +354,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         )
 
         # Gather per-field stats over Field.values (obs stats after obs_pre).
+        # Entries that the field mask marks invalid are excluded.
         stats = {
             n: statistics.RunningFeatureStats(len(f.out), feature_dim=-1)
             for n, f in self.field_config.fields.items()
@@ -360,9 +363,16 @@ class DatasetBase(Dataset[dict[str, Any]]):
             fields = self[idx]["fields"]
             for n, f in fields.items():
                 vals = f.values
+                mask = f.mask
                 if tgt_idx is not None and self.field_config.fields[n].coords == tcs:
                     vals = vals[tgt_idx]
+                    mask = None if mask is None else mask[tgt_idx]
                 vals = obs_pre(vals) if n == obs_name else vals
+                if mask is not None:
+                    # Masked-out entries hold a filler value (zero), not a real
+                    # measurement. Set them to NaN, because
+                    # RunningFeatureStats.update drops NaN for each feature.
+                    vals = vals.masked_fill(mask == 0, float("nan"))
                 stats[n].update(vals)
 
         output_transform = self._compose_output_transform(

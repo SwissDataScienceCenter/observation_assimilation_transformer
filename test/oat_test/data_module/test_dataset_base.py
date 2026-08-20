@@ -8,7 +8,12 @@ from oat.data_module.sources import PointSetSource, RasterSource
 from oat.data_module.support import VariableSupport
 
 
-def _build_dataset():
+def _build_dataset(all_obs_valid: bool = False):
+    """Build a small two-station dataset.
+
+    Set ``all_obs_valid`` to mark both stations valid. The default masks out
+    station 1, which the stats gathering skips.
+    """
     stations = torch.tensor([[0.0, 0.0], [10.0, 10.0]])  # 2 stations
     nwp_coords = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
     # nwp value = station-ish; time-varying: value = base + time_idx
@@ -22,7 +27,11 @@ def _build_dataset():
         stations,
         ["temperature"],
         values_fn=lambda t: torch.tensor([[20.0 + t, 21.0 + t]]),
-        mask_fn=lambda t: torch.tensor([[1.0, 0.0]]),
+        mask_fn=(
+            (lambda t: torch.tensor([[1.0, 1.0]]))
+            if all_obs_valid
+            else (lambda t: torch.tensor([[1.0, 0.0]]))
+        ),
         native_coord_source="stations",
     )
     topo = RasterSource(
