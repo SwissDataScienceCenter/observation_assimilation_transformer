@@ -1,11 +1,14 @@
 """Shared field-batch helpers used by OATPredictor and GPPredictor."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import torch
+
+if TYPE_CHECKING:
+    from tnp.data.base import OOTGBatch
 
 _EPOCH = pd.Timestamp("1970-01-01T00:00:00", tz="UTC")
 
@@ -125,3 +128,75 @@ def _unwrap_fields_to_model_batch(
     if requires_observation:
         out["observation_data"] = grp("observation_data")
     return out
+
+
+def _unwrap_fields_to_ootg_batch(
+    batch: dict[str, Any],
+    roles: dict[str, str],
+    coord_to_latlon: Callable[[torch.Tensor], torch.Tensor],
+    grid_shape: tuple[int, int],
+    nwp_stride: int,
+    ablate_obs: bool = False,
+    ablate_grid: bool = False,
+    project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
+) -> "OOTGBatch":
+    """Unwrap a field-collated batch into an OOTGBatch for the gridded-TNP model.
+
+    Reshape the flat grid field to ``[B, H, W, C]``, apply the stride, and
+    convert coords to lat/lon. Expect ``B == 1`` (context length varies
+    after mask filtering).
+    """
+    from tnp.data.base import OOTGBatch
+
+    obs_f = batch["observation_data"]["fields"][roles["target"]]
+    query_f = batch["query_data"]["fields"][roles["target"]]
+    grid_f = batch["global_data"]["fields"][roles["global_grid"]]
+
+    h, w = grid_shape
+    s = nwp_stride
+
+    # Station coords: [B, N, 3] -> spatial [B, N, 2].
+    obs_xy = obs_f.spatial_coords  # [B, N_obs, 2]
+    query_xy = query_f.spatial_coords  # [B, N_query, 2]
+
+    # Drop masked obs rows (per sample; B=1 expected).
+    if obs_f.mask is not None:
+        valid = obs_f.mask[0].all(dim=-1)  # [N_obs]
+        obs_xy_valid = obs_xy[0, valid].unsqueeze(0)
+        yc = obs_f.values[0, valid].unsqueeze(0)
+    else:
+        obs_xy_valid = obs_xy
+        yc = obs_f.values
+
+    xc = coord_to_latlon(obs_xy_valid[0]).unsqueeze(0)
+    xt = coord_to_latlon(query_xy[0]).unsqueeze(0)
+    yt = query_f.values
+
+    # Grid: [B, H*W, C] -> [B, H, W, C], stride, coord_to_latlon.
+    grid_coords_2d = grid_f.spatial_coords.reshape(-1, h, w, 2)
+    grid_vals_2d = grid_f.values.reshape(-1, h, w, grid_f.values.shape[-1])
+    strided_coords = grid_coords_2d[:, ::s, ::s]  # [B, H_s, W_s, 2]
+    yc_grid = grid_vals_2d[:, ::s, ::s]  # [B, H_s, W_s, C]
+    h_s, w_s = yc_grid.shape[1], yc_grid.shape[2]
+    xc_grid = coord_to_latlon(strided_coords[0].reshape(-1, 2)).reshape(1, h_s, w_s, 2)
+
+    # Ablations.
+    if ablate_obs:
+        xc = xc[:, :0]
+        yc = yc[:, :0]
+    if ablate_grid:
+        yc_grid = torch.zeros_like(yc_grid)
+
+    x = torch.cat([xc, xt], dim=1)
+    y = torch.cat([yc, yt], dim=1)
+
+    return OOTGBatch(
+        x=x,
+        y=y,
+        xc=xc,
+        yc=yc,
+        xt=xt,
+        yt=yt,
+        xc_grid=xc_grid,
+        yc_grid=yc_grid,
+    )
