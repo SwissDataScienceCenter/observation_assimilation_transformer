@@ -124,6 +124,42 @@ def test_test_step_logs_finite_metrics():
         assert torch.isfinite(torch.as_tensor(logged[key])), f"{key} = {logged[key]}"
 
 
+@pytest.mark.parametrize(
+    "step_name,prefix",
+    [("validation_step", "val"), ("test_step", "test")],
+)
+def test_metric_mask_excludes_masked_query_row(step_name, prefix):
+    from unittest.mock import patch
+
+    predictor = _make_predictor()
+
+    def _run(batch):
+        logged = {}
+
+        def capture(key, val, **kwargs):
+            logged[key] = val.item() if hasattr(val, "item") else float(val)
+
+        with torch.no_grad(), patch.object(predictor, "log", side_effect=capture):
+            getattr(predictor, step_name)(batch, 0)
+        return logged
+
+    batch = _make_field_batch(n_query=3)
+    query_field = batch["query_data"]["fields"]["obs"]
+    # An extreme target value on one row: it must not affect the metrics
+    # when that row is masked.
+    query_field.values[0, 1, 0] = 1e6
+    logged_counted = _run(batch)
+    query_field.mask[0, 1, 0] = 0.0
+    logged_masked = _run(batch)
+    assert (
+        logged_counted[f"{prefix}_point_mae_v0"]
+        > logged_masked[f"{prefix}_point_mae_v0"]
+    )
+    assert (
+        logged_counted[f"{prefix}_crps_v0"] > logged_masked[f"{prefix}_crps_v0"]
+    )
+
+
 def test_transfer_batch_to_device_preserves_fields():
     predictor = _make_predictor()
     batch = _make_field_batch()

@@ -93,6 +93,7 @@ class OOTGPredictor(BasePredictor):
         self,
         y_hat_samples: torch.Tensor,
         y_true: torch.Tensor,
+        mask: torch.Tensor | None,
         prefix: str = "",
         on_step: bool = True,
         on_epoch: bool = True,
@@ -101,6 +102,7 @@ class OOTGPredictor(BasePredictor):
             vals = metric_fn(
                 y_target=y_true,
                 y_hat=y_hat_samples,
+                mask=mask,
                 aggregation="variable",
             )
             for i, val in enumerate(vals):
@@ -120,6 +122,7 @@ class OOTGPredictor(BasePredictor):
         return loss
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> None:
+        query_mask = batch["query_data"]["fields"][self.roles["target"]].mask
         ootg_batch = self._normalize_batch(batch)
         dist = self._forward(ootg_batch)
         loss = dist.crps(ootg_batch.yt).mean()
@@ -128,17 +131,28 @@ class OOTGPredictor(BasePredictor):
             samples_phys = self.output_transform.inverse(self._draw_samples(dist))
             yt_phys = self.output_transform.inverse(ootg_batch.yt)
             self._log_instant_metrics(
-                samples_phys, yt_phys, prefix="val", on_step=False, on_epoch=True
+                samples_phys,
+                yt_phys,
+                query_mask,
+                prefix="val",
+                on_step=False,
+                on_epoch=True,
             )
 
     def test_step(self, batch: dict[str, Any], batch_idx: int) -> None:
+        query_mask = batch["query_data"]["fields"][self.roles["target"]].mask
         ootg_batch = self._normalize_batch(batch)
         dist = self._forward(ootg_batch)
         with torch.no_grad():
             samples_phys = self.output_transform.inverse(self._draw_samples(dist))
             yt_phys = self.output_transform.inverse(ootg_batch.yt)
             self._log_instant_metrics(
-                samples_phys, yt_phys, prefix="test", on_step=False, on_epoch=True
+                samples_phys,
+                yt_phys,
+                query_mask,
+                prefix="test",
+                on_step=False,
+                on_epoch=True,
             )
 
     def predict_step(
