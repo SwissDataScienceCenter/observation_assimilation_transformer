@@ -64,7 +64,11 @@ def main(cfg: DictConfig) -> None:
     if dataset_type not in _DEFAULT_STRIDES:
         raise ValueError(f"Unknown dataset_type for OOTG: {dataset_type!r}")
     nwp_stride = cfg.get("nwp_stride", None) or _DEFAULT_STRIDES[dataset_type]
-    strided_shape = (native_shape[0] // nwp_stride, native_shape[1] // nwp_stride)
+    # Ceiling division matches the ::stride slice in _unwrap_fields_to_ootg_batch.
+    strided_shape = (
+        -(-native_shape[0] // nwp_stride),
+        -(-native_shape[1] // nwp_stride),
+    )
     _LOG.info(
         "Grid %s -> stride %d -> pseudo-token grid %s",
         native_shape,
