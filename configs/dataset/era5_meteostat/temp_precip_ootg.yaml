@@ -1,0 +1,9 @@
+defaults:
+  - era5_meteostat/temp_precip@_here_
+  - _self_
+
+fields:
+  nwp_grid_field: {coords: nwp_grid, inputs: [nwp.2t, nwp.tp, nwp.tcc]}
+
+roles:
+  global_grid: nwp_grid_field
