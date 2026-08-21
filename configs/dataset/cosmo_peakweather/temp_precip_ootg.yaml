@@ -1,0 +1,11 @@
+defaults:
+  - cosmo_peakweather/temp_precip@_here_
+  - _self_
+
+fields:
+  nwp_grid_field:
+    coords: nwp_grid
+    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
+
+roles:
+  global_grid: nwp_grid_field

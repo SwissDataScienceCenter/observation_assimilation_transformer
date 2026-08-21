@@ -13,6 +13,3 @@ obs_variable_to_distribution:
 fields:
   obs: {coords: stations, inputs: [obs.temp, obs.prcp]}
   nwp: {coords: stations, inputs: [nwp.2t, nwp.tp, nwp.tcc], query: true, interp: linear}
-  # The grid field carries all nwp_vars, matching the OOTG model's
-  # dim_gridded_y and the scalar-vs-field validation.
-  nwp_grid_field: {coords: nwp_grid, inputs: [nwp.2t, nwp.tp, nwp.tcc]}

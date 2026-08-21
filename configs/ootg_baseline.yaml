@@ -1,5 +1,5 @@
 defaults:
-  - dataset: cosmo_peakweather/temp
+  - dataset: cosmo_peakweather/temp_ootg
   - split: default
   - dataloader: default
   - trainer: default

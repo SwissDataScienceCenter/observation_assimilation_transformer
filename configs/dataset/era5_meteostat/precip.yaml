@@ -12,4 +12,3 @@ obs_variable_to_distribution:
 fields:
   obs: {coords: stations, inputs: [obs.prcp]}
   nwp: {coords: stations, inputs: [nwp.tp, nwp.tcc], query: true, interp: linear}
-  nwp_grid_field: {coords: nwp_grid, inputs: [nwp.tp, nwp.tcc]}

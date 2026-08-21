@@ -1,9 +1,8 @@
 """Train the OOTG (gridded-TNP) baseline via the field data path.
 
 Usage:
-    python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp
-    python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp_precip
-    python -m scripts.train_ootg_baseline dataset=era5_meteostat/temp_precip
+    python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp_ootg
+    python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp_precip_ootg
 """
 
 import logging

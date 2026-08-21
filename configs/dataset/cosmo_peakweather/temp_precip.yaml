@@ -24,8 +24,3 @@ fields:
     inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
     query: true
     interp: linear
-  # The grid field carries all nwp_vars, matching the OOTG model's
-  # dim_gridded_y and the scalar-vs-field validation.
-  nwp_grid_field:
-    coords: nwp_grid
-    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]

@@ -17,11 +17,9 @@ fields:
                                     topo.SN_DERIVATIVE_2000M_SIGRATIO1], query: true}
   geo:  {coords: stations, inputs: [coords.x, coords.y, topo.DEM],
          out: [swiss_easting, swiss_northing, dem], query: true, interp: linear}
-  nwp_grid_field: {coords: nwp_grid, inputs: [nwp.T_2M]}
 
 roles:
   target: obs
   global: nwp
   geo_bias: geo
   topo: topo
-  global_grid: nwp_grid_field
