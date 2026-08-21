@@ -16,13 +16,13 @@ from oat.data_module.setup import (
 )
 from oat.data_module.sources import PointSetSource
 from oat.data_module.support import VariableSupport
-from oat_test.data_module.test_dataset_base import _build_dataset
+from oat_test.data_module.test_dataset_base import _make_dataset
 
 
-def _build_dataset_with_global_role() -> DatasetBase:
+def _make_dataset_with_global_role() -> DatasetBase:
     """Minimal field dataset declaring BOTH `target` and `global` roles.
 
-    Unlike `_build_dataset()` (roles={"target": "obs", "geo_bias": "geo"}, no
+    Unlike `_make_dataset()` (roles={"target": "obs", "geo_bias": "geo"}, no
     `global` role), this fixture lets `validate_field_config_against_scalars`
     get past the required-roles check, so tests can actually exercise the
     obs-var-order comparison instead of failing earlier on the missing-role
@@ -97,7 +97,7 @@ def test_collate_none_mask() -> None:
 
 
 def test_build_two_group_transform_applies_both_groups() -> None:
-    ds, _ = _build_dataset()
+    ds, _ = _make_dataset()
     inner, _output = ds.compute_field_leaves(num_data_points=len(ds), type="real")
     tr = build_two_group_transform(inner)
     # structure: observation_data.fields.<name> and query_data.fields.<name>
@@ -127,7 +127,7 @@ def test_validation_rejects_obs_order_mismatch() -> None:
     # matching, so validation gets PAST the required-roles check and the
     # raised error is actually about the obs-var order mismatch below (not
     # a "missing required role" error masquerading as the intended failure).
-    ds = _build_dataset_with_global_role()
+    ds = _make_dataset_with_global_role()
     cfg = OmegaConf.create(
         {
             "dataset": {

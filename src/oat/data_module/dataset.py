@@ -48,6 +48,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         times: pd.DatetimeIndex,
         obs_var_support: Any,
         dtype: torch.dtype = torch.float32,
+        coord_source_shapes: dict[str, tuple[int, int]] | None = None,
     ) -> None:
         validate_field_config(field_config, {n: s.info for n, s in sources.items()})
         self.field_config = field_config
@@ -59,6 +60,14 @@ class DatasetBase(Dataset[dict[str, Any]]):
         self._t_hours = EPOCH_HOURS(self.times).to(dtype)
         self._all_field_names = list(field_config.fields)
         self._query_field_names = [n for n, f in field_config.fields.items() if f.query]
+        self._coord_source_shapes = coord_source_shapes or {}
+        for name, (h, w) in self._coord_source_shapes.items():
+            if name in self._coords:
+                n_points = self._coords[name].shape[0]
+                assert h * w == n_points, (
+                    f"coord_source_shapes[{name!r}] = ({h}, {w}) implies "
+                    f"{h * w} points but _coords has {n_points}"
+                )
         # Per-source name -> channel index, to avoid a linear var_names.index()
         # scan on every field assembly.
         self._var_index = {
@@ -247,6 +256,10 @@ class DatasetBase(Dataset[dict[str, Any]]):
 
     def target_coord_source(self) -> str:
         return self.field_config.fields[self._obs_field_name()].coords
+
+    def grid_shape(self, coord_source: str) -> tuple[int, int] | None:
+        """Return (H, W) for a grid coord source, or None for a point set."""
+        return self._coord_source_shapes.get(coord_source)
 
     @property
     def nwp_extent(self) -> dict[str, Tensor]:

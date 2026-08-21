@@ -12,7 +12,7 @@ from oat.data_module.transform import (
     NestedTransform,
     TranslateScaleTransform,
 )
-from oat_test.data_module.test_dataset_base import _build_dataset
+from oat_test.data_module.test_dataset_base import _make_dataset
 
 
 def _build_keep_support_dataset() -> DatasetBase:
@@ -57,7 +57,7 @@ def _build_keep_support_dataset() -> DatasetBase:
 
 
 def test_get_transform_real_standardizes_all_and_logs_obs():
-    ds, _ = _build_dataset()  # type defaults to "real"
+    ds, _ = _make_dataset()  # type defaults to "real"
     post, output = ds.get_transform(num_data_points=2, type="real")
     assert isinstance(post, NestedTransform)
     fields_tr = post.transform_dict["fields"].transform_dict
@@ -96,7 +96,7 @@ def test_get_transform_keep_support_offsets_only_strictly_positive_var():
 def test_target_point_indices_restricts_stats() -> None:
     # Both stations must be valid, else the stats gathering already skips
     # station 1 and restricting to station 0 changes nothing.
-    ds, _ = _build_dataset(all_obs_valid=True)
+    ds, _ = _make_dataset(all_obs_valid=True)
     inner_all, _ = ds.compute_field_leaves(num_data_points=len(ds), type="real")
     inner_sub, _ = ds.compute_field_leaves(
         num_data_points=len(ds), target_point_indices=np.array([0]), type="real"
@@ -107,7 +107,7 @@ def test_target_point_indices_restricts_stats() -> None:
 
 
 def test_nwp_extent_and_target_coord_source() -> None:
-    ds, _ = _build_dataset()
+    ds, _ = _make_dataset()
     ext = ds.nwp_extent
     assert set(ext) == {"min", "max"} and ext["min"].shape == (2,)
     assert ds.target_coord_source() == "stations"

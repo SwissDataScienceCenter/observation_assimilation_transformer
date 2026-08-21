@@ -1,5 +1,8 @@
+import functools
+
 import pandas as pd
 import torch
+from torch import Tensor
 
 from oat.data_module.dataset import EPOCH_HOURS, DatasetBase
 from oat.data_module.field import Field
@@ -8,30 +11,59 @@ from oat.data_module.sources import PointSetSource, RasterSource
 from oat.data_module.support import VariableSupport
 
 
-def _build_dataset(all_obs_valid: bool = False):
+def _nwp_value_fn(t: int, n_points: int) -> Tensor:
+    """nwp value = station-ish; time-varying: value = base + time_idx.
+
+    Module-level (not a local lambda), so it stays picklable when bound via
+    ``functools.partial`` for the DDP-worker pickle guard.
+    """
+    return (torch.arange(n_points, dtype=torch.float32) + t).reshape(1, -1)
+
+
+def _obs_value_fn(t: int) -> Tensor:
+    return torch.tensor([[20.0 + t, 21.0 + t]])
+
+
+def _obs_mask_fn(t: int, all_valid: bool) -> Tensor:
+    return torch.tensor([[1.0, 1.0]] if all_valid else [[1.0, 0.0]])
+
+
+def _make_dataset(
+    all_obs_valid: bool = False,
+    coord_source_shapes: dict[str, tuple[int, int]] | None = None,
+    nwp_grid_n_points: int | None = None,
+):
     """Build a small two-station dataset.
 
     Set ``all_obs_valid`` to mark both stations valid. The default masks out
     station 1, which the stats gathering skips.
+
+    ``coord_source_shapes`` is forwarded to ``DatasetBase`` unchanged. When it
+    names ``"nwp_grid"``, the nwp coord source gets ``nwp_grid_n_points``
+    points (default: ``H * W`` from the shape) instead of the usual 4.
     """
     stations = torch.tensor([[0.0, 0.0], [10.0, 10.0]])  # 2 stations
-    nwp_coords = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
-    # nwp value = station-ish; time-varying: value = base + time_idx
+    shapes = coord_source_shapes or {}
+    if "nwp_grid" in shapes:
+        h, w = shapes["nwp_grid"]
+        n_points = nwp_grid_n_points if nwp_grid_n_points is not None else h * w
+        nwp_coords = torch.stack(
+            [torch.arange(n_points, dtype=torch.float32), torch.zeros(n_points)],
+            dim=-1,
+        )
+    else:
+        nwp_coords = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
     nwp = PointSetSource(
         nwp_coords,
         ["T_2M"],
-        values_fn=lambda t: torch.tensor([[float(t), 1.0 + t, 2.0 + t, 3.0 + t]]),
+        values_fn=functools.partial(_nwp_value_fn, n_points=nwp_coords.shape[0]),
         native_coord_source="nwp_grid",
     )
     obs = PointSetSource(
         stations,
         ["temperature"],
-        values_fn=lambda t: torch.tensor([[20.0 + t, 21.0 + t]]),
-        mask_fn=(
-            (lambda t: torch.tensor([[1.0, 1.0]]))
-            if all_obs_valid
-            else (lambda t: torch.tensor([[1.0, 0.0]]))
-        ),
+        values_fn=_obs_value_fn,
+        mask_fn=functools.partial(_obs_mask_fn, all_valid=all_obs_valid),
         native_coord_source="stations",
     )
     topo = RasterSource(
@@ -69,12 +101,13 @@ def _build_dataset(all_obs_valid: bool = False):
         sources={"obs": obs, "nwp": nwp, "topo": topo},
         times=times,
         obs_var_support=support,
+        coord_source_shapes=coord_source_shapes,
     )
     return ds, stations
 
 
 def test_getitem_shapes_and_content():
-    ds, stations = _build_dataset()
+    ds, stations = _make_dataset()
     assert len(ds) == 2
     sample = ds[1]
     fields = sample["fields"]
@@ -98,7 +131,7 @@ def test_getitem_shapes_and_content():
 
 
 def test_get_query_only_query_fields_no_obs():
-    ds, _ = _build_dataset()
+    ds, _ = _make_dataset()
     q = torch.tensor([[0.0, 0.0], [9.0, 9.0]])
     out = ds.get_query(q, idx=0)
     assert set(out) == {"nwp", "geo"}  # obs excluded (not query)
@@ -181,7 +214,7 @@ def test_get_query_linear_interpolated_nwp_read():
 
 
 def test_introspection():
-    ds, _ = _build_dataset()
+    ds, _ = _make_dataset()
     assert ds.field_coord_sources() == {
         "obs": "stations",
         "nwp": "stations",
@@ -201,3 +234,37 @@ def test_project_index_coords_default_is_identity():
     out = DatasetBase.project_index_coords(object.__new__(DatasetBase), coords)
     assert out.shape == coords.shape
     assert torch.equal(out, coords)
+
+
+def test_grid_shape_returns_shape_for_grid_coord_source():
+    """grid_shape returns (H, W) for a coord source with a recorded shape."""
+    ds, _ = _make_dataset(
+        coord_source_shapes={"nwp_grid": (3, 4)},
+    )
+    assert ds.grid_shape("nwp_grid") == (3, 4)
+
+
+def test_grid_shape_returns_none_for_station_coord_source():
+    """grid_shape returns None for coord sources without a recorded shape."""
+    ds, _ = _make_dataset()
+    assert ds.grid_shape("stations") is None
+
+
+def test_grid_shape_asserts_point_count():
+    """grid_shape construction fails when H*W != coord point count."""
+    import pytest
+
+    with pytest.raises(AssertionError, match="12 points but _coords has"):
+        _make_dataset(
+            coord_source_shapes={"nwp_grid": (3, 4)},
+            nwp_grid_n_points=10,  # 10 != 3*4=12
+        )
+
+
+def test_pickle_roundtrip_with_grid_field():
+    """Dataset with a grid-coord field survives pickle (DDP worker guard)."""
+    import pickle
+
+    ds, _ = _make_dataset(coord_source_shapes={"nwp_grid": (3, 4)})
+    data = pickle.dumps(ds)
+    assert len(data) > 0

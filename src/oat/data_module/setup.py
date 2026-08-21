@@ -105,16 +105,19 @@ def validate_field_config_against_scalars(dataset: Any, cfg: DictConfig) -> None
     checks = [("target", "obs_vars"), ("global", "nwp_vars")]
     if "geo_bias" in roles:
         checks.append(("geo_bias", "geo_vars"))
+    if "global_grid" in roles:
+        checks.append(("global_grid", "nwp_vars"))
     for role, scalar in checks:
         field_out = list(fc.fields[roles[role]].out)
         expected = [str(v) for v in cfg.dataset.get(scalar, [])]
-        if role == "global":
+        if role in ("global", "global_grid"):
             # The global field may append extra context channels (e.g. topo.*)
             # after the NWP scalars, so nwp_vars need only be a leading prefix
-            # of the field's channels, not an exact match.
+            # of the field's channels, not an exact match. Same rule applies
+            # to the global_grid field.
             if field_out[: len(expected)] != expected:
                 raise ValueError(
-                    f"role 'global' field {roles[role]!r} channels {field_out} "
+                    f"role {role!r} field {roles[role]!r} channels {field_out} "
                     f"must start with cfg.dataset.{scalar} {expected} (order matters)"
                 )
         elif field_out != expected:

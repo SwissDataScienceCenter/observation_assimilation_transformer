@@ -165,6 +165,17 @@ class ERA5MeteostatDataset(DatasetBase):
             "topo": self._build_topo_source(),
         }
         coord_source_coords = self._build_coord_source_coords(field_config)
+        coord_source_shapes: dict[str, tuple[int, int]] = {}
+        if field_config.nwp_coord_source is not None:
+            fs = self.nwp_ds.field_shape
+            # ERA5 (N320 reduced Gaussian) is an irregular 1D point set, not a
+            # rectangular grid: field_shape has 1 entry, not (H, W). Only
+            # record a shape when the NWP grid is truly 2D.
+            if len(fs) == 2:
+                coord_source_shapes[field_config.nwp_coord_source] = (
+                    int(fs[0]),
+                    int(fs[1]),
+                )
 
         super().__init__(
             field_config=field_config,
@@ -173,6 +184,7 @@ class ERA5MeteostatDataset(DatasetBase):
             times=self.times,
             obs_var_support=obs_var_support,
             dtype=dtype,
+            coord_source_shapes=coord_source_shapes,
         )
         self._mark_shared_memory()
 
