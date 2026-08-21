@@ -86,6 +86,9 @@ def main() -> None:
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
+    if hasattr(predictor_oat, "set_index_projection"):
+        predictor_oat.set_index_projection(dataset)
+
     test_ds = test_loader.dataset
     obs_station_indices = list(test_ds.observed_indices)
     eval_indices = list(test_ds.eval_indices)

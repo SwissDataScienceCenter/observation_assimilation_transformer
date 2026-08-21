@@ -50,7 +50,6 @@ def _build_dataset_with_global_role() -> DatasetBase:
                 "nwp": {"coords": "stations", "inputs": ["nwp.T_2M"], "query": True},
             },
             "roles": {"target": "obs", "global": "nwp"},
-            "transform_type": "real",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
@@ -99,7 +98,7 @@ def test_collate_none_mask() -> None:
 
 def test_build_two_group_transform_applies_both_groups() -> None:
     ds, _ = _build_dataset()
-    inner, _output = ds.compute_field_leaves(num_data_points=len(ds))
+    inner, _output = ds.compute_field_leaves(num_data_points=len(ds), type="real")
     tr = build_two_group_transform(inner)
     # structure: observation_data.fields.<name> and query_data.fields.<name>
     sample = ds[0]["fields"]
@@ -153,7 +152,6 @@ def _global_role_config(nwp_inputs: list[str]) -> Any:
                 "nwp": {"coords": "stations", "inputs": nwp_inputs},
             },
             "roles": {"target": "obs", "global": "nwp"},
-            "transform_type": "real",
         }
     )
     ds = types.SimpleNamespace(field_config=fc)

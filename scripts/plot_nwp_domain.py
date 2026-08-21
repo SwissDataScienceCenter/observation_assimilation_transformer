@@ -153,6 +153,9 @@ def main() -> None:
 
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
         sys.exit(0)

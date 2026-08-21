@@ -12,6 +12,4 @@ obs_variable_to_distribution:
 
 fields:
   obs: {coords: stations, inputs: [obs.temp, obs.prcp]}
-  nwp: {coords: stations, inputs: [nwp.2t, nwp.tp, nwp.tcc], query: true, k: 4}
-
-transform_type: keep_support
+  nwp: {coords: stations, inputs: [nwp.2t, nwp.tp, nwp.tcc], query: true, interp: linear}

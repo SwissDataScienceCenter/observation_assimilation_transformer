@@ -263,6 +263,37 @@ def test_default_hydra_config(transform_fixture):
     )
 
 
+def test_radius_masking_rejected_with_sphere_projection():
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+    dummy_field_extent = {
+        "min": [2255500.0, 840500.0],
+        "max": [2964500.0, 1479500.0],
+    }
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=["model/masking=radius"],
+        )
+    logger = logging.getLogger(__name__)
+
+    def _sphere_projection(coords: torch.Tensor) -> torch.Tensor:
+        lon = torch.deg2rad(coords[..., 0])
+        lat = torch.deg2rad(coords[..., 1])
+        cos_lat = torch.cos(lat)
+        return torch.stack(
+            [cos_lat * torch.cos(lon), cos_lat * torch.sin(lon), torch.sin(lat)],
+            dim=-1,
+        )
+
+    with pytest.raises(ValueError, match="not compatible with an index-coordinate"):
+        setup_oat_cfg(
+            cfg,
+            dummy_field_extent,
+            logger,
+            project_index_coords=_sphere_projection,
+        )
+
+
 def _make_train_dataset_stub(obs_vars: list[str], obs_support: VariableSupport):
     # Mirrors TrainDataset.dataset.obs_var_support and .config.obs_vars access pattern.
     return SimpleNamespace(

@@ -29,7 +29,6 @@ def _compose_dataset():
 def test_temp_config_parses_and_validates():
     cfg = _compose_dataset()
     fc = parse_field_config(cfg)
-    assert fc.transform_type == "real"
     assert fc.roles["target"] == "obs"
     # validate against the catalog-declared vars
     cat = cfg.catalog
@@ -60,7 +59,6 @@ _FIELD_SCHEMA = {
         },
     },
     "roles": {"target": "obs", "geo_bias": "geo", "topo": "topo"},
-    "transform_type": "real",
 }
 
 
@@ -91,3 +89,36 @@ def test_era5_field_dataset_smoke():
     q = ds.get_query(query_coords, idx=0)
     assert set(q) <= set(fields)
     assert "obs" not in q
+
+
+def test_era5_project_index_coords_maps_to_unit_sphere():
+    from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+
+    proj = ERA5MeteostatDataset.project_index_coords
+    inst = object.__new__(ERA5MeteostatDataset)
+
+    coords = torch.tensor(
+        [[0.0, 0.0], [90.0, 0.0], [0.0, 90.0]]
+    )  # (lon, lat) degrees
+    out = proj(inst, coords)
+    assert out.shape == (3, 3)
+    # (0,0) -> (1,0,0); (90,0) -> (0,1,0); (_,90) -> (0,0,1)
+    assert torch.allclose(out[0], torch.tensor([1.0, 0.0, 0.0]), atol=1e-6)
+    assert torch.allclose(out[1], torch.tensor([0.0, 1.0, 0.0]), atol=1e-6)
+    assert torch.allclose(out[2], torch.tensor([0.0, 0.0, 1.0]), atol=1e-6)
+    # every projected point has unit norm
+    assert torch.allclose(out.norm(dim=-1), torch.ones(3), atol=1e-6)
+
+
+def test_era5_projection_closes_the_180_seam():
+    from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+
+    proj = ERA5MeteostatDataset.project_index_coords
+    inst = object.__new__(ERA5MeteostatDataset)
+
+    seam = torch.tensor([[179.9, 10.0], [-179.9, 10.0]])
+    raw_gap = (seam[0] - seam[1]).norm()  # ~359.8 in degrees
+    xyz = proj(inst, seam)
+    proj_gap = (xyz[0] - xyz[1]).norm()  # tiny chord across the seam
+    assert proj_gap < 0.01
+    assert raw_gap > 300.0

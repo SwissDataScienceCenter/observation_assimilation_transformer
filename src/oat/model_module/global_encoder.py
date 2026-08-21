@@ -1,6 +1,7 @@
 import torch
 from typing import Any, Dict
 from oat.model_module.activations import get_activation
+from oat.model_module.topographic_encoder import _FlattenedBatchNorm1d
 from torch.nn import functional as F
 from abc import ABC, abstractmethod
 
@@ -257,10 +258,16 @@ class PointGlobalEncoder(BaseGlobalEncoder):
         out_dim = mlp_params['out_channels']
         hidden_dims = list(mlp_params.get('hidden_dims', []) or [])
         act_fn = mlp_params.get('act_fn', 'GELU')
+        use_layernorm = mlp_params.get('use_layernorm', False)
+        use_batchnorm = mlp_params.get('use_batchnorm', False)
         layers: list[torch.nn.Module] = []
         d = in_dim
         for h in hidden_dims:
             layers.append(torch.nn.Linear(d, h))
+            if use_layernorm:
+                layers.append(torch.nn.LayerNorm(h))
+            if use_batchnorm:
+                layers.append(_FlattenedBatchNorm1d(h))
             layers.append(get_activation(act_fn))
             d = h
         layers.append(torch.nn.Linear(d, out_dim))

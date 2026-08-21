@@ -131,6 +131,8 @@ def main() -> None:
     quiet = logging.getLogger("power_check_loso.quiet")
     quiet.setLevel(logging.WARNING)
     dataset, _, _, _, _, input_transform, output_transform = setup_data_and_transform(cfg, quiet)
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
     predictor.input_transform = input_transform
     predictor.output_transform = output_transform
     predictor = predictor.to(device).eval()

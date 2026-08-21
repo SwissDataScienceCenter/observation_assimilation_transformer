@@ -66,26 +66,28 @@ class DatasetBase(Dataset[dict[str, Any]]):
             for name, src in sources.items()
         }
 
-        # Precompute (source, coord_source, k) indices used by any field.
-        # k=1 -> (idx, None) via build_index; k>1 -> (idx, weights) via
-        # build_interp (IDW). None marks the unweighted nearest read.
-        self._index_cache: dict[tuple[str, str, int], tuple[Tensor, Tensor | None]] = {}
+        self._index_cache: dict[
+            tuple[str, str, str], tuple[Tensor, Tensor | None]
+        ] = {}
         for field in field_config.fields.values():
             for ref in field.source_refs:
-                key = (ref.source, field.coords, field.k)
+                key = (ref.source, field.coords, field.interp)
                 if key not in self._index_cache:
                     self._index_cache[key] = self._build_index_entry(
-                        sources[ref.source], self._coords[field.coords], field.k, dtype
+                        sources[ref.source],
+                        self._coords[field.coords],
+                        field.interp,
+                        dtype,
                     )
 
     @staticmethod
     def _build_index_entry(
-        source: Source, dst_coords: Tensor, k: int, dtype: torch.dtype
+        source: Source, dst_coords: Tensor, interp: str, dtype: torch.dtype
     ) -> tuple[Tensor, Tensor | None]:
-        """Nearest-neighbor index (k=1), or IDW index + weights (k>1)."""
-        if k == 1:
+        """Nearest-neighbor index, or linear interpolation index + weights."""
+        if interp == "nearest":
             return source.build_index(dst_coords), None
-        idx, weights = source.build_interp(dst_coords, k)
+        idx, weights = source.build_interp(dst_coords)
         return idx, weights.to(dtype)
 
     def __len__(self) -> int:
@@ -100,6 +102,19 @@ class DatasetBase(Dataset[dict[str, Any]]):
 
     def roles(self) -> dict[str, str]:
         return dict(self.field_config.roles)
+
+    def project_index_coords(self, coords: Tensor) -> Tensor:
+        """Map spatial coords into the space where Euclidean ops are meaningful.
+
+        Default: identity — coordinates are already treated as Euclidean.
+        Datasets whose coordinates are geographic (lon/lat) override this.
+
+        Args:
+            coords: (..., 2) spatial coordinates.
+        Returns:
+            (..., D) coordinates for neighbor search / geo-bias (D may differ).
+        """
+        return coords
 
     @property
     def variable_names(self) -> dict[str, dict[str, list[str]]]:
@@ -177,7 +192,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         """Index entries for a field's source inputs, from the precomputed cache."""
         field = self.field_config.fields[name]
         return {
-            ref.source: self._index_cache[(ref.source, field.coords, field.k)]
+            ref.source: self._index_cache[(ref.source, field.coords, field.interp)]
             for ref in field.source_refs
         }
 
@@ -185,16 +200,16 @@ class DatasetBase(Dataset[dict[str, Any]]):
         self,
         name: str,
         dst_coords: Tensor,
-        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]],
+        cache: dict[tuple[str, str], tuple[Tensor, Tensor | None]],
     ) -> dict[str, tuple[Tensor, Tensor | None]]:
-        """Index entries built against ``dst_coords``, memoized per (source, k)."""
+        """Index entries built against ``dst_coords``, memoized per (source, interp)."""
         field = self.field_config.fields[name]
         entries: dict[str, tuple[Tensor, Tensor | None]] = {}
         for ref in field.source_refs:
-            key = (ref.source, field.k)
+            key = (ref.source, field.interp)
             if key not in cache:
                 cache[key] = self._build_index_entry(
-                    self._source_objs[ref.source], dst_coords, field.k, self.dtype
+                    self._source_objs[ref.source], dst_coords, field.interp, self.dtype
                 )
             entries[ref.source] = cache[key]
         return entries
@@ -209,7 +224,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         """Assemble query-only fields at arbitrary coords (not the dataset grid)."""
         query_coords = query_coords.to(self.dtype)
         names = self._query_field_names
-        cache: dict[tuple[str, int], tuple[Tensor, Tensor | None]] = {}
+        cache: dict[tuple[str, str], tuple[Tensor, Tensor | None]] = {}
         index_by_field = {
             n: self._fresh_index_entries(n, query_coords, cache) for n in names
         }
@@ -300,14 +315,17 @@ class DatasetBase(Dataset[dict[str, Any]]):
         num_data_points: int,
         data_indices: Sequence[int] | None = None,
         target_point_indices: Sequence[int] | None = None,
+        type: str = "real",
     ) -> tuple[dict[str, T.Transform], T.Transform]:
         """Gather per-field running stats and compose the obs output transform.
 
         Samples ``num_data_points`` items and gathers per-field running
-        statistics over ``Field.values``. The obs field (``roles["target"]``)
+        statistics over ``Field.values``. Entries that a field's ``mask`` marks
+        invalid are skipped, because they hold a filler value (zero) instead of
+        a measurement. The obs field (``roles["target"]``)
         additionally gets a support-aware pre-transform — log (``real``) or a
         zero-avoiding offset (``keep_support``) — applied before its stats are
-        gathered.
+        gathered. ``type`` selects which pre-transform to use.
 
         If ``target_point_indices`` is given, every field whose coord source
         matches ``target_coord_source()`` (i.e. the obs field's coord source)
@@ -326,8 +344,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         obs_name = self._obs_field_name()
         obs_out = list(self.field_config.fields[obs_name].out)
         offset = 1e-3
-        ttype = self.field_config.transform_type
-        obs_pre = self._build_obs_pre(obs_out, ttype, offset)
+        obs_pre = self._build_obs_pre(obs_out, type, offset)
 
         tcs = self.target_coord_source()
         tgt_idx = (
@@ -337,6 +354,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
         )
 
         # Gather per-field stats over Field.values (obs stats after obs_pre).
+        # Entries that the field mask marks invalid are excluded.
         stats = {
             n: statistics.RunningFeatureStats(len(f.out), feature_dim=-1)
             for n, f in self.field_config.fields.items()
@@ -345,13 +363,20 @@ class DatasetBase(Dataset[dict[str, Any]]):
             fields = self[idx]["fields"]
             for n, f in fields.items():
                 vals = f.values
+                mask = f.mask
                 if tgt_idx is not None and self.field_config.fields[n].coords == tcs:
                     vals = vals[tgt_idx]
+                    mask = None if mask is None else mask[tgt_idx]
                 vals = obs_pre(vals) if n == obs_name else vals
+                if mask is not None:
+                    # Masked-out entries hold a filler value (zero), not a real
+                    # measurement. Set them to NaN, because
+                    # RunningFeatureStats.update drops NaN for each feature.
+                    vals = vals.masked_fill(mask == 0, float("nan"))
                 stats[n].update(vals)
 
         output_transform = self._compose_output_transform(
-            obs_pre, stats[obs_name], obs_out, ttype
+            obs_pre, stats[obs_name], obs_out, type
         )
         inner: dict[str, T.Transform] = {}
         for n in self.field_config.fields:
@@ -365,11 +390,13 @@ class DatasetBase(Dataset[dict[str, Any]]):
         num_data_points: int,
         data_indices: Sequence[int] | None = None,
         target_point_indices: Sequence[int] | None = None,
+        type: str = "real",
     ) -> tuple[T.NestedTransform, T.Transform]:
         """Compute data-driven per-field transforms (log/offset + standardize).
 
         Delegates to :meth:`compute_field_leaves` — see there for the stats
-        gathering (and optional ``target_point_indices`` scoping) details.
+        gathering, ``type`` selection, and optional ``target_point_indices``
+        scoping details.
 
         Returns:
             ``(post_transform, output_transform)`` — ``post_transform``
@@ -379,7 +406,7 @@ class DatasetBase(Dataset[dict[str, Any]]):
             tensors (e.g. model outputs).
         """
         inner, output_transform = self.compute_field_leaves(
-            num_data_points, data_indices, target_point_indices
+            num_data_points, data_indices, target_point_indices, type=type
         )
         leaves = {n: T.FieldValueTransform(inner[n]) for n in inner}
         post_transform = T.NestedTransform({"fields": leaves})

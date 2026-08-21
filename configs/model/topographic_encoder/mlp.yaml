@@ -2,7 +2,8 @@
 type: MLP
 act_fn: GELU
 use_layernorm: false
+use_batchnorm: true
 # MLP hidden stack: num_hidden_layers layers, each of width hidden_width.
 # hidden_width null -> d_model // 2 at runtime (mirrors the old topo encoder).
-num_hidden_layers: 2
+num_hidden_layers: 1
 hidden_width: null

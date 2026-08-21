@@ -18,21 +18,26 @@ def _cfg(fields, roles=None):
             "coord_sources": {"stations": {"from": "obs"}, "nwp_grid": {"from": "nwp"}},
             "fields": fields,
             "roles": roles or {"target": "obs"},
-            "transform_type": "real",
         }
     )
 
 
-def test_k_greater_than_one_on_masked_source_raises():
+def test_linear_interp_on_masked_source_raises():
     cfg = _cfg(
-        {"obs": {"coords": "stations", "inputs": ["obs.temperature"], "k": 2}},
+        {
+            "obs": {
+                "coords": "stations",
+                "inputs": ["obs.temperature"],
+                "interp": "linear",
+            },
+        },
         roles={"target": "obs"},
     )
     with pytest.raises(ValueError, match="mask"):
         validate_field_config(cfg, _sources())
 
 
-def test_k_greater_than_one_on_unmasked_source_passes():
+def test_linear_interp_on_unmasked_source_passes():
     cfg = _cfg(
         {
             "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
@@ -40,7 +45,7 @@ def test_k_greater_than_one_on_unmasked_source_passes():
                 "coords": "stations",
                 "inputs": ["nwp.T_2M"],
                 "query": True,
-                "k": 4,
+                "interp": "linear",
             },
         },
         roles={"target": "obs"},

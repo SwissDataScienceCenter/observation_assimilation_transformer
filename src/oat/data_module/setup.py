@@ -159,6 +159,7 @@ def _setup_field_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> 
         num_data_points=cfg.dataset.data_points_for_stats,
         data_indices=train_dataset._time_indices,
         target_point_indices=np.asarray(train_idx),
+        type=cfg.model.get("transform_type", "real"),
     )
     input_transform = build_two_group_transform(inner_by_field)
 

@@ -21,6 +21,12 @@ from oat.model_module import (
 )
 
 
+def _search_coords(group: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Coords for neighbour search: projected ``search_coords`` if present,
+    else raw ``coords`` (unchanged behaviour for non-projecting datasets)."""
+    return group.get("search_coords", group["coords"])
+
+
 @dataclass
 class GlobalEncoderConfig:
     """Configuration for global encoder (Eq. 1)."""
@@ -40,6 +46,8 @@ class GlobalEncoderConfig:
     num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
     act_fn: str = "GELU"
+    use_layernorm: bool = False
+    use_batchnorm: bool = False
 
 
 @dataclass
@@ -232,6 +240,7 @@ def build_topographic_encoder(
             hidden_dims=tc.hidden_dims,
             act_fn=tc.act_fn,
             use_layernorm=tc.use_layernorm,
+            use_batchnorm=tc.use_batchnorm,
         )
     raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
 
@@ -355,6 +364,8 @@ class UninformedOAT(nn.Module):
                     "out_channels": config.global_encoder.out_channels,
                     "hidden_dims": config.global_encoder.hidden_dims,
                     "act_fn": config.global_encoder.act_fn,
+                    "use_layernorm": config.global_encoder.use_layernorm,
+                    "use_batchnorm": config.global_encoder.use_batchnorm,
                 },
             )
 
@@ -816,11 +827,11 @@ class OAT(UninformedOAT):
         )
 
         # Step 5: Create spatial masks (Eq. 14)
-        edges_src = self.mask_generator(coords_1=observation_data["coords"])
-        edges_tgt = self.mask_generator(coords_1=query_data["coords"])
+        edges_src = self.mask_generator(coords_1=_search_coords(observation_data))
+        edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
         edges_memory = self.mask_generator(
-            coords_1=observation_data["coords"],
-            coords_2=query_data["coords"],
+            coords_1=_search_coords(observation_data),
+            coords_2=_search_coords(query_data),
         )
 
         # Step 6: Apply transformer (Eq. 16-25)

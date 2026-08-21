@@ -1,7 +1,9 @@
 type: Point
 # in_channels: len(nwp_vars) at runtime; out_channels: d_model // 2 at runtime.
 act_fn: GELU
+use_layernorm: false
+use_batchnorm: true
 # MLP hidden stack: num_hidden_layers layers, each of width hidden_width.
 # hidden_width null -> d_model // 2 at runtime (mirrors the old topo encoder).
-num_hidden_layers: 0
+num_hidden_layers: 1
 hidden_width: null

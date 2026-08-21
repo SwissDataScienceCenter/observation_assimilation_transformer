@@ -8,7 +8,12 @@ from oat.data_module.sources import PointSetSource, RasterSource
 from oat.data_module.support import VariableSupport
 
 
-def _build_dataset():
+def _build_dataset(all_obs_valid: bool = False):
+    """Build a small two-station dataset.
+
+    Set ``all_obs_valid`` to mark both stations valid. The default masks out
+    station 1, which the stats gathering skips.
+    """
     stations = torch.tensor([[0.0, 0.0], [10.0, 10.0]])  # 2 stations
     nwp_coords = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
     # nwp value = station-ish; time-varying: value = base + time_idx
@@ -22,7 +27,11 @@ def _build_dataset():
         stations,
         ["temperature"],
         values_fn=lambda t: torch.tensor([[20.0 + t, 21.0 + t]]),
-        mask_fn=lambda t: torch.tensor([[1.0, 0.0]]),
+        mask_fn=(
+            (lambda t: torch.tensor([[1.0, 1.0]]))
+            if all_obs_valid
+            else (lambda t: torch.tensor([[1.0, 0.0]]))
+        ),
         native_coord_source="stations",
     )
     topo = RasterSource(
@@ -45,7 +54,6 @@ def _build_dataset():
                 },
             },
             "roles": {"target": "obs", "geo_bias": "geo"},
-            "transform_type": "real",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])
@@ -99,7 +107,7 @@ def test_get_query_only_query_fields_no_obs():
     assert torch.equal(out["geo"].values[:, :2], q)
 
 
-def _build_dataset_k2():
+def _build_dataset_linear():
     stations = torch.tensor([[0.5, 0.0], [2.0, 2.0]])  # 2 stations
     raster = torch.arange(9.0).reshape(1, 3, 3)  # value = row*3 + col
     nwp = RasterSource(raster, origin=(0.0, 0.0), res=(1.0, 1.0), var_names=["T"])
@@ -120,7 +128,7 @@ def _build_dataset_k2():
                     "coords": "stations",
                     "inputs": ["nwp.T"],
                     "query": True,
-                    "k": 2,
+                    "interp": "linear",
                 },
                 "geo": {
                     "coords": "stations",
@@ -130,7 +138,6 @@ def _build_dataset_k2():
                 },
             },
             "roles": {"target": "obs", "geo_bias": "geo"},
-            "transform_type": "real",
         }
     )
     times = pd.to_datetime(["2020-01-01T00:00:00Z"])
@@ -150,28 +157,27 @@ def _build_dataset_k2():
     return ds, stations, nwp, topo
 
 
-def test_k2_interpolated_nwp_read_matches_idw_and_k1_unaffected():
-    ds, stations, nwp, topo = _build_dataset_k2()
+def test_linear_interpolated_nwp_read_and_nearest_unaffected():
+    ds, stations, nwp, topo = _build_dataset_linear()
     fields = ds[0]["fields"]
 
-    # station 0 at (0.5, 0.0): midway between flat cols 0 (value 0) and 1
-    # (value 1) of row 0 -> IDW with k=2 gives equal weights, mean = 0.5.
-    assert fields["nwp"].values[0, 0].item() == 0.5
-    # station 1 sits exactly on grid point (2, 2) -> flat index 8, value 8,
-    # regardless of which two (tied, distance-0) corners k=2 selects.
-    assert fields["nwp"].values[1, 0].item() == 8.0
+    # station 0 at (0.5, 0.0): midway between col=0 (value 0) and col=1
+    # (value 1) at row=0, bilinear gives mean = 0.5.
+    assert abs(fields["nwp"].values[0, 0].item() - 0.5) < 1e-6
+    # station 1 sits exactly on grid point (2, 2) -> value 8.
+    assert abs(fields["nwp"].values[1, 0].item() - 8.0) < 1e-6
 
-    # k=1 field (geo's topo.DEM) is unaffected: matches build_index directly.
+    # nearest field (geo's topo.DEM) is unaffected: matches build_index.
     idx = topo.build_index(stations)
     expected_dem = topo.load(0)[0][idx]
     assert torch.equal(fields["geo"].values[:, 2], expected_dem)
 
 
-def test_get_query_k2_interpolated_nwp_read():
-    ds, stations, _, _ = _build_dataset_k2()
+def test_get_query_linear_interpolated_nwp_read():
+    ds, stations, _, _ = _build_dataset_linear()
     out = ds.get_query(stations, idx=0)
-    assert out["nwp"].values[0, 0].item() == 0.5
-    assert out["nwp"].values[1, 0].item() == 8.0
+    assert abs(out["nwp"].values[0, 0].item() - 0.5) < 1e-6
+    assert abs(out["nwp"].values[1, 0].item() - 8.0) < 1e-6
 
 
 def test_introspection():
@@ -184,3 +190,14 @@ def test_introspection():
     assert ds.roles()["target"] == "obs"
     assert ds.sources_info()["obs"].has_mask is True
     assert ds.sources_info()["nwp"].available_vars == ["T_2M"]
+
+
+def test_project_index_coords_default_is_identity():
+    import torch
+    from oat.data_module.dataset import DatasetBase
+
+    coords = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    # Call the unbound default directly — no instance construction needed.
+    out = DatasetBase.project_index_coords(object.__new__(DatasetBase), coords)
+    assert out.shape == coords.shape
+    assert torch.equal(out, coords)

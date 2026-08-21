@@ -32,7 +32,6 @@ _FIELD_SCHEMA = {
         },
     },
     "roles": {"target": "obs", "geo_bias": "geo", "topo": "topo"},
-    "transform_type": "real",
 }
 
 

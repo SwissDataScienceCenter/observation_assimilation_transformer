@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
+INTERP_MODES = ("nearest", "linear")
+
 from oat.data_module.sources import SourceInfo
 
 _COORD_AXES = ("x", "y", "t")
@@ -20,6 +22,7 @@ class InputRef:
 
 class SourceRef(NamedTuple):
     """An ``InputRef`` narrowed to the source-kind case (source/name non-None)."""
+
     source: str
     name: str
 
@@ -31,7 +34,7 @@ class FieldSpec:
     inputs: tuple[InputRef, ...]
     out: tuple[str, ...]
     query: bool
-    k: int = 1
+    interp: str = "nearest"
 
     @property
     def source_refs(self) -> tuple[SourceRef, ...]:
@@ -49,7 +52,6 @@ class FieldConfig:
     nwp_coord_source: str | None
     fields: dict[str, FieldSpec]
     roles: dict[str, str]
-    transform_type: str
 
 
 def parse_input_ref(ref: str) -> InputRef:
@@ -87,13 +89,19 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
             out = tuple(str(o) for o in out_spec)
         else:
             out = tuple(r.name for r in inputs)
+        interp = str(spec.get("interp", "nearest"))
+        if interp not in INTERP_MODES:
+            raise ValueError(
+                f"field {name!r}: interp must be one of {INTERP_MODES}, "
+                f"got {interp!r}"
+            )
         fields[name] = FieldSpec(
             name=name,
             coords=spec["coords"],
             inputs=inputs,
             out=out,
             query=bool(spec.get("query", False)),
-            k=int(spec.get("k", 1)),
+            interp=interp,
         )
 
     roles = {str(k): str(v) for k, v in dict(cfg.get("roles", {})).items()}
@@ -102,7 +110,6 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
         nwp_coord_source=nwp_coord_source,
         fields=fields,
         roles=roles,
-        transform_type=str(cfg["transform_type"]),
     )
 
 
@@ -154,11 +161,11 @@ def validate_field_config(cfg: FieldConfig, sources: dict[str, SourceInfo]) -> N
                     f"field {fname!r} may not mix masked-source inputs "
                     f"with other inputs"
                 )
-            if field.k > 1:
+            if field.interp != "nearest":
                 raise ValueError(
-                    f"field {fname!r} has k={field.k} but references masked "
-                    f"source(s) {sorted(used_masked)}: interpolating a mask "
-                    f"is ill-defined"
+                    f"field {fname!r} has interp={field.interp!r} but "
+                    f"references masked source(s) {sorted(used_masked)}: "
+                    f"interpolating a mask is ill-defined"
                 )
 
     for role, target in cfg.roles.items():

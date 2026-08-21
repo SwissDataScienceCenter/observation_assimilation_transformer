@@ -65,7 +65,7 @@ class CosmoPeakWeatherDataset(DatasetBase):
 
     Accepts the same ``config`` shape as ``legacy.CosmoPeakWeatherDataset``
     (data paths, variable lists, station/time filters, ``catalog``) plus the field
-    schema (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an obs
+    schema (``coord_sources``, ``fields``, ``roles``). Builds an obs
     ``PointSetSource``, an nwp ``PointSetSource`` (native grid points in
     EPSG:2056) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.

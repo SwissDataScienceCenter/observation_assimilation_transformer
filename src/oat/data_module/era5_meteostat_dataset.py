@@ -137,7 +137,7 @@ class ERA5MeteostatDataset(DatasetBase):
 
     Accepts the same ``config`` shape as ``legacy.ERA5MeteostatDataset``
     (data paths, variable lists, station/time filters, ``catalog``) plus the field
-    schema (``coord_sources``, ``fields``, ``roles``, ``transform_type``). Builds an
+    schema (``coord_sources``, ``fields``, ``roles``). Builds an
     obs ``PointSetSource``, an nwp ``PointSetSource`` (native ERA5 lon/lat
     grid points) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.
@@ -191,6 +191,26 @@ class ERA5MeteostatDataset(DatasetBase):
         self,
     ) -> dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]]:
         return ERA5_OBS_TO_NWP
+
+    def project_index_coords(self, coords: Tensor) -> Tensor:
+        """Project (lon, lat) degrees onto the unit sphere (ECEF xyz).
+
+        Chordal distance on the unit sphere is monotone in great-circle
+        distance, so KNN neighbours are the true geodesic neighbours; the
+        +/-180 seam and cos(lat) distortion are both handled by construction.
+
+        Args:
+            coords: (..., 2) = (lon, lat) in degrees.
+        Returns:
+            (..., 3) unit-sphere xyz.
+        """
+        lon = torch.deg2rad(coords[..., 0])
+        lat = torch.deg2rad(coords[..., 1])
+        cos_lat = torch.cos(lat)
+        x = cos_lat * torch.cos(lon)
+        y = cos_lat * torch.sin(lon)
+        z = torch.sin(lat)
+        return torch.stack([x, y, z], dim=-1)
 
     # -- NWP --
     def _load_nwp(self, config: Any, dtype: torch.dtype) -> None:
@@ -299,6 +319,7 @@ class ERA5MeteostatDataset(DatasetBase):
             values_fn=self._nwp_values,
             units=units,
             native_coord_source="nwp_grid",
+            project_fn=self.project_index_coords,
         )
 
     # -- topo --
@@ -354,9 +375,11 @@ class ERA5MeteostatDataset(DatasetBase):
 
         for wind_var in ("wspd", "wpgt"):
             if wind_var in self._obs_vars:
+                # Convert from m/s to km/h for consistency with legacy.ERA5MeteostatDataset
                 self.obs_tensor[..., self._obs_vars.index(wind_var)] /= 3.6
 
         coord_vars = [str(v) for v in config.coord_vars]
+        
         meta = self.obs_ds.stations_table.loc[self.stations]
         self.station_coords = torch.tensor(meta[coord_vars].values.copy(), dtype=dtype)
         # Free the big obs DataFrame; obs_tensor is already in shared memory.
@@ -381,6 +404,7 @@ class ERA5MeteostatDataset(DatasetBase):
             mask_fn=self._obs_mask,
             units=units,
             native_coord_source="stations",
+            project_fn=self.project_index_coords,
         )
 
     # -- coord sources --

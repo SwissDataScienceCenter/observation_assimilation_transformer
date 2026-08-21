@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -22,6 +23,7 @@ class BasePredictor(pl.LightningModule, ABC):
             i: v for i, v in enumerate(output_var_names)
         }
         self.field_roles = field_roles
+        self.project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None
 
     @abstractmethod
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
@@ -50,3 +52,14 @@ class BasePredictor(pl.LightningModule, ABC):
             else:
                 out[k] = v
         return out
+
+    def set_index_projection(self, dataset: Any) -> None:
+        """Resolve and store the dataset's index-coordinate projection.
+
+        Stored as a plain attribute (not a hyperparameter) so it is never
+        pickled into the checkpoint; the eval path re-establishes it from the
+        rebuilt dataset.
+        """
+        from oat.predictor_module.field_batch_utils import resolve_index_projection
+
+        self.project_index_coords = resolve_index_projection(dataset)
