@@ -1,48 +1,41 @@
 defaults:
   - dataset: cosmo_peakweather/temp
   - split: default
-  - dataloader: default   # unused in training; persisted so evaluate_test_set.py can load this run
+  - dataloader: default
+  - trainer: default
   - logging: default
   - _self_
 
-hydra:
-  run:
-    dir: outputs/ootg_baseline/${now:%Y-%m-%d}/${now:%H-%M-%S}
+seed: 42
 
 # Data
 run_name: null             # override the auto-generated checkpoint/W&B run name
-norm_samples: 500          # timesteps sampled to estimate normalization stats
-nwp_stride: null           # grid coarsening; null → 10 for COSMO, 4 for ERA5
-pc_context: 0.8            # fraction of valid stations used as context during training
-samples_per_epoch: 10000
-val_samples_per_epoch: 1000
+nwp_stride: null           # grid coarsening; null -> 10 for COSMO, 4 for ERA5
 
 # Architecture
-embed_dim: 128
-x_embed_dim: 128
-num_heads: 8
-head_dim: 16
-num_layers: 5
-num_legendre_polys: 10
-grid_shape: [128, 128]       # pseudo-token grid
-window_sizes: [4, 4]       # SWIN attention window (must divide grid_shape evenly)
-shift_sizes: [2, 2]
-top_k_ctot: 9              # context-to-token top-k in MHCAGridDecoder
+use_topo: false            # field path does not feed high-res topo patches yet
+
+model:
+  transform_type: keep_support   # matches OAT; disables log-transform
 
 # Training
-epochs: 300
 lr: 5e-4
-gradient_clip_val: 0.5
-check_val_every_n_epoch: 2
-crps_mc_samples: 50    # MC samples for CRPS loss and metrics (must be >= 2)
-devices: 4             # GPUs per node; set to 1 to disable DDP
-transform_type: keep_support   # matches OAT; disables log-transform
+n_samples: 20             # MC samples for CRPS loss and metrics (must be >= 2)
+ablate_obs: false
+ablate_grid: false
 
-# High-res topography into the decoder (see
-# docs/superpowers/specs/2026-07-03-ootg-decoder-topo-design.md). On by default so
-# the baseline sees the same topographic inputs as OAT; the 20260714 checkpoints
-# predate this and were trained with use_topo=false.
-use_topo: true
-topo_out_channels: 32
-topo_n_layers: 3
-topo_kernel_size: 1
+# The OOTG batch unwrap expects B == 1: the context length varies after mask
+# filtering, so batches cannot be stacked. Keep batch size 1 everywhere.
+dataloader:
+  train: {batch_size: 1}
+  validation: {batch_size: 1}
+  test: {batch_size: 1}
+
+# Epoch length and validation cadence mirror the legacy generator's
+# samples_per_epoch=10000 / val_samples_per_epoch=1000 / check_val_every_n_epoch=2.
+trainer:
+  max_epochs: 300
+  gradient_clip_val: 0.5
+  check_val_every_n_epoch: 2
+  limit_train_batches: 10000
+  limit_val_batches: 1000
