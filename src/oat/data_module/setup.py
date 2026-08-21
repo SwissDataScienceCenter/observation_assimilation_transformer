@@ -16,7 +16,7 @@ from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDat
 from oat.data_module.legacy.data_split import create_splits
 from oat.data_module.transform import NestedTransform, Transform
 
-_GROUPS = ("observation_data", "query_data")
+_GROUPS = ("observation_data", "query_data", "global_data")
 
 
 def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
@@ -45,8 +45,15 @@ def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
 
 
 def collate(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Stack per-sample fields into batched ``Field`` objects, group by group.
+
+    ``global_data`` is optional: skip it when a sample has no such group.
+    This keeps OAT and GP batches (no grid fields) unchanged.
+    """
     out: dict[str, Any] = {"index": torch.tensor([s["index"] for s in samples])}
     for group in _GROUPS:
+        if group not in samples[0]:
+            continue
         names = list(samples[0][group]["fields"].keys())
         fields: dict[str, Field] = {}
         for name in names:
@@ -65,27 +72,37 @@ def collate(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_two_group_transform(
     inner_by_field: dict[str, T.Transform],
+    grid_field_names: frozenset[str] = frozenset(),
 ) -> T.NestedTransform:
-    """Wrap per-field inner transforms as independent obs/query FieldValueTransforms.
+    """Wrap per-field inner transforms as independent FieldValueTransforms.
 
-    Each group (``observation_data``, ``query_data``) gets its own
-    ``FieldValueTransform`` per field, built from a deep copy of the shared
-    inner transform, so the same ``nn.Module`` is never registered under two
-    ``ModuleDict`` paths.
+    Station fields (not in ``grid_field_names``) get one ``FieldValueTransform``
+    per field under both ``observation_data`` and ``query_data``, built from a
+    deep copy of the shared inner transform. This ensures the same
+    ``nn.Module`` is never registered under two ``ModuleDict`` paths.
+
+    Grid fields (named in ``grid_field_names``) go under a single
+    ``global_data`` group instead. They are not duplicated in obs/query,
+    since they share one grid, not per-station values.
     """
+    station_inner = {
+        n: t for n, t in inner_by_field.items() if n not in grid_field_names
+    }
+    grid_inner = {n: t for n, t in inner_by_field.items() if n in grid_field_names}
 
-    def wrap() -> dict[str, T.Transform]:
+    def wrap(fields: dict[str, T.Transform]) -> dict[str, T.Transform]:
         return {
             n: T.FieldValueTransform(copy.deepcopy(inner))
-            for n, inner in inner_by_field.items()
+            for n, inner in fields.items()
         }
 
-    return T.NestedTransform(
-        {
-            "observation_data": {"fields": wrap()},
-            "query_data": {"fields": wrap()},
-        }
-    )
+    d: dict[str, Any] = {
+        "observation_data": {"fields": wrap(station_inner)},
+        "query_data": {"fields": wrap(station_inner)},
+    }
+    if grid_inner:
+        d["global_data"] = {"fields": wrap(grid_inner)}
+    return T.NestedTransform(d)
 
 
 def validate_field_config_against_scalars(dataset: Any, cfg: DictConfig) -> None:
@@ -164,7 +181,10 @@ def _setup_field_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> 
         target_point_indices=np.asarray(train_idx),
         type=cfg.model.get("transform_type", "real"),
     )
-    input_transform = build_two_group_transform(inner_by_field)
+    target_cs = dataset.target_coord_source()
+    fcs = dataset.field_coord_sources()
+    grid_field_names = frozenset(n for n, cs in fcs.items() if cs != target_cs)
+    input_transform = build_two_group_transform(inner_by_field, grid_field_names)
 
     train_loader = DataLoader(
         train_dataset, shuffle=True, collate_fn=collate, **cfg.dataloader.train

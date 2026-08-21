@@ -6,6 +6,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from oat.data_module import transform as T
 from oat.data_module.dataset import DatasetBase
 from oat.data_module.field import Field
 from oat.data_module.field_spec import parse_field_config
@@ -94,6 +95,62 @@ def test_collate_stacks_to_batched_fields() -> None:
 def test_collate_none_mask() -> None:
     batch = collate([_sample(0, mask=False), _sample(1, mask=False)])
     assert batch["observation_data"]["fields"]["obs"].mask is None
+
+
+def test_collate_stacks_global_data_group() -> None:
+    """collate stacks global_data fields when present."""
+
+    def _sample_with_global(idx: int) -> dict[str, Any]:
+        obs = Field(
+            torch.zeros(2, 3),
+            torch.randn(2, 1),
+            ["t"],
+            torch.ones(2, 1),
+        )
+        grid = Field(
+            torch.zeros(6, 3),
+            torch.randn(6, 1),
+            ["nwp_t"],
+            None,
+        )
+        return {
+            "index": idx,
+            "observation_data": {"fields": {"obs": obs}},
+            "query_data": {"fields": {"obs": obs}},
+            "global_data": {"fields": {"nwp_grid_field": grid}},
+        }
+
+    batch = collate([_sample_with_global(0), _sample_with_global(1)])
+    assert batch["index"].shape == (2,)
+    assert batch["observation_data"]["fields"]["obs"].values.shape == (2, 2, 1)
+    assert "global_data" in batch
+    gf = batch["global_data"]["fields"]["nwp_grid_field"]
+    assert gf.values.shape == (2, 6, 1)
+    assert gf.coords.shape == (2, 6, 3)
+
+
+def test_collate_no_global_data_backward_compat() -> None:
+    """collate still works when no global_data group is present."""
+    batch = collate([_sample(0), _sample(1)])
+    assert "global_data" not in batch
+
+
+def test_build_two_group_transform_with_grid_fields() -> None:
+    """Transform includes a global_data group when grid_field_names given."""
+    inner = {
+        "obs": T.IdentityTransform(),
+        "nwp_grid_field": T.IdentityTransform(),
+    }
+    tr = build_two_group_transform(
+        inner, grid_field_names=frozenset({"nwp_grid_field"})
+    )
+
+    assert "global_data" in tr.transform_dict
+    global_fields = tr.transform_dict["global_data"].transform_dict["fields"]
+    obs_fields = tr.transform_dict["observation_data"].transform_dict["fields"]
+    assert "nwp_grid_field" in global_fields.transform_dict
+    assert "nwp_grid_field" not in obs_fields.transform_dict
+    assert "obs" in obs_fields.transform_dict
 
 
 def test_build_two_group_transform_applies_both_groups() -> None:
