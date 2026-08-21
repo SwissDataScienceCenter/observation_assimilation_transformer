@@ -1,8 +1,17 @@
 defaults:
-  - era5_meteostat/temp@_here_
+  - era5_meteostat/settings@_here_
   - _self_
 
+nwp_vars: [2t]
+
+obs_vars: [temp]
+
+obs_variable_to_distribution:
+  temp: normal
+
 fields:
+  obs: {coords: stations, inputs: [obs.temp]}
+  nwp: {coords: stations, inputs: [nwp.2t], query: true, interp: linear}
   nwp_grid_field: {coords: nwp_grid, inputs: [nwp.2t]}
 
 roles:

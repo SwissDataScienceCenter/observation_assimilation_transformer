@@ -1,8 +1,18 @@
 defaults:
-  - era5_meteostat/temp_precip@_here_
+  - era5_meteostat/settings@_here_
   - _self_
 
+nwp_vars: [2t, tp, tcc]
+
+obs_vars: [temp, prcp]
+
+obs_variable_to_distribution:
+  temp: normal
+  prcp: zero_inflated_lognormal
+
 fields:
+  obs: {coords: stations, inputs: [obs.temp, obs.prcp]}
+  nwp: {coords: stations, inputs: [nwp.2t, nwp.tp, nwp.tcc], query: true, interp: linear}
   nwp_grid_field: {coords: nwp_grid, inputs: [nwp.2t, nwp.tp, nwp.tcc]}
 
 roles:
