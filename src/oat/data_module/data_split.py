@@ -66,20 +66,31 @@ class TrainDataset(Dataset[dict[str, Any]]):
         actual_idx = (
             int(self._time_indices[idx]) if self._time_indices is not None else idx
         )
-        fields = self.dataset[actual_idx]["fields"]
+        all_fields = self.dataset[actual_idx]["fields"]
+
+        target_cs = self.dataset.target_coord_source()
+        fcs = self.dataset.field_coord_sources()
+        station_fields = {n: f for n, f in all_fields.items() if fcs[n] == target_cs}
+        grid_fields = {n: f for n, f in all_fields.items() if fcs[n] != target_cs}
+
         permuted = self.train_indices[
             torch.randperm(len(self.train_indices), generator=self.rng).numpy()
         ]
         split_point = self.num_observed_stations
         key_idx = torch.as_tensor(permuted[:split_point], dtype=torch.long)
         query_idx = torch.as_tensor(permuted[split_point:], dtype=torch.long)
-        obs_fields = {n: _slice_field(f, key_idx) for n, f in fields.items()}
-        query_fields = {n: _slice_field(f, query_idx) for n, f in fields.items()}
-        return {
+        obs_fields = {n: _slice_field(f, key_idx) for n, f in station_fields.items()}
+        query_fields = {
+            n: _slice_field(f, query_idx) for n, f in station_fields.items()
+        }
+        out: dict[str, Any] = {
             "index": actual_idx,
             "observation_data": {"fields": obs_fields},
             "query_data": {"fields": query_fields},
         }
+        if grid_fields:
+            out["global_data"] = {"fields": grid_fields}
+        return out
 
     def get_transform(self, num_data_points: int, type: str = "real") -> Any:
         # Field path assembles the two-group transform in setup.py; this
@@ -119,18 +130,27 @@ class EvalDataset(Dataset[dict[str, Any]]):
         actual_idx = (
             int(self._time_indices[idx]) if self._time_indices is not None else idx
         )
-        fields = self.dataset[actual_idx]["fields"]
+        all_fields = self.dataset[actual_idx]["fields"]
+
+        target_cs = self.dataset.target_coord_source()
+        fcs = self.dataset.field_coord_sources()
+        station_fields = {n: f for n, f in all_fields.items() if fcs[n] == target_cs}
+        grid_fields = {n: f for n, f in all_fields.items() if fcs[n] != target_cs}
+
         obs_fields = {
-            n: _slice_field(f, self.observed_indices) for n, f in fields.items()
+            n: _slice_field(f, self.observed_indices) for n, f in station_fields.items()
         }
         query_fields = {
-            n: _slice_field(f, self.eval_indices) for n, f in fields.items()
+            n: _slice_field(f, self.eval_indices) for n, f in station_fields.items()
         }
-        return {
+        out: dict[str, Any] = {
             "index": actual_idx,
             "observation_data": {"fields": obs_fields},
             "query_data": {"fields": query_fields},
         }
+        if grid_fields:
+            out["global_data"] = {"fields": grid_fields}
+        return out
 
 
 def create_splits(
