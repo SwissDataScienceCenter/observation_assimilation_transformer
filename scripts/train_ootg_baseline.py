@@ -3,6 +3,7 @@
 Usage:
     python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp
     python -m scripts.train_ootg_baseline dataset=cosmo_peakweather/temp_precip
+    python -m scripts.train_ootg_baseline dataset=era5_meteostat/temp_precip
 """
 
 import logging
@@ -15,6 +16,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 from oat.baselines.ootg_model import build_ootg_model
 from oat.baselines.ootg_predictor import create_ootg_predictor
@@ -50,11 +52,18 @@ def main(cfg: DictConfig) -> None:
             f"No grid shape for coord source {grid_cs!r}; "
             "OOTG needs a rectangular NWP grid (ERA5 N320 is not supported)."
         )
-    # Resolve the stride exactly like create_ootg_predictor, so the model's
-    # pseudo-token grid and the predictor's unwrap stride always agree.
-    nwp_stride = cfg.get("nwp_stride", None) or (
-        10 if cfg.dataset.dataset_type == "cosmo_peakweather" else 4
-    )
+    ablate_obs = cfg.get("ablate_obs", False)
+    ablate_grid = cfg.get("ablate_grid", False)
+    if ablate_obs and ablate_grid:
+        raise ValueError("ablate_obs and ablate_grid together leave no signal.")
+    if ablate_obs or ablate_grid:
+        _LOG.info("ABLATION active: ablate_obs=%s ablate_grid=%s", ablate_obs, ablate_grid)
+
+    _DEFAULT_STRIDES = {"cosmo_peakweather": 10, "era5_meteostat": 4}
+    dataset_type = cfg.dataset.dataset_type
+    if dataset_type not in _DEFAULT_STRIDES:
+        raise ValueError(f"Unknown dataset_type for OOTG: {dataset_type!r}")
+    nwp_stride = cfg.get("nwp_stride", None) or _DEFAULT_STRIDES[dataset_type]
     strided_shape = (native_shape[0] // nwp_stride, native_shape[1] // nwp_stride)
     _LOG.info(
         "Grid %s -> stride %d -> pseudo-token grid %s",
@@ -126,7 +135,10 @@ def main(cfg: DictConfig) -> None:
         project=cfg.logging.project,
         group=cfg.logging.group,
         entity=cfg.logging.entity,
+        log_model=False,
+        settings=wandb.Settings(init_timeout=300),
     )
+    wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
 
     callbacks = [
         ModelCheckpoint(
