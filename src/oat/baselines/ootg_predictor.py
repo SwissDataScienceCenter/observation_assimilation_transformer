@@ -70,15 +70,20 @@ class OOTGPredictor(BasePredictor):
         """Run the model on an unwrapped OOTGBatch.
 
         The model forward takes positional tensors; unpack the batch
-        attributes into the call.
+        attributes into the call. When the batch carries topo_c/topo_t
+        (set by _unwrap_fields_to_ootg_batch when the topo role exists),
+        pass them to the TopoOOTGGriddedTNP variant.
         """
-        return self.model(
+        args = (
             ootg_batch.xc,
             ootg_batch.yc,
             ootg_batch.xc_grid,
             ootg_batch.yc_grid,
             ootg_batch.xt,
         )
+        if hasattr(ootg_batch, "topo_c"):
+            args = (*args, ootg_batch.topo_c, ootg_batch.topo_t)
+        return self.model(*args)
 
     def _draw_samples(self, dist: Any) -> torch.Tensor:
         """Draw self.n_samples samples in normalized space.

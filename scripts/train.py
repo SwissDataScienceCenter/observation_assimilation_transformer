@@ -29,6 +29,7 @@ DATASET_VARIANTS = (
     "temp",
     "precip",
     "temp_precip",
+    "temp_precip_ootg",
 )
 DATASETS = tuple(
     f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
