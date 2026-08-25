@@ -87,7 +87,7 @@ def test_gradients_flow():
     assert any(p.grad is not None for p in model.parameters())
 
 
-C_TOPO, HP, WP = 3, 16, 16
+C_TOPO = 3
 
 
 def _tiny_topo(dim_y=1, dim_gridded_y=2, v2d=None):
@@ -98,18 +98,42 @@ def _tiny_topo(dim_y=1, dim_gridded_y=2, v2d=None):
         num_layers=2, num_legendre_polys=4, grid_shape=(8, 8),
         window_sizes=(4, 4), shift_sizes=(2, 2), top_k_ctot=4,
         use_topo=True, topo_in_channels=C_TOPO, topo_out_channels=8,
-        topo_n_layers=2, topo_kernel_size=3, topo_initial_hw=(HP, WP),
     )
 
 
 def test_use_topo_false_keeps_five_arg_forward():
-    # default build (use_topo=False) still uses the original signature
     model = _tiny(dim_y=1, v2d={"temperature": "normal"})
     b = _batch(1, 2)
     dist = model(b.xc, b.yc, b.xc_grid, b.yc_grid, b.xt)
     assert dist.mean.shape == b.yt.shape
 
 
-def test_ootg_topo_is_deprecated():
-    with pytest.raises(NotImplementedError, match="deprecated"):
-        _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
+def test_ootg_topo_forward():
+    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
+    b = _batch(1, 2)
+    topo_c = torch.randn(1, b.xc.shape[1], C_TOPO)
+    topo_t = torch.randn(1, b.xt.shape[1], C_TOPO)
+    dist = model(b.xc, b.yc, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
+    assert dist.mean.shape == b.yt.shape
+
+
+def test_ootg_topo_empty_context():
+    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
+    b = _batch(1, 2)
+    topo_c = torch.randn(1, 0, C_TOPO)
+    topo_t = torch.randn(1, b.xt.shape[1], C_TOPO)
+    xc_empty = b.xc[:, :0]
+    yc_empty = b.yc[:, :0]
+    dist = model(xc_empty, yc_empty, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
+    assert dist.mean.shape == b.yt.shape
+
+
+def test_ootg_topo_gradients():
+    model = _tiny_topo(dim_y=1, v2d={"temperature": "normal"})
+    b = _batch(1, 2)
+    topo_c = torch.randn(1, b.xc.shape[1], C_TOPO)
+    topo_t = torch.randn(1, b.xt.shape[1], C_TOPO)
+    dist = model(b.xc, b.yc, b.xc_grid, b.yc_grid, b.xt, topo_c, topo_t)
+    loss = -dist.log_prob(b.yt).sum(-1).mean()
+    loss.backward()
+    assert any(p.grad is not None for p in model.parameters())

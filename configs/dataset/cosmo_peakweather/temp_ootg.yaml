@@ -15,6 +15,10 @@ fields:
   obs: {coords: stations, inputs: [obs.temperature]}
   nwp: {coords: stations, inputs: [nwp.T_2M, nwp.T_G], query: true}
   nwp_grid_field: {coords: nwp_grid, inputs: [nwp.T_2M, nwp.T_G]}
+  topo: {coords: stations, inputs: [topo.DEM, topo.TPI_500M, topo.TPI_2000M,
+                                    topo.WE_DERIVATIVE_2000M_SIGRATIO1,
+                                    topo.SN_DERIVATIVE_2000M_SIGRATIO1], query: true}
 
 roles:
   global_grid: nwp_grid_field
+  topo: topo

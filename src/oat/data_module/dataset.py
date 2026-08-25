@@ -14,7 +14,12 @@ from torch.utils.data import Dataset
 from oat.data_module import statistics
 from oat.data_module import transform as T
 from oat.data_module.field import Field
-from oat.data_module.field_spec import FieldConfig, FieldSpec, validate_field_config
+from oat.data_module.field_spec import (
+    FieldConfig,
+    FieldSpec,
+    GriddedSpec,
+    validate_field_config,
+)
 from oat.data_module.sources import Source, SourceInfo
 
 _EPOCH = pd.Timestamp("1970-01-01T00:00:00", tz="UTC")
@@ -60,7 +65,8 @@ class DatasetBase(Dataset[dict[str, Any]]):
         self._t_hours = EPOCH_HOURS(self.times).to(dtype)
         self._all_field_names = list(field_config.fields)
         self._query_field_names = [n for n, f in field_config.fields.items() if f.query]
-        self._coord_source_shapes = coord_source_shapes or {}
+        self._coord_source_shapes = dict(coord_source_shapes or {})
+        self._materialise_gridded_sources(field_config, dtype)
         for name, (h, w) in self._coord_source_shapes.items():
             if name in self._coords:
                 n_points = self._coords[name].shape[0]
@@ -98,6 +104,33 @@ class DatasetBase(Dataset[dict[str, Any]]):
             return source.build_index(dst_coords), None
         idx, weights = source.build_interp(dst_coords)
         return idx, weights.to(dtype)
+
+    def _materialise_gridded_sources(
+        self, field_config: FieldConfig, dtype: torch.dtype
+    ) -> None:
+        """Build regular 2D grid coords for each ``gridded`` coord source."""
+        nwp_cs = field_config.nwp_coord_source
+        for name, spec in field_config.gridded_sources.items():
+            if nwp_cs is None or nwp_cs not in self._coords:
+                raise ValueError(
+                    f"gridded coord source {name!r} requires an NWP coord "
+                    f"source, but none is registered"
+                )
+            parent = self._coords[nwp_cs]
+            lon = parent[:, 0]
+            lat = parent[:, 1]
+            lon_min = spec.lon_min if spec.lon_min is not None else float(lon.min())
+            lon_max = spec.lon_max if spec.lon_max is not None else float(lon.max())
+            lat_min = spec.lat_min if spec.lat_min is not None else float(lat.min())
+            lat_max = spec.lat_max if spec.lat_max is not None else float(lat.max())
+            r = spec.res
+            lons = torch.arange(lon_min, lon_max + r * 0.5, r, dtype=dtype)
+            lats = torch.arange(lat_min, lat_max + r * 0.5, r, dtype=dtype)
+            grid_lon, grid_lat = torch.meshgrid(lons, lats, indexing="xy")
+            self._coords[name] = torch.stack(
+                [grid_lon.reshape(-1), grid_lat.reshape(-1)], dim=-1
+            )
+            self._coord_source_shapes[name] = (len(lats), len(lons))
 
     def __len__(self) -> int:
         return len(self.times)

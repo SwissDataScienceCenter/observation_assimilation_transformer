@@ -63,10 +63,14 @@ def main(cfg: DictConfig) -> None:
     if dataset_type not in _DEFAULT_STRIDES:
         raise ValueError(f"Unknown dataset_type for OOTG: {dataset_type!r}")
     nwp_stride = cfg.get("nwp_stride", None) or _DEFAULT_STRIDES[dataset_type]
-    # Ceiling division matches the ::stride slice in _unwrap_fields_to_ootg_batch.
-    strided_shape = (
-        -(-native_shape[0] // nwp_stride),
-        -(-native_shape[1] // nwp_stride),
+    window_size = cfg.get("window_size", 4)
+    # Ceiling division matches the ::stride slice in _unwrap_fields_to_ootg_batch,
+    # then round up to the next multiple of window_size so SWIN needs no padding.
+    strided_shape = tuple(
+        -(-d // nwp_stride) for d in native_shape
+    )
+    strided_shape = tuple(
+        -(-d // window_size) * window_size for d in strided_shape
     )
     _LOG.info(
         "Grid %s -> stride %d -> pseudo-token grid %s",
@@ -78,12 +82,23 @@ def main(cfg: DictConfig) -> None:
     n_nwp = len(cfg.dataset.nwp_vars)
     dim_y = len(cfg.dataset.obs_vars)
     v2d = dict(cfg.dataset.obs_variable_to_distribution) if cfg.dataset.get("obs_variable_to_distribution") else None
+
+    use_topo = cfg.get("use_topo", False)
+    topo_in_channels = None
+    if use_topo:
+        topo_field_name = roles.get("topo")
+        if topo_field_name is None:
+            raise ValueError("use_topo=True but no 'topo' role in dataset config")
+        topo_in_channels = len(cfg.dataset.fields[topo_field_name].inputs)
+        _LOG.info("Topo enabled: %d input channels from field %r", topo_in_channels, topo_field_name)
+
     model = build_ootg_model(
         grid_shape=strided_shape,
         dim_gridded_y=n_nwp,
         dim_y=dim_y,
         obs_variable_to_distribution=v2d,
-        use_topo=cfg.get("use_topo", False),
+        use_topo=use_topo,
+        topo_in_channels=topo_in_channels,
     )
     _LOG.info("Parameters: %.1fM", sum(p.numel() for p in model.parameters()) / 1e6)
 
@@ -126,7 +141,8 @@ def main(cfg: DictConfig) -> None:
                     "dim_gridded_y": n_nwp,
                     "obs_variable_to_distribution": v2d,
                     "grid_shape": strided_shape,
-                    "use_topo": cfg.get("use_topo", False),
+                    "use_topo": use_topo,
+                    "topo_in_channels": topo_in_channels,
                 },
             },
             os.path.join(checkpoint_dir, "ootg_stats.pt"),

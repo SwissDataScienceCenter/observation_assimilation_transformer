@@ -180,17 +180,30 @@ def _unwrap_fields_to_ootg_batch(
     h_s, w_s = yc_grid.shape[1], yc_grid.shape[2]
     xc_grid = coord_to_latlon(strided_coords[0].reshape(-1, 2)).reshape(1, h_s, w_s, 2)
 
+    # Topo (pointwise at station coords): extract if the role exists.
+    topo_field = roles.get("topo")
+    if topo_field is not None:
+        topo_obs_f = batch["observation_data"]["fields"][topo_field]
+        topo_query_f = batch["query_data"]["fields"][topo_field]
+        if obs_f.mask is not None:
+            topo_c = topo_obs_f.values[0, valid].unsqueeze(0)
+        else:
+            topo_c = topo_obs_f.values
+        topo_t = topo_query_f.values
+
     # Ablations.
     if ablate_obs:
         xc = xc[:, :0]
         yc = yc[:, :0]
+        if topo_field is not None:
+            topo_c = topo_c[:, :0]
     if ablate_grid:
         yc_grid = torch.zeros_like(yc_grid)
 
     x = torch.cat([xc, xt], dim=1)
     y = torch.cat([yc, yt], dim=1)
 
-    return OOTGBatch(
+    result = OOTGBatch(
         x=x,
         y=y,
         xc=xc,
@@ -200,3 +213,7 @@ def _unwrap_fields_to_ootg_batch(
         xc_grid=xc_grid,
         yc_grid=yc_grid,
     )
+    if topo_field is not None:
+        result.topo_c = topo_c  # type: ignore[attr-defined]
+        result.topo_t = topo_t  # type: ignore[attr-defined]
+    return result

@@ -9,10 +9,17 @@ obs_vars: [temp]
 obs_variable_to_distribution:
   temp: normal
 
+coord_sources:
+  stations: {from: obs}
+  nwp_grid: {from: nwp}
+  nwp_regular_grid: {from: nwp, gridded: {res: 0.25}}
+
 fields:
   obs: {coords: stations, inputs: [obs.temp]}
   nwp: {coords: stations, inputs: [nwp.2t], query: true, interp: linear}
-  nwp_grid_field: {coords: nwp_grid, inputs: [nwp.2t]}
+  nwp_grid_field: {coords: nwp_regular_grid, inputs: [nwp.2t], interp: linear}
+  topo: {coords: stations, inputs: [topo.elevation, topo.distance_to_coast], query: true}
 
 roles:
   global_grid: nwp_grid_field
+  topo: topo

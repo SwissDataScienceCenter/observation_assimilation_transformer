@@ -13,7 +13,7 @@ run_name: null             # override the auto-generated checkpoint/W&B run name
 nwp_stride: null           # grid coarsening; null -> 10 for COSMO, 4 for ERA5
 
 # Architecture
-use_topo: false            # field path does not feed high-res topo patches yet
+use_topo: true            # field path does not feed high-res topo patches yet
 
 model:
   transform_type: keep_support   # matches OAT; disables log-transform

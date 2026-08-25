@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
@@ -47,11 +48,23 @@ class FieldSpec:
 
 
 @dataclass(frozen=True)
+class GriddedSpec:
+    """Regular 2D grid derived from the bounding box of an irregular coord source."""
+
+    res: float
+    lon_min: float | None = None
+    lon_max: float | None = None
+    lat_min: float | None = None
+    lat_max: float | None = None
+
+
+@dataclass(frozen=True)
 class FieldConfig:
     coord_sources: frozenset[str]
     nwp_coord_source: str | None
     fields: dict[str, FieldSpec]
     roles: dict[str, str]
+    gridded_sources: dict[str, GriddedSpec] = dataclasses.field(default_factory=dict)
 
 
 def parse_input_ref(ref: str) -> InputRef:
@@ -71,14 +84,29 @@ def parse_input_ref(ref: str) -> InputRef:
 def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
     coord_sources: set[str] = set()
     nwp_coord_source: str | None = None
+    gridded_sources: dict[str, GriddedSpec] = {}
     for name, spec in dict(cfg["coord_sources"]).items():
-        kind = dict(spec)["from"]
+        spec = dict(spec)
+        kind = spec["from"]
         if kind not in ("obs", "nwp"):
             msg = f"coord source {name!r} has unknown 'from': {kind!r}"
             raise ValueError(msg)
         coord_sources.add(name)
         if kind == "nwp" and nwp_coord_source is None:
             nwp_coord_source = name
+        gridded_cfg = spec.get("gridded")
+        if gridded_cfg is not None:
+            g = dict(gridded_cfg)
+            bounds = g.get("bounds")
+            if bounds is not None:
+                bounds = dict(bounds)
+            gridded_sources[name] = GriddedSpec(
+                res=float(g["res"]),
+                lon_min=float(bounds["lon_min"]) if bounds else None,
+                lon_max=float(bounds["lon_max"]) if bounds else None,
+                lat_min=float(bounds["lat_min"]) if bounds else None,
+                lat_max=float(bounds["lat_max"]) if bounds else None,
+            )
 
     fields: dict[str, FieldSpec] = {}
     for name, spec in dict(cfg["fields"]).items():
@@ -110,6 +138,7 @@ def parse_field_config(cfg: Mapping[str, Any]) -> FieldConfig:
         nwp_coord_source=nwp_coord_source,
         fields=fields,
         roles=roles,
+        gridded_sources=gridded_sources,
     )
 
 
