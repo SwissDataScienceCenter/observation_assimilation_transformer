@@ -209,6 +209,25 @@ def main() -> None:
         len(obs_station_indices),
         len(eval_indices),
     )
+    # Report the held-out period so --time can be chosen without guessing.
+    if test_ds._time_indices is not None and len(test_ds._time_indices):
+        first, last = int(test_ds._time_indices[0]), int(test_ds._time_indices[-1])
+        logger.info(
+            "Test period: %s → %s (%d timesteps, dataset indices %d–%d)",
+            dataset.times[first].strftime("%Y-%m-%d %H:%M UTC"),
+            dataset.times[last].strftime("%Y-%m-%d %H:%M UTC"),
+            len(test_ds._time_indices),
+            first,
+            last,
+        )
+    else:
+        logger.info(
+            "Test split has no temporal hold-out: all %d timesteps available "
+            "(%s → %s)",
+            len(dataset),
+            dataset.times[0].strftime("%Y-%m-%d %H:%M UTC"),
+            dataset.times[-1].strftime("%Y-%m-%d %H:%M UTC"),
+        )
 
     nwp_predictor = NWPInterpolatorPredictor(
         config=NWPInterpolatorConfig(field_extent=dataset.nwp_extent),
