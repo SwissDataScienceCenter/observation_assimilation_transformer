@@ -293,6 +293,17 @@ class CosmoPeakWeatherDataset(DatasetBase):
         topo_subset = topo_data[self.topo_var_idx].copy()
         self.topo_field = torch.from_numpy(topo_subset).to(dtype)
 
+        # Kept for build_domain_grid (geo_overlays.py), which clamps plotting
+        # grids to the region where topo_field is finite.
+        self.topo_extent = {
+            "min": torch.tensor(
+                [float(self.topo_ds.x.min()), float(self.topo_ds.y.min())]
+            ),
+            "max": torch.tensor(
+                [float(self.topo_ds.x.max()), float(self.topo_ds.y.max())]
+            ),
+        }
+
     def _build_topo_source(self) -> RasterSource:
         units = {v: str(self.catalog.topo_vars[v].unit) for v in self._topo_vars}
         x = self.topo_ds.x.values

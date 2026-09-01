@@ -90,8 +90,11 @@ def main() -> None:
         predictor_oat.set_index_projection(dataset)
 
     test_ds = test_loader.dataset
-    obs_station_indices = list(test_ds.observed_indices)
-    eval_indices = list(test_ds.eval_indices)
+    # Field-path split datasets expose these as torch.Tensor; list(tensor)
+    # gives 0-dim Tensor elements, which silently fail int-keyed set/dict
+    # lookups downstream (station membership, color_by), so cast to int here.
+    obs_station_indices = list(map(int, test_ds.observed_indices))
+    eval_indices = list(map(int, test_ds.eval_indices))
     logger.info(
         "Test split: %d observed, %d eval stations",
         len(obs_station_indices),
@@ -222,11 +225,6 @@ def main() -> None:
         # RdBu_r, precipitation is Blues) so the difference panels are not
         # confused with the prediction panels.
         diff = pre_field - oat_field
-        vmax_d = float(np.nanmax(np.abs(diff))) or 1.0
-        mesh_d = plotter.draw_field(
-            axes[row, 3], diff, xs, ys, cmap="PuOr", vmin=-vmax_d, vmax=vmax_d
-        )
-        mesh_d.set_rasterized(True)
         colored = [
             s
             for s in sorted(set(obs_station_indices) | set(eval_indices))
@@ -252,6 +250,15 @@ def main() -> None:
             for i, s in enumerate(colored):
                 obs_v = dataset.obs_tensor[time_idx, s, var_idx].item()
                 color_by[s] = float(pre_at[i] - obs_v)
+        # vmax_d must cover both the field diff and the station color_by values
+        # (pre_oat - obs), which is typically the larger of the two, or the
+        # markers saturate against a colormap scaled for the smaller field diff.
+        marker_max = max((abs(v) for v in color_by.values()), default=0.0)
+        vmax_d = max(float(np.nanmax(np.abs(diff))), marker_max) or 1.0
+        mesh_d = plotter.draw_field(
+            axes[row, 3], diff, xs, ys, cmap="PuOr", vmin=-vmax_d, vmax=vmax_d
+        )
+        mesh_d.set_rasterized(True)
         plotter.overlay_stations(
             axes[row, 3], time_idx, var_idx, mesh=mesh_d, color_by=color_by
         )

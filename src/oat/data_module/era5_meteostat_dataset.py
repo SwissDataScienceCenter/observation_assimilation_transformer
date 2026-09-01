@@ -353,6 +353,20 @@ class ERA5MeteostatDataset(DatasetBase):
         topo_arr = np.stack([self.topo_ds[v].values for v in self._topo_vars], axis=0)
         self.topo_field = torch.from_numpy(np.nan_to_num(topo_arr, nan=0.0)).to(dtype)
 
+        # Kept for build_domain_grid (geo_overlays.py), which clamps plotting
+        # grids to the region where topo_field is finite. Ascending order is
+        # already guaranteed above.
+        self.topo_extent = {
+            "min": torch.tensor(
+                [float(self.topo_ds.longitude[0]), float(self.topo_ds.latitude[0])],
+                dtype=torch.float32,
+            ),
+            "max": torch.tensor(
+                [float(self.topo_ds.longitude[-1]), float(self.topo_ds.latitude[-1])],
+                dtype=torch.float32,
+            ),
+        }
+
     def _build_topo_source(self) -> RasterSource:
         units = {v: str(self.catalog.topo_vars[v].unit) for v in self._topo_vars}
         lon = self.topo_ds.longitude.values

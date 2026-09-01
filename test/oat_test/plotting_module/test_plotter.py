@@ -847,11 +847,43 @@ class TestOverlayStations:
         assert obs_scatter is not None
         plt.close(fig)
 
+    def test_color_by_with_tensor_keys_still_overrides(self):
+        # Guards the exact bug found in scripts/plot_assimilation_panel.py: a
+        # caller building color_by keyed by 0-dim Tensor station indices (e.g.
+        # from list(tensor)) must still have its values used, not silently
+        # fall back to the raw (always-positive-looking) obs_tensor value.
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        plotter.dataset.obs_tensor[0, 0, 0] = 999.0  # fallback value if key lookup fails
+        fig, ax = plt.subplots()
+        mesh = ax.pcolormesh([[0, 1], [2, 3]])
+        tensor_keyed = {torch.tensor(0): -5.0, torch.tensor(1): 2.0}
+        plotter._overlay_stations(
+            ax, time_idx=0, var_idx=0, mesh=mesh, color_by=tensor_keyed
+        )
+        obs_scatter = next(c for c in ax.collections if c.get_label() == "obs − NWP")
+        expected = mesh.cmap(mesh.norm(np.array([-5.0, 2.0])))
+        np.testing.assert_allclose(obs_scatter.get_facecolor(), expected)
+        plt.close(fig)
+
     def test_public_overlay_stations_draws_observed(self):
         plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
         fig, ax = plt.subplots()
         plotter.overlay_stations(ax, time_idx=0, var_idx=0)
         assert any(c.get_label() == "observed" for c in ax.collections)
+        plt.close(fig)
+
+    def test_tensor_indices_still_render_markers(self):
+        # Field-path split datasets expose observed_indices/eval_indices as
+        # torch.Tensor; list(tensor) yields 0-dim Tensor elements. These must
+        # not silently break the int-keyed set-membership checks below.
+        obs_indices = list(torch.tensor([0, 1]))
+        eval_indices = list(torch.tensor([2, 3]))
+        plotter = self._make_plotter(obs_indices=obs_indices, eval_indices=eval_indices)
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "observed" in labels
+        assert "eval observed" in labels
         plt.close(fig)
 
 

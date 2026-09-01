@@ -59,11 +59,11 @@ class OATPlotter:
         if obs_station_indices is None:
             self.obs_indices: list[int] = list(range(dataset.station_coords.shape[0]))
         else:
-            self.obs_indices = list(obs_station_indices)
+            self.obs_indices = [int(i) for i in obs_station_indices]
         if eval_indices is None:
             self.eval_indices: list[int] = []
         else:
-            self.eval_indices = list(eval_indices)
+            self.eval_indices = [int(i) for i in eval_indices]
         self.n_samples = n_samples
         self.device = torch.device(device)
         self._plot_config = plot_config
@@ -197,6 +197,11 @@ class OATPlotter:
         colours from its colormap/norm; pass *color_by* (station_idx → scalar) to
         override the per-station value used for colouring (e.g. obs − NWP).
         """
+        if color_by is not None:
+            # Normalize keys to plain int: a caller may build color_by from a
+            # 0-dim-Tensor-valued station index (e.g. list(tensor)), which
+            # would otherwise silently never match `s` below (int keys/hash).
+            color_by = {int(k): v for k, v in color_by.items()}
         obs_set = set(self.obs_indices)
         eval_set = set(self.eval_indices)
         n_st = self.dataset.station_coords.shape[0]

@@ -1,4 +1,4 @@
-"""Plot model error stratified by season, elevation, nearest-obs distance, lon/lat.
+"""Plot model error stratified by season, elevation, nearest-obs distance.
 
 Requires per-(station, timestep) long dumps produced by
 ``scripts.evaluate_test_set --long`` for each model.
