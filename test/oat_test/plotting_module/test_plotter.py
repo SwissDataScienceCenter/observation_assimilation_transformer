@@ -1217,3 +1217,104 @@ def test_draw_field_returns_mesh_and_sets_limits():
     assert abs(ax.get_ylim()[1] - 20.0) < 1e-6
     assert mesh.norm.vmin == 0.0 and mesh.norm.vmax == 1.0
     plt.close(fig)
+
+
+def test_compute_pit_returns_uniform_range_values():
+    n_samples, n_vars = 20, 2
+    predictor = _make_predictor(N_q=2, n_samples=n_samples, n_vars=n_vars)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
+    }
+    dataset = _make_dataset(n_stations=2, n_times=3, n_vars=n_vars)
+    dataset.obs_tensor = torch.rand(3, 2, n_vars)
+
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+    result = plotter.compute_pit(time_indices=[0, 1, 2])
+
+    assert set(result.keys()) == {"temp", "wspd"}
+    assert len(result["temp"]["pit"]) == 3 * 2  # T timesteps * S eval stations
+    assert all(0.0 <= v <= 1.0 for v in result["temp"]["pit"])
+    assert result["temp"]["gate_pred"] == []  # "normal" is not zero-inflated
+
+
+def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
+    n_samples, n_vars = 4, 2
+    predictor = _make_predictor(N_q=2, n_samples=n_samples, n_vars=n_vars)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "zero_inflated_lognormal",
+    }
+    samples = torch.zeros(1, 2, n_samples, n_vars)
+    samples[0, :, 2:, 1] = 2.0  # half of each station's "wspd" samples are > 0
+    predictor.predict_step.return_value = samples
+
+    dataset = _make_dataset(n_stations=2, n_times=1, n_vars=n_vars)
+    dataset.obs_tensor = torch.tensor([[[1.0, 0.0], [1.0, 3.0]]])  # [T=1, S=2, V=2]
+
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+    result = plotter.compute_pit(time_indices=[0])
+
+    assert result["wspd"]["gate_pred"] == [0.5, 0.5]
+    assert result["wspd"]["is_zero"] == [1.0, 0.0]
+    assert len(result["wspd"]["pit_nonzero"]) == 1  # only the station with obs=3.0
+    assert result["temp"]["gate_pred"] == []
+
+
+def test_compute_pit_empty_eval_indices_returns_empty_dict():
+    predictor = _make_predictor()
+    predictor.model.output_head.variable_to_distribution = {"temp": "normal", "wspd": "normal"}
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], eval_indices=[])
+
+    result = plotter.compute_pit(time_indices=[0, 1])
+
+    assert result == {
+        "temp": {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []},
+        "wspd": {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []},
+    }
+
+
+def test_plot_pit_draws_histogram():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+
+    plotter.plot_pit(ax, [0.1, 0.5, 0.5, 0.9, 0.9, 0.9])
+
+    assert len(ax.patches) > 0
+    assert ax.get_xlim() == (0.0, 1.0)
+    plt.close(fig)
+
+
+def test_plot_pit_empty_values_disables_axis():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+
+    plotter.plot_pit(ax, [])
+
+    assert not ax.axison
+    plt.close(fig)
+
+
+def test_plot_zero_reliability_draws_reliability_curve():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+    gate_pred = [g / 59 for g in range(60)]
+    is_zero = [1.0 if g > 0.5 else 0.0 for g in gate_pred]
+
+    plotter.plot_zero_reliability(ax, gate_pred, is_zero)
+
+    assert len(ax.get_lines()) == 2  # perfect-calibration diagonal + model curve
+    plt.close(fig)
