@@ -1230,7 +1230,10 @@ def test_compute_pit_returns_uniform_range_values():
     dataset.obs_tensor = torch.rand(3, 2, n_vars)
 
     plotter = OATPlotter(
-        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[0, 1],
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
         n_samples=n_samples,
     )
     result = plotter.compute_pit(time_indices=[0, 1, 2])
@@ -1256,7 +1259,10 @@ def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
     dataset.obs_tensor = torch.tensor([[[1.0, 0.0], [1.0, 3.0]]])  # [T=1, S=2, V=2]
 
     plotter = OATPlotter(
-        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[0, 1],
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
         n_samples=n_samples,
     )
     result = plotter.compute_pit(time_indices=[0])
@@ -1269,9 +1275,14 @@ def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
 
 def test_compute_pit_empty_eval_indices_returns_empty_dict():
     predictor = _make_predictor()
-    predictor.model.output_head.variable_to_distribution = {"temp": "normal", "wspd": "normal"}
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
+    }
     dataset = _make_dataset()
-    plotter = OATPlotter(predictor, dataset, obs_station_indices=[0, 1], eval_indices=[])
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[]
+    )
 
     result = plotter.compute_pit(time_indices=[0, 1])
 

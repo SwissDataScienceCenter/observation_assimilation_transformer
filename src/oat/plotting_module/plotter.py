@@ -1158,13 +1158,20 @@ class OATPlotter:
               to non-zero observations.  Non-empty only for zero-inflated variables.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
-        indices = eval_station_indices if eval_station_indices is not None else self.eval_indices
+        indices = (
+            eval_station_indices
+            if eval_station_indices is not None
+            else self.eval_indices
+        )
         if not indices:
             logger.warning("No eval station indices — returning empty PIT dict.")
-            return {v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
-                    for v in self.predictor.var_to_indx}
+            return {
+                v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
+                for v in self.predictor.var_to_indx
+            }
 
         try:
             var_to_dist = self.predictor.model.output_head.variable_to_distribution
@@ -1183,44 +1190,57 @@ class OATPlotter:
                 logger.info("PIT: timestep %d / %d", i, len(time_indices))
 
             with torch.no_grad():
-                samples = self._run_inference(time_idx, eval_coords)  # [S, n_samples, n_vars]
+                samples = self._run_inference(
+                    time_idx, eval_coords
+                )  # [S, n_samples, n_vars]
 
-            obs = self.dataset.obs_tensor[time_idx][indices]        # [S, n_vars]
+            obs = self.dataset.obs_tensor[time_idx][indices]  # [S, n_vars]
             mask = self.dataset.obs_mask_tensor[time_idx][indices]  # [S, n_vars]
             pit = (samples <= obs.unsqueeze(1)).float().mean(dim=1)  # [S, n_vars]
 
             for var, var_idx in self.predictor.var_to_indx.items():
                 data = result[var]
-                samps_v = samples[:, :, var_idx]   # [S, n_samples]
-                obs_v = obs[:, var_idx]             # [S]
-                mask_v = mask[:, var_idx].bool()    # [S]
+                samps_v = samples[:, :, var_idx]  # [S, n_samples]
+                obs_v = obs[:, var_idx]  # [S]
+                mask_v = mask[:, var_idx].bool()  # [S]
 
                 if not mask_v.any():
                     continue
 
-                # "pit" maps to a list of values continusly filled from all valid observations (mask==1) for this variable across all timesteps.
+                # "pit" maps to a list of values continusly filled from all valid
+                # observations (mask==1) for this variable across all timesteps.
                 # from that, a histogram can be plotted.
                 data["pit"].extend(pit[mask_v, var_idx].cpu().tolist())
 
                 if var in zi_vars:
-                    # gate_pred and is_zero accumulate one scalar per valid (station, timestep) pair.
-                    # gate_pred[i] = fraction of samples that were zero (≈ P(dry), an estimate of the gate); is_zero[i] = 1 if obs==0.
-                    # Binning gate_pred vs mean(is_zero) per bin gives the reliability diagram.
+                    # gate_pred and is_zero accumulate one scalar per valid
+                    # (station, timestep) pair.
+                    # gate_pred[i] = fraction of samples that were zero (≈ P(dry),
+                    # an estimate of the gate); is_zero[i] = 1 if obs==0.
+                    # Binning gate_pred vs mean(is_zero) per bin gives the
+                    # reliability diagram.
                     data["gate_pred"].extend(
                         (samps_v == 0).float().mean(dim=1)[mask_v].cpu().tolist()
                     )
                     data["is_zero"].extend((obs_v == 0).float()[mask_v].cpu().tolist())
 
-                    # Conditional PIT: fraction of non-zero samples ≤ obs, for non-zero obs only
+                    # Conditional PIT: fraction of non-zero samples ≤ obs, for
+                    # non-zero obs only
                     nonzero_obs = mask_v & (obs_v > 0)
                     if nonzero_obs.any():
                         samps_pos = samps_v > 0
                         n_pos = samps_pos.float().sum(dim=1)
-                        n_pos_le = (samps_pos & (samps_v <= obs_v.unsqueeze(1))).float().sum(dim=1)
+                        n_pos_le = (
+                            (samps_pos & (samps_v <= obs_v.unsqueeze(1)))
+                            .float()
+                            .sum(dim=1)
+                        )
                         valid_cond = nonzero_obs & (n_pos > 0)
                         if valid_cond.any():
                             data["pit_nonzero"].extend(
-                                (n_pos_le[valid_cond] / n_pos[valid_cond]).cpu().tolist()
+                                (n_pos_le[valid_cond] / n_pos[valid_cond])
+                                .cpu()
+                                .tolist()
                             )
 
         return result
@@ -1246,8 +1266,14 @@ class OATPlotter:
         if n == 0:
             ax.axis("off")
             return
-        ax.hist(pits, bins=n_bins, density=True,
-                color="#CFCFCF", edgecolor="#4A5568", linewidth=0.8)
+        ax.hist(
+            pits,
+            bins=n_bins,
+            density=True,
+            color="#CFCFCF",
+            edgecolor="#4A5568",
+            linewidth=0.8,
+        )
         ax.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0, label="Uniform")
         ax.set_title(f"PIT  (n={n:,})", fontsize=9)
         ax.set_xlabel("PIT value")
@@ -1274,14 +1300,16 @@ class OATPlotter:
         is_zero_arr = np.array(is_zero)
         bin_edges = np.linspace(0, 1, 11)
         mean_pred, mean_obs = [], []
-        for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=False):
             m = (gate_pred_arr >= lo) & (gate_pred_arr < hi)
             if m.sum() > 5:
                 mean_pred.append(float(gate_pred_arr[m].mean()))
                 mean_obs.append(float(is_zero_arr[m].mean()))
         ax.plot([0, 1], [0, 1], "--", color="0.3", lw=1.0, label="Perfect")
         if mean_pred:
-            ax.plot(mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2, label="Model")
+            ax.plot(
+                mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2, label="Model"
+            )
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_title("Zero probability", fontsize=9)
