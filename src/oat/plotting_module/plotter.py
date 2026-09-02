@@ -1150,8 +1150,8 @@ class OATPlotter:
             Dict mapping variable name → dict with keys:
 
             - ``pit``: PIT values for all valid observations.
-            - ``gate_pred``: estimated P(X=0) from samples per valid (station, timestep).
-              Non-empty only for zero-inflated variables.
+            - ``gate_pred``: estimated P(X=0) from samples per valid
+              (station, timestep). Non-empty only for zero-inflated variables.
             - ``is_zero``: 1.0/0.0 flag — was the observation exactly zero?
               Non-empty only for zero-inflated variables.
             - ``pit_nonzero``: conditional PIT using only non-zero samples, restricted
