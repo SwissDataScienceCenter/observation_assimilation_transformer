@@ -335,12 +335,21 @@ class OATPlotter:
         quantile_lo: float = 0.05,
         quantile_hi: float = 0.95,
         predictors: dict[str, BasePredictor] | None = None,
+        stage: str = "oat",
+        label: str | None = None,
+        color: Any = None,
     ) -> None:
         """Plot predicted distribution over time at an arbitrary location.
 
         Draws a mean line and a shaded uncertainty band onto *ax*.  If
         *predictors* is given, each named predictor is additionally plotted as
         a point prediction (median) line without an uncertainty band.
+
+        Call this twice on the same axes — with ``stage="pre_oat"`` and
+        ``stage="oat"``, and distinct *label*/*color* — to compare the model
+        before and after assimilation.  Note that each call runs its own
+        inference, so the two stages cost two forward passes per timestep even
+        though the model computes both in one.
 
         Args:
             ax: Matplotlib Axes to draw onto.
@@ -350,7 +359,14 @@ class OATPlotter:
             quantile_lo: Lower quantile for the uncertainty band.
             quantile_hi: Upper quantile for the uncertainty band.
             predictors: Optional dict mapping display name → predictor.  Each
-                entry is plotted as a single median line (no band).
+                entry is plotted as a single median line (no band).  These are
+                always evaluated at their default stage.
+            stage: "oat" for the full prediction, "pre_oat" for the model's
+                output before the assimilation block (OAT predictor only).
+            label: Legend label for the median line; the band is labelled
+                accordingly.  Defaults to "median".
+            color: Colour for both the median line and its band.  Defaults to
+                the variable's configured plot colour.
         """
         var_idx = self.predictor.var_to_indx[var]
         var_cfg = self._get_var_plot_config(var)
@@ -359,7 +375,8 @@ class OATPlotter:
         medians, lo_vals, hi_vals = [], [], []
 
         for t_idx in time_indices:
-            samples = self._run_inference(t_idx, query_coords)  # [1, n_samples, n_vars]
+            # [1, n_samples, n_vars]
+            samples = self._run_inference(t_idx, query_coords, stage=stage)
             var_samples = samples[0, :, var_idx]  # [n_samples]
             medians.append(var_samples.median().item())
             lo_vals.append(var_samples.quantile(quantile_lo).item())
@@ -367,13 +384,16 @@ class OATPlotter:
 
         times = [self.dataset.times[i] for i in time_indices]
 
-        ax.plot(times, medians, label="median", color=var_cfg.get("color", "C0"))
+        line_color = color if color is not None else var_cfg.get("color", "C0")
+        band_range = f"[{quantile_lo:.0%}, {quantile_hi:.0%}]"
+        ax.plot(times, medians, label=label or "median", color=line_color)
         ax.fill_between(
             times,
             lo_vals,
             hi_vals,
             alpha=0.3,
-            label=f"[{quantile_lo:.0%}, {quantile_hi:.0%}]",
+            color=line_color,
+            label=band_range if label is None else f"{label} {band_range}",
         )
 
         if predictors:
@@ -394,6 +414,10 @@ class OATPlotter:
         quantile_lo: float = 0.05,
         quantile_hi: float = 0.95,
         predictors: dict[str, BasePredictor] | None = None,
+        stage: str = "oat",
+        label: str | None = None,
+        color: Any = None,
+        show_observations: bool = True,
     ) -> None:
         """Plot predicted timeseries at a station location, with observed values.
 
@@ -410,6 +434,12 @@ class OATPlotter:
             quantile_hi: Upper quantile for the uncertainty band.
             predictors: Optional dict mapping display name → predictor.  Each
                 entry is plotted as a single median line (no band).
+            stage: "oat" or "pre_oat" (see :meth:`plot_timeseries`).
+            label: Legend label for the median line and its band.
+            color: Colour for the median line and its band.
+            show_observations: Set False when drawing a second stage onto the
+                same axes, so the observations are not scattered (and legended)
+                twice.
         """
         coords = self.dataset.station_coords[station_idx]
         center = (coords[0].item(), coords[1].item())
@@ -421,7 +451,13 @@ class OATPlotter:
             quantile_lo=quantile_lo,
             quantile_hi=quantile_hi,
             predictors=predictors,
+            stage=stage,
+            label=label,
+            color=color,
         )
+
+        if not show_observations:
+            return
 
         var_idx = self.predictor.var_to_indx[var]
         times = [self.dataset.times[i] for i in time_indices]
