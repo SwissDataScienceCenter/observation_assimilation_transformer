@@ -853,7 +853,9 @@ class TestOverlayStations:
         # from list(tensor)) must still have its values used, not silently
         # fall back to the raw (always-positive-looking) obs_tensor value.
         plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
-        plotter.dataset.obs_tensor[0, 0, 0] = 999.0  # fallback value if key lookup fails
+        plotter.dataset.obs_tensor[0, 0, 0] = (
+            999.0  # fallback value if key lookup fails
+        )
         fig, ax = plt.subplots()
         mesh = ax.pcolormesh([[0, 1], [2, 3]])
         tensor_keyed = {torch.tensor(0): -5.0, torch.tensor(1): 2.0}
@@ -1219,7 +1221,7 @@ def test_draw_field_returns_mesh_and_sets_limits():
     plt.close(fig)
 
 
-def test_compute_pit_returns_uniform_range_values():
+def test_compute_pit_returns_binned_counts():
     n_samples, n_vars = 20, 2
     predictor = _make_predictor(N_q=2, n_samples=n_samples, n_vars=n_vars)
     predictor.model.output_head.variable_to_distribution = {
@@ -1239,9 +1241,10 @@ def test_compute_pit_returns_uniform_range_values():
     result = plotter.compute_pit(time_indices=[0, 1, 2])
 
     assert set(result.keys()) == {"temp", "wspd"}
-    assert len(result["temp"]["pit"]) == 3 * 2  # T timesteps * S eval stations
-    assert all(0.0 <= v <= 1.0 for v in result["temp"]["pit"])
-    assert result["temp"]["gate_pred"] == []  # "normal" is not zero-inflated
+    assert result["temp"]["pit_n"] == 3 * 2  # T timesteps * S eval stations
+    assert result["temp"]["pit_counts"].sum() == 3 * 2
+    assert result["temp"]["pit_counts"].shape == (20,)
+    assert set(result["temp"].keys()) == {"pit_counts", "pit_n"}  # not ZI
 
 
 def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
@@ -1267,10 +1270,14 @@ def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
     )
     result = plotter.compute_pit(time_indices=[0])
 
-    assert result["wspd"]["gate_pred"] == [0.5, 0.5]
-    assert result["wspd"]["is_zero"] == [1.0, 0.0]
-    assert len(result["wspd"]["pit_nonzero"]) == 1  # only the station with obs=3.0
-    assert result["temp"]["gate_pred"] == []
+    # Two valid (station, timestep) pairs, each with a zero gate of 0.5.
+    assert result["wspd"]["gate_counts"].sum() == 2
+    assert result["wspd"]["gate_zero_sums"].sum() == 1.0  # one zero observation
+    assert result["wspd"]["gate_pred_sums"].sum() == pytest.approx(1.0)
+    # Only the station with obs=3.0 has a conditional PIT.
+    assert result["wspd"]["pit_nonzero_n"] == 1
+    assert result["wspd"]["pit_nonzero_counts"].sum() == 1
+    assert "gate_counts" not in result["temp"]  # "normal" is not zero-inflated
 
 
 def test_compute_pit_empty_eval_indices_returns_empty_dict():
@@ -1286,32 +1293,81 @@ def test_compute_pit_empty_eval_indices_returns_empty_dict():
 
     result = plotter.compute_pit(time_indices=[0, 1])
 
-    assert result == {
-        "temp": {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []},
-        "wspd": {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []},
+    assert set(result.keys()) == {"temp", "wspd"}
+    for var in ("temp", "wspd"):
+        assert result[var]["pit_n"] == 0
+        assert (result[var]["pit_counts"] == 0).all()
+
+
+def test_compute_pit_predictor_override_uses_override_variables():
+    n_samples = 20
+    predictor = _make_predictor(N_q=2, n_samples=n_samples)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
     }
+    baseline = _make_predictor(N_q=2, n_samples=n_samples, n_vars=1)
+    baseline.var_to_indx = {"temp": 0}
+    baseline.output_var_names = ["temp"]
+    baseline.model.output_head.variable_to_distribution = {"temp": "normal"}
+    baseline.predict_step.return_value = torch.zeros(1, 2, n_samples, 1)
+
+    dataset = _make_dataset(n_stations=2, n_times=3)
+    dataset.obs_tensor = torch.rand(3, 2, 2)
+    plotter = OATPlotter(
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+
+    result = plotter.compute_pit(time_indices=[0, 1, 2], predictor=baseline)
+
+    assert set(result.keys()) == {"temp"}  # only the baseline's variables
+    assert result["temp"]["pit_n"] == 3 * 2
+    assert result["temp"]["pit_counts"].sum() == 3 * 2
 
 
-def test_plot_pit_draws_histogram():
+def test_plot_pit_draws_histogram_from_counts():
     predictor = _make_predictor()
     dataset = _make_dataset()
     plotter = OATPlotter(predictor, dataset)
     fig, ax = plt.subplots()
+    counts = np.zeros(20, dtype=np.int64)
+    counts[[2, 5, 9]] = [1, 3, 2]
 
-    plotter.plot_pit(ax, [0.1, 0.5, 0.5, 0.9, 0.9, 0.9])
+    plotter.plot_pit(ax, counts)
 
-    assert len(ax.patches) > 0
+    assert len(ax.patches) == 20
     assert ax.get_xlim() == (0.0, 1.0)
     plt.close(fig)
 
 
-def test_plot_pit_empty_values_disables_axis():
+def test_plot_pit_step_draws_outline_only():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+    counts = np.zeros(20, dtype=np.int64)
+    counts[[2, 5, 9]] = [1, 3, 2]
+
+    plotter.plot_pit(ax, counts, histtype="step", label="baseline")
+
+    assert len(ax.patches) == 1
+    assert not ax.patches[0].get_fill()  # outline only, no filled bars
+    labels = ax.get_legend_handles_labels()[1]
+    assert "baseline" in labels
+    plt.close(fig)
+
+
+def test_plot_pit_empty_counts_disables_axis():
     predictor = _make_predictor()
     dataset = _make_dataset()
     plotter = OATPlotter(predictor, dataset)
     fig, ax = plt.subplots()
 
-    plotter.plot_pit(ax, [])
+    plotter.plot_pit(ax, np.zeros(20, dtype=np.int64))
 
     assert not ax.axison
     plt.close(fig)
@@ -1322,10 +1378,12 @@ def test_plot_zero_reliability_draws_reliability_curve():
     dataset = _make_dataset()
     plotter = OATPlotter(predictor, dataset)
     fig, ax = plt.subplots()
-    gate_pred = [g / 59 for g in range(60)]
-    is_zero = [1.0 if g > 0.5 else 0.0 for g in gate_pred]
+    gate_counts = np.full(10, 10, dtype=np.int64)
+    gate_zero_sums = np.full(10, 5.0)  # 50% zeros in every bin
+    gate_pred_sums = np.full(10, 5.0)  # mean gate prediction 0.5 per bin
 
-    plotter.plot_zero_reliability(ax, gate_pred, is_zero)
+    plotter.plot_zero_reliability(ax, gate_counts, gate_zero_sums, gate_pred_sums)
 
     assert len(ax.get_lines()) == 2  # perfect-calibration diagonal + model curve
+    assert np.allclose(ax.get_lines()[1].get_ydata(), 0.5)
     plt.close(fig)

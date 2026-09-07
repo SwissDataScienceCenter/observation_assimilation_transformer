@@ -14,10 +14,11 @@ source .venv/bin/activate
 start=$(date +%s)
 
 python -m scripts.plot_pit \
-    '/scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20260820_job5151598/best-model-epoch=79-val_loss=0.1942.ckpt' \
+    --model oat_temp_precip \
+    --dataset era5_meteostat \
     --split test \
     --n-samples 200 \
-    --n-timesteps 100
+    --baseline uninformed_temp_precip
 
 end=$(date +%s)
 elapsed=$((end - start))

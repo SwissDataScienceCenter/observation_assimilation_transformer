@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import torch
 
 from oat.data_module.data_split import _slice_field
@@ -498,7 +499,9 @@ class OATPlotter:
         cmap = var_cfg.get("cmap", "viridis") if plot_type == "mean" else None
         vmin = var_cfg.get("vmin") if plot_type == "mean" else None
         vmax = var_cfg.get("vmax") if plot_type == "mean" else None
-        mesh = ax.pcolormesh(xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto")
+        mesh = ax.pcolormesh(
+            xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
+        )
 
         ax.set_xlim(center[0] - extent, center[0] + extent)
         ax.set_ylim(center[1] - extent, center[1] + extent)
@@ -668,8 +671,14 @@ class OATPlotter:
         samples_b = self._run_inference(time_idx, query_coords, predictor=other)
 
         diff = (
-            samples_a[:, :, var_idx].mean(dim=1) - samples_b[:, :, var_idx].mean(dim=1)
-        ).detach().cpu().numpy()
+            (
+                samples_a[:, :, var_idx].mean(dim=1)
+                - samples_b[:, :, var_idx].mean(dim=1)
+            )
+            .detach()
+            .cpu()
+            .numpy()
+        )
         field = diff.reshape(y_grid.shape)
 
         vmax = float(np.abs(field).max()) or 1.0
@@ -883,28 +892,45 @@ class OATPlotter:
             )  # [B, S, n_samples, V]
             y_obs_b = torch.stack(
                 [
-                    torch.stack([self.dataset.obs_tensor[t, s] for s in eval_station_indices])
-                    for t in chunk_list
-                ]
-            ).to(self.device)  # [B, S, V]
-            mask_b = torch.stack(
-                [
                     torch.stack(
-                        [self.dataset.obs_mask_tensor[t, s] for s in eval_station_indices]
+                        [self.dataset.obs_tensor[t, s] for s in eval_station_indices]
                     )
                     for t in chunk_list
                 ]
-            ).float().to(self.device)  # [B, S, V]
+            ).to(
+                self.device
+            )  # [B, S, V]
+            mask_b = (
+                torch.stack(
+                    [
+                        torch.stack(
+                            [
+                                self.dataset.obs_mask_tensor[t, s]
+                                for s in eval_station_indices
+                            ]
+                        )
+                        for t in chunk_list
+                    ]
+                )
+                .float()
+                .to(self.device)
+            )  # [B, S, V]
 
             count_b = mask_b.sum(dim=0)  # [S, V]
-            crps_sum += mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
-            mae_sum += point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            crps_sum += (
+                mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            )
+            mae_sum += (
+                point_mae(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
+            )
             mask_count += count_b
 
             if reference is not None:
                 y_hat_ref_b = torch.stack(
-                    [self._run_inference(t, eval_coords, predictor=reference)
-                     for t in chunk_list]
+                    [
+                        self._run_inference(t, eval_coords, predictor=reference)
+                        for t in chunk_list
+                    ]
                 )
                 ref_crps_sum += mc_crps(y_obs_b, y_hat_ref_b, mask_b, aggregation="station") * count_b  # type: ignore[operator]
 
@@ -913,8 +939,10 @@ class OATPlotter:
 
         denom = mask_count.clamp(min=1e-8)
         no_obs = mask_count == 0  # [S, V] — station has no valid obs for this variable
-        crps_per_station = (crps_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
-        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))    # [S, V]
+        crps_per_station = (crps_sum / denom).masked_fill(
+            no_obs, float("nan")
+        )  # [S, V]
+        mae_per_station = (mae_sum / denom).masked_fill(no_obs, float("nan"))  # [S, V]
         crps_global = crps_sum.sum() / mask_count.sum().clamp(min=1e-8)
         mae_global = mae_sum.sum() / mask_count.sum().clamp(min=1e-8)
 
@@ -928,7 +956,9 @@ class OATPlotter:
         if reference is not None:
             ref_crps_per_station = (ref_crps_sum / denom).masked_fill(no_obs, float("nan"))  # type: ignore[operator]
             ref_crps_global = ref_crps_sum.sum() / mask_count.sum().clamp(min=1e-8)  # type: ignore[union-attr]
-            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(min=1e-8)
+            crpss_per_station = 1.0 - crps_per_station / ref_crps_per_station.clamp(
+                min=1e-8
+            )
             result["crpss"] = crpss_per_station.masked_fill(no_obs, float("nan"))
             result["crpss_global"] = 1.0 - crps_global / ref_crps_global.clamp(min=1e-8)
 
@@ -971,8 +1001,10 @@ class OATPlotter:
         pos = 0
         for chunk in batched(time_indices, batch_size):
             for t in chunk:
-                y_obs = self.dataset.obs_tensor[t, eval_station_indices].unsqueeze(0).to(
-                    self.device
+                y_obs = (
+                    self.dataset.obs_tensor[t, eval_station_indices]
+                    .unsqueeze(0)
+                    .to(self.device)
                 )  # [1, S, V]
                 mask = (
                     self.dataset.obs_mask_tensor[t, eval_station_indices]
@@ -1031,15 +1063,30 @@ class OATPlotter:
 
         samples_nwp = self._run_inference(time_idx, query_coords, predictor=other)
         nwp_mean = (
-            samples_nwp[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_nwp[:, :, var_idx]
+            .mean(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
 
         samples_oat = self._run_inference(time_idx, query_coords)
         oat_mean = (
-            samples_oat[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_oat[:, :, var_idx]
+            .mean(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
         oat_std = (
-            samples_oat[:, :, var_idx].std(dim=1).detach().cpu().numpy().reshape(y_grid.shape)
+            samples_oat[:, :, var_idx]
+            .std(dim=1)
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(y_grid.shape)
         )
 
         diff = oat_mean - nwp_mean
@@ -1077,7 +1124,9 @@ class OATPlotter:
             fig.suptitle(title)
 
         mesh_nwp = axes[0].pcolormesh(
-            xs, ys, nwp_mean,
+            xs,
+            ys,
+            nwp_mean,
             cmap=var_cfg.get("cmap", "viridis"),
             vmin=var_cfg.get("vmin"),
             vmax=var_cfg.get("vmax"),
@@ -1136,26 +1185,36 @@ class OATPlotter:
         self,
         time_indices: list[int],
         eval_station_indices: list[int] | None = None,
+        n_bins: int = 20,
         log_every: int = 50,
-    ) -> dict[str, dict[str, list[float]]]:
-        """Compute PIT and zero-inflation diagnostics at eval stations.
+        predictor: BasePredictor | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Compute PIT histogram bins and zero-inflation diagnostics.
+
+        The method accumulates fixed-size bins while it runs. It does not keep
+        one value per (station, timestep). Memory use does not grow with the
+        number of timesteps.
 
         Args:
             time_indices: Dataset time indices to evaluate.
-            eval_station_indices: Station indices to query.  Defaults to
+            eval_station_indices: Station indices to query. Defaults to
                 ``self.eval_indices``.
+            n_bins: Number of PIT bins over [0, 1] (default 20).
             log_every: Log progress every this many timesteps.
+            predictor: Predictor to sample from. Defaults to ``self.predictor``.
+                Use it to compute PIT for a baseline model.
 
         Returns:
             Dict mapping variable name → dict with keys:
 
-            - ``pit``: PIT values for all valid observations.
-            - ``gate_pred``: estimated P(X=0) from samples per valid
-              (station, timestep). Non-empty only for zero-inflated variables.
-            - ``is_zero``: 1.0/0.0 flag — was the observation exactly zero?
-              Non-empty only for zero-inflated variables.
-            - ``pit_nonzero``: conditional PIT using only non-zero samples, restricted
-              to non-zero observations.  Non-empty only for zero-inflated variables.
+            - ``pit_counts``: PIT bin counts over [0, 1] for all valid
+              observations, int array of length ``n_bins``.
+            - ``pit_n``: Total number of valid observations.
+            - Zero-inflated variables add: ``gate_counts`` (pairs per gate
+              bin), ``gate_zero_sums`` (sum of zero flags per bin),
+              ``gate_pred_sums`` (sum of gate predictions per bin),
+              ``pit_nonzero_counts`` and ``pit_nonzero_n`` (conditional PIT
+              bins for non-zero observations).
         """
         import logging
 
@@ -1166,24 +1225,38 @@ class OATPlotter:
             if eval_station_indices is not None
             else self.eval_indices
         )
+        p = predictor if predictor is not None else self.predictor
+        var_to_indx = p.var_to_indx
+        n_gate_bins = 10
+
+        def empty_stats() -> dict[str, Any]:
+            return {"pit_counts": np.zeros(n_bins, dtype=np.int64), "pit_n": 0}
+
         if not indices:
             logger.warning("No eval station indices — returning empty PIT dict.")
-            return {
-                v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
-                for v in self.predictor.var_to_indx
-            }
+            return {v: empty_stats() for v in var_to_indx}
 
         try:
-            var_to_dist = self.predictor.model.output_head.variable_to_distribution
+            var_to_dist = p.model.output_head.variable_to_distribution
         except AttributeError:
             var_to_dist = {}
         zi_vars = {v for v, d in var_to_dist.items() if d == "zero_inflated_lognormal"}
 
         eval_coords = self.dataset.station_coords[indices, :2]  # [S, 2]
-        result: dict[str, dict[str, list[float]]] = {
-            v: {"pit": [], "gate_pred": [], "is_zero": [], "pit_nonzero": []}
-            for v in self.predictor.var_to_indx
-        }
+        result: dict[str, dict[str, Any]] = {}
+        for v in var_to_indx:
+            stats = empty_stats()
+            if v in zi_vars:
+                stats.update(
+                    {
+                        "gate_counts": np.zeros(n_gate_bins, dtype=np.int64),
+                        "gate_zero_sums": np.zeros(n_gate_bins, dtype=np.float64),
+                        "gate_pred_sums": np.zeros(n_gate_bins, dtype=np.float64),
+                        "pit_nonzero_counts": np.zeros(n_bins, dtype=np.int64),
+                        "pit_nonzero_n": 0,
+                    }
+                )
+            result[v] = stats
 
         for i, time_idx in enumerate(time_indices):
             if i % log_every == 0:
@@ -1191,14 +1264,14 @@ class OATPlotter:
 
             with torch.no_grad():
                 samples = self._run_inference(
-                    time_idx, eval_coords
+                    time_idx, eval_coords, predictor=p
                 )  # [S, n_samples, n_vars]
 
             obs = self.dataset.obs_tensor[time_idx][indices]  # [S, n_vars]
             mask = self.dataset.obs_mask_tensor[time_idx][indices]  # [S, n_vars]
             pit = (samples <= obs.unsqueeze(1)).float().mean(dim=1)  # [S, n_vars]
 
-            for var, var_idx in self.predictor.var_to_indx.items():
+            for var, var_idx in var_to_indx.items():
                 data = result[var]
                 samps_v = samples[:, :, var_idx]  # [S, n_samples]
                 obs_v = obs[:, var_idx]  # [S]
@@ -1207,22 +1280,29 @@ class OATPlotter:
                 if not mask_v.any():
                     continue
 
-                # "pit" maps to a list of values continusly filled from all valid
-                # observations (mask==1) for this variable across all timesteps.
-                # from that, a histogram can be plotted.
-                data["pit"].extend(pit[mask_v, var_idx].cpu().tolist())
+                # Add the PIT values of all valid observations to fixed bins.
+                data["pit_counts"] += np.histogram(
+                    pit[mask_v, var_idx].cpu().numpy(),
+                    bins=n_bins,
+                    range=(0.0, 1.0),
+                )[0]
+                data["pit_n"] += int(mask_v.sum())
 
                 if var in zi_vars:
-                    # gate_pred and is_zero accumulate one scalar per valid
-                    # (station, timestep) pair.
-                    # gate_pred[i] = fraction of samples that were zero (≈ P(dry),
-                    # an estimate of the gate); is_zero[i] = 1 if obs==0.
-                    # Binning gate_pred vs mean(is_zero) per bin gives the
-                    # reliability diagram.
-                    data["gate_pred"].extend(
-                        (samps_v == 0).float().mean(dim=1)[mask_v].cpu().tolist()
-                    )
-                    data["is_zero"].extend((obs_v == 0).float()[mask_v].cpu().tolist())
+                    # gate = fraction of samples that were zero (≈ P(dry), an
+                    # estimate of the gate); is_zero = 1 if obs==0. Per-bin sums
+                    # give the reliability diagram.
+                    gate = (samps_v == 0).float().mean(dim=1)[mask_v].cpu().numpy()
+                    is_zero = (obs_v == 0).float()[mask_v].cpu().numpy()
+                    data["gate_counts"] += np.histogram(
+                        gate, bins=n_gate_bins, range=(0.0, 1.0)
+                    )[0]
+                    data["gate_zero_sums"] += np.histogram(
+                        gate, bins=n_gate_bins, range=(0.0, 1.0), weights=is_zero
+                    )[0]
+                    data["gate_pred_sums"] += np.histogram(
+                        gate, bins=n_gate_bins, range=(0.0, 1.0), weights=gate
+                    )[0]
 
                     # Conditional PIT: fraction of non-zero samples ≤ obs, for
                     # non-zero obs only
@@ -1237,43 +1317,69 @@ class OATPlotter:
                         )
                         valid_cond = nonzero_obs & (n_pos > 0)
                         if valid_cond.any():
-                            data["pit_nonzero"].extend(
-                                (n_pos_le[valid_cond] / n_pos[valid_cond])
-                                .cpu()
-                                .tolist()
+                            cond_pit = (
+                                (n_pos_le[valid_cond] / n_pos[valid_cond]).cpu().numpy()
                             )
+                            data["pit_nonzero_counts"] += np.histogram(
+                                cond_pit, bins=n_bins, range=(0.0, 1.0)
+                            )[0]
+                            data["pit_nonzero_n"] += int(valid_cond.sum())
 
         return result
 
     def plot_pit(
         self,
         ax: Any,
-        pit_values: list[float],
+        counts: npt.NDArray[np.int64],
         n_bins: int = 20,
+        total: int | None = None,
+        histtype: str = "bar",
+        label: str | None = None,
+        color: str | None = None,
     ) -> None:
-        """Plot a PIT calibration histogram for a single variable onto ax.
+        """Plot a PIT calibration histogram for one variable onto ax.
 
         Args:
             ax: Matplotlib Axes to draw onto.
-            pit_values: Precomputed PIT values (e.g. from ``compute_pit``).
-                Pass ``data[var]["pit"]`` for the unconditional PIT or
-                ``data[var]["pit_nonzero"]`` for the conditional non-zero PIT
-                of a zero-inflated variable.
-            n_bins: Number of histogram bins (default 20).
+            counts: PIT bin counts over [0, 1] (``data[var]["pit_counts"]``
+                from ``compute_pit``). For a zero-inflated variable, pass
+                ``data[var]["pit_nonzero_counts"]`` for the conditional PIT.
+            n_bins: Number of bins the counts cover (default 20).
+            total: Total number of values. Defaults to ``counts.sum()``.
+            histtype: "bar" draws filled bars. "step" draws only the outline
+                (the envelope of the bars).
+            label: Legend label. Use it for baseline outlines.
+            color: Fill or line color override.
         """
-        pits = np.array(pit_values)
-        n = len(pits)
+        n = int(counts.sum()) if total is None else int(total)
         if n == 0:
             ax.axis("off")
             return
-        ax.hist(
-            pits,
-            bins=n_bins,
-            density=True,
-            color="#CFCFCF",
-            edgecolor="#4A5568",
-            linewidth=0.8,
-        )
+        centers = (np.arange(n_bins) + 0.5) / n_bins
+        density = counts * n_bins / n
+        if histtype == "step":
+            ax.hist(
+                centers,
+                bins=n_bins,
+                range=(0.0, 1.0),
+                weights=density,
+                histtype="step",
+                color="#C0392B" if color is None else color,
+                linewidth=1.4,
+                label=label,
+            )
+        else:
+            ax.hist(
+                centers,
+                bins=n_bins,
+                range=(0.0, 1.0),
+                weights=density,
+                histtype="bar",
+                color="#CFCFCF" if color is None else color,
+                edgecolor="#4A5568",
+                linewidth=0.8,
+                label=label,
+            )
         ax.axhline(1.0, color="0.3", linestyle="--", linewidth=1.0, label="Uniform")
         ax.set_title(f"PIT  (n={n:,})", fontsize=9)
         ax.set_xlabel("PIT value")
@@ -1284,29 +1390,26 @@ class OATPlotter:
     def plot_zero_reliability(
         self,
         ax: Any,
-        gate_pred: list[float],
-        is_zero: list[float],
+        gate_counts: npt.NDArray[np.int64],
+        gate_zero_sums: npt.NDArray[np.float64],
+        gate_pred_sums: npt.NDArray[np.float64],
     ) -> None:
-        """Plot a reliability diagram for the zero-gate of a ZI variable onto ax.
+        """Plot a reliability diagram for the zero gate of a ZI variable.
 
         Args:
             ax: Matplotlib Axes to draw onto.
-            gate_pred: Estimated P(zero) per valid (station, timestep) pair
-                (``data[var]["gate_pred"]`` from ``compute_pit``).
-            is_zero: Observed zero flag (1.0/0.0) per pair
-                (``data[var]["is_zero"]`` from ``compute_pit``).
+            gate_counts: Number of (station, timestep) pairs per gate bin
+                (``data[var]["gate_counts"]`` from ``compute_pit``).
+            gate_zero_sums: Sum of observed zero flags per bin
+                (``data[var]["gate_zero_sums"]``).
+            gate_pred_sums: Sum of predicted gate values per bin
+                (``data[var]["gate_pred_sums"]``).
         """
-        gate_pred_arr = np.array(gate_pred)
-        is_zero_arr = np.array(is_zero)
-        bin_edges = np.linspace(0, 1, 11)
-        mean_pred, mean_obs = [], []
-        for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=False):
-            m = (gate_pred_arr >= lo) & (gate_pred_arr < hi)
-            if m.sum() > 5:
-                mean_pred.append(float(gate_pred_arr[m].mean()))
-                mean_obs.append(float(is_zero_arr[m].mean()))
+        ok = gate_counts > 5
+        mean_pred = gate_pred_sums[ok] / gate_counts[ok]
+        mean_obs = gate_zero_sums[ok] / gate_counts[ok]
         ax.plot([0, 1], [0, 1], "--", color="0.3", lw=1.0, label="Perfect")
-        if mean_pred:
+        if ok.any():
             ax.plot(
                 mean_pred, mean_obs, "o-", color="#4A5568", ms=4, lw=1.2, label="Model"
             )
