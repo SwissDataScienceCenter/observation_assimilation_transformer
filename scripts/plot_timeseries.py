@@ -9,9 +9,9 @@ One row per variable, time on the x axis.  Each row shows:
 Uses one OAT checkpoint plus an NWP-interpolator baseline built automatically
 from the dataset.
 
-Note on cost: every line runs one forward pass per timestep, and the two stages
-are drawn by two separate calls, so a 24 h window costs ~72 passes.  Keep
-``--hours`` modest, or lower ``--n-samples``.
+Note on cost: each line runs one forward pass per timestep. Two separate calls
+draw the two stages, so a 24 h window costs about 72 passes. Keep ``--hours``
+modest, or lower ``--n-samples``.
 
 Usage
 -----
@@ -46,7 +46,7 @@ from scripts.plotter_utils import load_plot_config, maybe_build_nwp_baseline
 _PROJECT_ROOT = Path(__file__).parents[1]
 OUT_DIR = _PROJECT_ROOT / "data/figures"
 
-# ---- Figure sizing & fonts (single source of truth; mirror in other paper figures) ----
+# ---- Figure sizing & fonts (single source; mirror in other paper figures) ----
 # A fixed width makes the output size predictable and lets every figure share one font
 # size: font points are absolute, so identical width + identical rcParams + the same
 # include-width in LaTeX give identical on-page fonts. Unlike the map figures, these
@@ -133,6 +133,8 @@ def _parse_args() -> argparse.Namespace:
     args = p.parse_args()
     if args.checkpoint is None and (args.dataset is None or args.model is None):
         p.error("--dataset and --model are required when no checkpoint path is given.")
+    if args.hours < 1:
+        p.error("--hours must be at least 1.")
     return args
 
 
@@ -234,7 +236,7 @@ def main() -> None:
     if test_ds._time_indices is not None and len(test_ds._time_indices):
         first, last = int(test_ds._time_indices[0]), int(test_ds._time_indices[-1])
         logger.info(
-            "Test period: %s → %s (%d timesteps, dataset indices %d–%d)",
+            "Test period: %s - %s (%d timesteps, dataset indices %d-%d)",
             dataset.times[first].strftime("%Y-%m-%d %H:%M UTC"),
             dataset.times[last].strftime("%Y-%m-%d %H:%M UTC"),
             len(test_ds._time_indices),
@@ -268,6 +270,10 @@ def main() -> None:
     start_iso = dataset.times[time_indices[0]].strftime("%Y-%m-%dT%H")
 
     variables = args.variables or list(predictor_oat.var_to_indx.keys())
+    unknown_vars = [v for v in variables if v not in predictor_oat.var_to_indx]
+    if unknown_vars:
+        valid = ", ".join(sorted(predictor_oat.var_to_indx.keys()))
+        raise ValueError(f"Unknown --variables {unknown_vars}. Valid names: {valid}.")
     plot_config = load_plot_config(dataset)
     units = _load_units(cfg.dataset.dataset_type)
 
@@ -307,9 +313,7 @@ def main() -> None:
         role = (
             "assimilated"
             if assimilated
-            else "held out"
-            if station_idx in set(eval_indices)
-            else "not in any split"
+            else "held out" if station_idx in set(eval_indices) else "not in any split"
         )
         loc_label = f"Station {station_idx} ({role})"
         loc_tag = f"station{station_idx}"
@@ -410,8 +414,7 @@ def main() -> None:
     out_path = (
         Path(args.out)
         if args.out is not None
-        else OUT_DIR
-        / f"timeseries_{ds_tag}_{model_tag}_{loc_tag}_{start_iso}_"
+        else OUT_DIR / f"timeseries_{ds_tag}_{model_tag}_{loc_tag}_{start_iso}_"
         f"{len(time_indices)}h.png"
     )
     fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
