@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 from importlib import import_module
 
 import torch
 from torch.optim.optimizer import Optimizer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from oat.data_module.transform import Transform
 from oat.model_module.gp_baseline import GPBaseline, GPBaselineConfig
-from oat.model_module.model import UninformedOATConfig
+from oat.model_module.model import TopographicEncoderConfig, UninformedOATConfig
 from oat.predictor_module.base_predictor import BasePredictor
-from oat.predictor_module.oat_predictor import setup_backbone_cfgs
+from oat.predictor_module.field_batch_utils import _unwrap_fields_to_model_batch
+from oat.predictor_module.oat_predictor import (
+    _resolve_point_hidden_dims,
+    setup_backbone_cfgs,
+)
 from oat.predictor_module.functional_metrics import mc_crps, point_mae
 
 
@@ -27,8 +32,9 @@ class GPPredictor(BasePredictor):
         optimizer_params: Optional[dict] = None,
         scheduler_class: Optional[Type] = None,
         scheduler_params: Optional[dict] = None,
+        field_roles: dict | None = None,
     ) -> None:
-        super().__init__(output_var_names=output_var_names)
+        super().__init__(output_var_names=output_var_names, field_roles=field_roles)
 
         self.model = gp_model
         self.input_transform = input_transform
@@ -45,7 +51,15 @@ class GPPredictor(BasePredictor):
         }
 
     def _normalize_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
-        return self.input_transform(batch)
+        batch = self.input_transform(batch)
+        if self.field_roles is not None:
+            batch = _unwrap_fields_to_model_batch(
+                batch,
+                self.field_roles,
+                self.model.requires_observation,
+                project_index_coords=self.project_index_coords,
+            )
+        return batch
 
     def _unnormalize_pred_and_target(
         self,
@@ -242,17 +256,34 @@ def setup_gp_predictor(
     field_extent: Dict,
     obs_vars: List[str],
     transforms: Tuple[Transform, Transform],
+    project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> "GPPredictor":
     data_cfg = cfg.dataset
     model_cfg = cfg.model
 
-    gp_topography_kwargs = None
+    from oat.predictor_module.field_batch_utils import (
+        assert_geo_first_two_are_coords,
+        index_projection_dim,
+    )
+
+    if project_index_coords is not None:
+        assert_geo_first_two_are_coords(data_cfg)
+    geo_dim = len(data_cfg.geo_vars) - 2 + index_projection_dim(project_index_coords)
+
+    gp_topography_cfg = None
     if bool(model_cfg.get("use_topography", False)):
-        gp_topography_kwargs = {
-            **dict(model_cfg.topographic_encoder),
-            "in_channels": len(data_cfg.topo_vars),
-            "out_channels": int(model_cfg.d_model) // 2,
-        }
+        gp_topography_kwargs = OmegaConf.to_container(
+            model_cfg.topographic_encoder, resolve=True
+        )
+        if gp_topography_kwargs.get("type") == "MLP":
+            gp_topography_kwargs["hidden_dims"] = _resolve_point_hidden_dims(
+                gp_topography_kwargs, int(model_cfg.d_model)
+            )
+        gp_topography_cfg = TopographicEncoderConfig(
+            **gp_topography_kwargs,
+            in_channels=len(data_cfg.topo_vars),
+            out_channels=int(model_cfg.d_model) // 2,
+        )
 
     pre_oat_cfg = None
     if bool(model_cfg.get("use_pre_oat", False)):
@@ -269,12 +300,12 @@ def setup_gp_predictor(
 
     gp_config = GPBaselineConfig(
         obs_vars=obs_vars,
+        geo_dim=geo_dim,
         nwp_vars=list(data_cfg.nwp_vars),
-        field_extent=field_extent,
         use_nwp=bool(model_cfg.use_nwp),
         use_time_emb=bool(model_cfg.use_time_emb),
         use_topography=bool(model_cfg.get("use_topography", False)),
-        topography_encoder_kwargs=gp_topography_kwargs,
+        topographic_encoder=gp_topography_cfg,
         pre_oat=pre_oat_cfg,
         d_model=int(model_cfg.d_model),
         mean_n_hidden_layers=int(model_cfg.get("mean_n_hidden_layers", 1)),
@@ -325,7 +356,13 @@ def setup_gp_predictor(
         sched_cls = getattr(import_module(module_path), class_name)
         sched_params = dict(cfg.predictor.kwargs.get("scheduler_params", {}))
 
-    return GPPredictor(
+    field_roles = (
+        OmegaConf.to_container(cfg.dataset.roles, resolve=True)
+        if "roles" in cfg.dataset
+        else None
+    )
+
+    predictor = GPPredictor(
         gp_model=gp_model,
         input_transform=transforms[0],
         output_transform=transforms[1],
@@ -335,4 +372,7 @@ def setup_gp_predictor(
         optimizer_params=dict(cfg.predictor.kwargs.get("optimizer_params", {})),
         scheduler_class=sched_cls,
         scheduler_params=sched_params,
+        field_roles=field_roles,
     )
+    predictor.project_index_coords = project_index_coords
+    return predictor

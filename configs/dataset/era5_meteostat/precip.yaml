@@ -1,14 +1,14 @@
 defaults:
   - era5_meteostat/settings@_here_
-  - era5_meteostat/catalog@catalog
-  - era5_meteostat/plot_config@_here_
   - _self_
 
-nwp_vars:
-  - tp
+nwp_vars: [tp, tcc]
 
-obs_vars:
-  - prcp
+obs_vars: [prcp]
 
 obs_variable_to_distribution:
-  prcp: "zero_inflated_lognormal"
+  prcp: zero_inflated_lognormal
+
+fields:
+  obs: {coords: stations, inputs: [obs.prcp]}
+  nwp: {coords: stations, inputs: [nwp.tp, nwp.tcc], query: true, interp: linear}

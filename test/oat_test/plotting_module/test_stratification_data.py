@@ -47,14 +47,29 @@ def test_season_labels():
     assert set(SEASONS) == {"DJF", "MAM", "JJA", "SON"}
 
 
-def test_collect_station_covariates():
-    import torch
+class _FakeFieldDataset:
+    """Minimal stand-in for a field dataset's geo-bias-covariate surface."""
 
-    dataset = types.SimpleNamespace(
-        station_coords=torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]),
-        station_geo=torch.tensor(
-            [[0.0, 0.0, 100.0], [10.0, 0.0, 200.0], [0.0, 10.0, 300.0]]
-        ),
+    def __init__(self, station_coords, geo_values):
+        import torch
+
+        self.station_coords = torch.as_tensor(station_coords)
+        self.field_config = types.SimpleNamespace(
+            fields={"geo": types.SimpleNamespace(out=["easting", "northing", "dem"])}
+        )
+        self._geo_field = types.SimpleNamespace(values=torch.as_tensor(geo_values))
+
+    def roles(self):
+        return {"geo_bias": "geo"}
+
+    def __getitem__(self, idx):
+        return {"fields": {"geo": self._geo_field}}
+
+
+def test_collect_station_covariates():
+    dataset = _FakeFieldDataset(
+        station_coords=[[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
+        geo_values=[[0.0, 0.0, 100.0], [10.0, 0.0, 200.0], [0.0, 10.0, 300.0]],
     )
     cov = collect_station_covariates(dataset, eval_indices=[1, 2], obs_indices=[0])
     np.testing.assert_array_equal(cov["station_idx"], [1, 2])

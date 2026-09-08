@@ -1,17 +1,24 @@
 defaults:
   - cosmo_peakweather/settings@_here_
-  - cosmo_peakweather/catalog@catalog
-  - cosmo_peakweather/plot_config@_here_
   - _self_
 
-nwp_vars:
-  - TOT_PREC_1H
-  - CLCT
+nwp_vars: [TOT_PREC_1H, CLCT]
 
-obs_vars:
-  - precipitation
+obs_vars: [precipitation]
 
 obs_variable_to_distribution:
-  precipitation: "zero_inflated_lognormal"
+  precipitation: zero_inflated_lognormal
 
-station_type: null # with null, all stations are taken, among which there are rain gauges
+# All stations incl. rain gauges (matches old temp_precip.yaml; overrides
+# settings' meteo_station default). Rain gauges are the primary precip source.
+station_type: null
+
+fields:
+  obs: {coords: stations, inputs: [obs.precipitation]}
+  # NWP-only global field (no topo channels here). Topography reaches the
+  # model through the separate topographic encoder, not the global encoder.
+  nwp:
+    coords: stations
+    inputs: [nwp.TOT_PREC_1H, nwp.CLCT]
+    query: true
+    interp: linear

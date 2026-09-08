@@ -1,8 +1,13 @@
 #!/bin/bash
 #
 # DEPRECATED: use the central dispatcher instead, e.g.
-#   python -m scripts.train --model gp --dataset cosmo_peakweather/temp --submit
+#   python -m scripts.train --model gp_field --dataset cosmo_peakweather/temp --submit
 # See scripts/submit_training.sh / scripts/train.py.
+#
+# NOTE: the srun invocation below still composes the bare `model=gp_baseline`
+# config (grid-mode CNN topo encoder, no field dataset/precision override) and
+# will crash on the current field-only GP baseline. Superseded by the
+# dispatcher above; kept only for reference, not updated to match.
 #
 # Usage:
 #   sbatch scripts/submit_gp_training.sh                                  # GP training (default)

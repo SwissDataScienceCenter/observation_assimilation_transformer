@@ -31,6 +31,12 @@ dist/
 build/
 *.egg-info/
 
+# Worktrees
+.worktrees/
+
+# Subagent-driven-development scratch workspaces
+.superpowers/
+
 # Misc
 .DS_Store
 poetry.lock

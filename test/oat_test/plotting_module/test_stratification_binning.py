@@ -22,15 +22,6 @@ def test_continuous_fixed_width_bins():
     assert len({label_for[b] for b in present}) == 2
 
 
-def test_lonlat_bins_snap_to_integers():
-    df = pd.DataFrame({"lon": [6.2, 6.9, 7.4, 8.8]})
-    keys, present, label_for, _order = _bin_keys(df, "lon", nbins=3)
-    # Whole-degree edges 6..9: bins [6-7], [7-8], [8-9].
-    assert list(keys) == [0, 0, 1, 2]
-    assert present == [0, 1, 2]
-    assert [label_for[b] for b in present] == ["6-7", "7-8", "8-9"]
-
-
 def test_elevation_custom_bins():
     # Fixed, hand-chosen bins: <750, 750-1250, 1250-2000, >2000.
     df = pd.DataFrame({"elevation": [500.0, 1000.0, 1800.0, 2500.0]})

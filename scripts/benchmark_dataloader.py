@@ -19,7 +19,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
+from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 
 CONFIG_PATH = Path(__file__).parent.parent / "configs" / "dataset" / "cosmo_peakweather.yaml"
 

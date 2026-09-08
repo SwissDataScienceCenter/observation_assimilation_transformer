@@ -1,138 +1,189 @@
+# test/oat_test/predictor_module/test_baseline_predictor.py
+import os
+import types
+from typing import Any
+
 import pytest
 import torch
-from typing import Any, Dict
+from omegaconf import OmegaConf
 
+from oat.data_module.field import Field
+from oat.data_module.field_spec import FieldConfig, parse_field_config
 from oat.model_module.baseline import NWPInterpolatorConfig
-from oat.predictor_module.base_predictor import BasePredictor
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
+from oat.predictor_module.baseline_predictor import (
+    NWPInterpolatorPredictor,
+    create_baseline_predictor,
+)
+
+FIELD_ROLES = {"target": "obs", "global": "nwp", "geo_bias": "geo", "topo": "topo"}
 
 
-# ---------------------------------------------------------------------------
-# Local fixtures
-# ---------------------------------------------------------------------------
+def _make_batch(n: int, t_2m_values: list[float]) -> dict[str, Any]:
+    coords = torch.zeros(1, n, 3)
+    coords[..., 2] = 100.0  # epoch hours
+    nwp_vals = torch.tensor(t_2m_values).reshape(1, n, 1)
+    query_fields = {
+        "obs": Field(
+            coords.clone(), torch.zeros(1, n, 1), ["temperature"], torch.ones(1, n, 1)
+        ),
+        "nwp": Field(coords.clone(), nwp_vals, ["T_2M"]),
+        "geo": Field(coords.clone(), torch.zeros(1, n, 3), ["x", "y", "d"]),
+        "topo": Field(coords.clone(), torch.zeros(1, n, 2), ["a", "b"]),
+    }
+    return {"query_data": {"fields": query_fields}}
+
 
 @pytest.fixture
-def field_extent() -> Dict[str, Any]:
-    return {"min": [0.0, 0.0], "max": [100.0, 100.0]}
+def config() -> NWPInterpolatorConfig:
+    return NWPInterpolatorConfig(
+        nwp_names=["T_2M"],
+        obs_names=["temperature"],
+        obs_to_nwp={"temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15)},
+    )
 
 
 @pytest.fixture
-def nwp_config(field_extent: Dict[str, Any]) -> NWPInterpolatorConfig:
-    return NWPInterpolatorConfig(field_extent=field_extent)
+def predictor(config: NWPInterpolatorConfig) -> NWPInterpolatorPredictor:
+    return NWPInterpolatorPredictor(
+        config=config, output_var_names=["temperature"], field_roles=FIELD_ROLES
+    )
 
 
-# ---------------------------------------------------------------------------
-# Synthetic batch helpers
-# ---------------------------------------------------------------------------
-
-def make_global_data(B: int, C: int, H: int = 32, W: int = 32) -> Dict[str, torch.Tensor]:
-    return {"global_field": torch.randn(B, C, H, W)}
-
-
-def make_batch(
-    B: int,
-    C: int,
-    S_query: int,
-    D_obs: int | None = None,
-    include_obs: bool = True,
-) -> Dict[str, Any]:
-    global_data = make_global_data(B, C)
-    query_data: Dict[str, torch.Tensor] = {"coords": torch.rand(B, S_query, 2) * 100.0}
-    if include_obs and D_obs is not None:
-        query_data["obs"] = torch.randn(B, S_query, D_obs)
-        query_data["mask_obs"] = torch.ones(B, S_query, D_obs, dtype=torch.bool)
-    return {"global_data": global_data, "query_data": query_data}
+def test_predict_maps_nwp_to_obs_units(predictor: NWPInterpolatorPredictor) -> None:
+    batch = _make_batch(2, [300.0, 310.0])
+    normalized = predictor._normalize_batch(batch)
+    y_pred, target_obs, target_mask_obs = predictor(normalized)
+    assert y_pred.shape == (1, 2, 1)
+    expected = torch.tensor([300.0 - 273.15, 310.0 - 273.15])
+    assert torch.allclose(y_pred[0, :, 0], expected)
+    assert target_obs is not None and target_obs.shape == (1, 2, 1)
+    assert target_mask_obs is not None and target_mask_obs.shape == (1, 2, 1)
 
 
-# ---------------------------------------------------------------------------
-# NWPInterpolatorPredictor tests
-# ---------------------------------------------------------------------------
-
-def test_predictor_forward_output_shape(nwp_config: NWPInterpolatorConfig) -> None:
-    B, C, S_query, D_obs = 2, 4, 8, 2
-    obs_vars = [f"var_{i}" for i in range(C)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    batch = make_batch(B, C, S_query, D_obs=D_obs, include_obs=True)
-
-    predictions, target_obs, target_mask_obs = predictor(batch)
-
-    assert predictions.shape == (B, S_query, C)
-    assert target_obs is not None and target_obs.shape == (B, S_query, D_obs)
-    assert target_mask_obs is not None and target_mask_obs.shape == (B, S_query, D_obs)
-
-
-def test_predictor_forward_no_obs_in_query(nwp_config: NWPInterpolatorConfig) -> None:
-    B, C, S_query = 2, 3, 6
-    obs_vars = [f"var_{i}" for i in range(C)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    batch = make_batch(B, C, S_query, include_obs=False)
-
-    predictions, target_obs, target_mask_obs = predictor(batch)
-
-    assert predictions.shape == (B, S_query, C)
-    assert target_obs is None
-    assert target_mask_obs is None
-
-
-def test_predictor_with_batch_fixture(
-    batch_fixture: Dict[str, Any], nwp_config: NWPInterpolatorConfig
+def test_normalize_batch_omits_observation_data(
+    predictor: NWPInterpolatorPredictor,
 ) -> None:
-    global_field = batch_fixture["global_data"]["global_field"]
-    query_coords = batch_fixture["query_data"]["coords"]
-    B = global_field.shape[0]
-    C_global = global_field.shape[1]
-    S_query = query_coords.shape[1]
-
-    obs_vars = [f"var_{i}" for i in range(C_global)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    predictions, _, _ = predictor(batch_fixture)
-
-    assert predictions.shape == (B, S_query, C_global)
+    # requires_observation is False -> _unwrap_fields_to_model_batch skips it
+    batch = _make_batch(2, [300.0, 310.0])
+    normalized = predictor._normalize_batch(batch)
+    assert "observation_data" not in normalized
 
 
-def test_nwp_predictor_is_base_predictor(nwp_config: NWPInterpolatorConfig) -> None:
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
-    assert isinstance(predictor, BasePredictor)
+def test_query_locations_not_supported(predictor: NWPInterpolatorPredictor) -> None:
+    batch = _make_batch(1, [300.0])
+    normalized = predictor._normalize_batch(batch)
+    with pytest.raises(NotImplementedError):
+        predictor(normalized, query_locations=torch.zeros(1, 2))
 
 
-def test_normalize_batch_is_identity(nwp_config: NWPInterpolatorConfig) -> None:
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
-    batch = {"global_data": {"global_field": torch.randn(1, 1, 8, 8)}}
-    result = predictor._normalize_batch(batch)
-    assert result is batch
+def _fake_dataset() -> Any:
+    field_config = parse_field_config(
+        {
+            "coord_sources": {"stations": {"from": "obs"}},
+            "fields": {
+                "obs": {"coords": "stations", "inputs": ["obs.temperature"]},
+                "nwp": {"coords": "stations", "inputs": ["nwp.T_2M"], "query": True},
+                "geo": {
+                    "coords": "stations",
+                    "inputs": ["coords.x", "coords.y"],
+                    "out": ["x", "y"],
+                    "query": True,
+                },
+                "topo": {"coords": "stations", "inputs": ["topo.a"], "query": True},
+            },
+            "roles": {
+                "target": "obs",
+                "global": "nwp",
+                "geo_bias": "geo",
+                "topo": "topo",
+            },
+        }
+    )
+    obs_to_nwp = {"temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15)}
+    return types.SimpleNamespace(field_config=field_config, obs_to_nwp=obs_to_nwp)
 
 
-def test_predict_step_samples_shape(nwp_config: NWPInterpolatorConfig) -> None:
-    B, C, S_query, n_samples = 2, 3, 6, 10
-    obs_vars = [f"var_{i}" for i in range(C)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    batch = make_batch(B, C, S_query, include_obs=False)
-    samples = predictor.predict_step(batch, batch_idx=0, n_samples=n_samples)
-    assert samples.shape == (B, S_query, n_samples, C)
+def test_create_baseline_predictor_builds_from_dataset() -> None:
+    built = create_baseline_predictor(_fake_dataset())
+    assert isinstance(built, NWPInterpolatorPredictor)
+    assert built.output_var_names == ["temperature"]
+    assert built.model.nwp_names == ["T_2M"]
+    assert built.field_roles == {
+        "target": "obs",
+        "global": "nwp",
+        "geo_bias": "geo",
+        "topo": "topo",
+    }
 
 
-def test_predict_step_samples_deterministic(nwp_config: NWPInterpolatorConfig) -> None:
-    """All n_samples slices are identical since NWP interpolation is deterministic."""
-    B, C, S_query, n_samples = 1, 2, 4, 5
-    obs_vars = [f"var_{i}" for i in range(C)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    batch = make_batch(B, C, S_query, include_obs=False)
-    samples = predictor.predict_step(batch, batch_idx=0, n_samples=n_samples)
-    assert torch.allclose(samples[:, :, 0, :], samples[:, :, 1, :])
+def _compose_field_config(dataset_config_name: str) -> FieldConfig:
+    """Compose a live dataset config via Hydra and parse its field schema.
+
+    No data I/O: this only parses the YAML-derived dataset config dict, it
+    never opens the underlying zarr/parquet dataset files.
+    """
+    from hydra import compose, initialize_config_dir
+
+    cfg_dir = os.path.abspath("configs")
+    with initialize_config_dir(version_base=None, config_dir=cfg_dir):
+        cfg = compose(
+            config_name="config", overrides=[f"dataset={dataset_config_name}"]
+        )
+    container = OmegaConf.to_container(cfg.dataset, resolve=True)
+    assert isinstance(container, dict)
+    return parse_field_config(container)
 
 
-def test_predict_step_default_n_samples(nwp_config: NWPInterpolatorConfig) -> None:
-    """With no n_samples, returns shape [B, S, 1, C]."""
-    B, C, S_query = 1, 2, 4
-    obs_vars = [f"var_{i}" for i in range(C)]
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=obs_vars)
-    batch = make_batch(B, C, S_query, include_obs=False)
-    samples = predictor.predict_step(batch, batch_idx=0)
-    assert samples.shape == (B, S_query, 1, C)
+@pytest.mark.parametrize(
+    "dataset_config_name,obs_to_nwp_module,obs_to_nwp_attr",
+    [
+        (
+            "cosmo_peakweather/temp",
+            "oat.data_module.cosmo_peakweather_dataset",
+            "COSMO_OBS_TO_NWP",
+        ),
+        (
+            "cosmo_peakweather/temp_precip",
+            "oat.data_module.cosmo_peakweather_dataset",
+            "COSMO_OBS_TO_NWP",
+        ),
+        (
+            "era5_meteostat/temp",
+            "oat.data_module.era5_meteostat_dataset",
+            "ERA5_OBS_TO_NWP",
+        ),
+        (
+            "era5_meteostat/temp_precip",
+            "oat.data_module.era5_meteostat_dataset",
+            "ERA5_OBS_TO_NWP",
+        ),
+    ],
+)
+def test_create_baseline_predictor_builds_from_live_dataset_configs(
+    dataset_config_name: str, obs_to_nwp_module: str, obs_to_nwp_attr: str
+) -> None:
+    """Binds the real per-dataset obs_to_nwp table to the real field configs.
 
+    Guards against future drift: someone adding an obs var with no entry in
+    the live COSMO/ERA5 obs_to_nwp table, or dropping an NWP input a mapping
+    depends on from a field config, should fail here with a named test
+    failure instead of surfacing only as a runtime ValueError in a plot/eval
+    script (via ``maybe_build_nwp_baseline``/``create_baseline_predictor``).
+    """
+    import importlib
 
-def test_predict_step_invalid_return_as(nwp_config: NWPInterpolatorConfig) -> None:
-    predictor = NWPInterpolatorPredictor(config=nwp_config, output_var_names=["v0"])
-    batch = make_batch(1, 1, 2, include_obs=False)
-    with pytest.raises(ValueError):
-        predictor.predict_step(batch, batch_idx=0, return_as="distribution")
+    obs_to_nwp = getattr(importlib.import_module(obs_to_nwp_module), obs_to_nwp_attr)
+    field_config = _compose_field_config(dataset_config_name)
+    dataset = types.SimpleNamespace(field_config=field_config, obs_to_nwp=obs_to_nwp)
+
+    built = create_baseline_predictor(dataset)
+
+    assert isinstance(built, NWPInterpolatorPredictor)
+    roles = field_config.roles
+    expected_nwp_names = list(field_config.fields[roles["global"]].out)
+    expected_obs_names = list(field_config.fields[roles["target"]].out)
+    assert expected_nwp_names, "global field has no output channels"
+    assert expected_obs_names, "target field has no output channels"
+    assert built.model.nwp_names == expected_nwp_names
+    assert built.output_var_names == expected_obs_names
+    assert built.model.obs_names == expected_obs_names

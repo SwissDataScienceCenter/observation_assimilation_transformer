@@ -6,22 +6,28 @@ One row per variable, time on the x axis.  Each row shows:
   * OAT      — full model (median + band)
   * station observations, when the location is a station
 
-Uses one OAT checkpoint plus the NWP interpolator, both resolved from
-``configs/checkpoints.yaml``.
+Uses one OAT checkpoint plus an NWP-interpolator baseline built automatically
+from the dataset.
 
-Note on cost: every line runs one forward pass per timestep, and the two stages
-are drawn by two separate calls, so a 24 h window costs ~72 passes.  Keep
-``--hours`` modest, or lower ``--n-samples``.
+Note on cost: each line runs one forward pass per timestep. Two separate calls
+draw the two stages, so a 24 h window costs about 72 passes. Keep ``--hours``
+modest, or lower ``--n-samples``.
 
 Usage
 -----
-List the eligible test stations for a window (no figure produced):
-    python -m scripts.plot_timeseries --time 2023-11-14:00 --hours 24
+Resolve the checkpoint from configs/checkpoints.yaml; list the eligible test
+stations for a window (no figure produced):
+    python -m scripts.plot_timeseries --dataset cosmo_peakweather \\
+        --model oat_temp_precip --time 2023-11-14:00 --hours 24
 
 Then plot one of them, or an arbitrary point:
-    python -m scripts.plot_timeseries --dataset cosmo_peakweather --station 42 \\
-        --time 2023-11-14:00 --hours 24
-    python -m scripts.plot_timeseries --center 2660000 1190000 --hours 48
+    python -m scripts.plot_timeseries --dataset cosmo_peakweather \\
+        --model oat_temp_precip --station 42 --time 2023-11-14:00 --hours 24
+    python -m scripts.plot_timeseries --dataset cosmo_peakweather \\
+        --model oat_temp_precip --center 2660000 1190000 --hours 48
+
+Or give a checkpoint path directly:
+    python -m scripts.plot_timeseries <checkpoint> --station 42 --hours 24
 """
 
 import argparse
@@ -32,42 +38,33 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from omegaconf import OmegaConf
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.data_module.setup import setup_data_and_transform
-from oat.model_module.baseline import NWPInterpolatorConfig
 from oat.plotting_module import OATPlotter
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.checkpoint_utils import load_checkpoint
-from oat.predictor_module.oat_predictor import OATPredictor
+from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
+from scripts.plotter_utils import load_plot_config, maybe_build_nwp_baseline
 
 _PROJECT_ROOT = Path(__file__).parents[1]
 OUT_DIR = _PROJECT_ROOT / "data/figures"
-_CHECKPOINTS_YAML = _PROJECT_ROOT / "configs/checkpoints.yaml"
-_PLOT_CONFIG_PATHS = {
-    ERA5MeteostatDataset: _PROJECT_ROOT
-    / "configs/dataset/era5_meteostat/plot_config.yaml",
-    CosmoPeakWeatherDataset: _PROJECT_ROOT
-    / "configs/dataset/cosmo_peakweather/plot_config.yaml",
-}
 
-# ---- Figure sizing & fonts (single source of truth; mirror in other paper figures) ----
+# ---- Figure sizing & fonts (single source; mirror in other paper figures) ----
 # A fixed width makes the output size predictable and lets every figure share one font
 # size: font points are absolute, so identical width + identical rcParams + the same
 # include-width in LaTeX give identical on-page fonts. Unlike the map figures, these
 # panels are not aspect-locked and carry no colorbar column, so the height is simply a
 # fixed number of inches per variable row plus fixed margins in inches, which track the
 # font size rather than the figure size.
-FIG_WIDTH_IN = 16.0   # target figure width (inches) — keep identical across figures
+FIG_WIDTH_IN = 16.0  # target figure width (inches) — keep identical across figures
 _ROW_HEIGHT_IN = 3.6  # inches per variable row (the plotting area itself)
-_MARGIN_H_IN = 1.4    # inches for panel titles + top/bottom margins
-plt.rcParams.update({
-    "font.size": 13,
-    "axes.titlesize": 18,
-    "axes.labelsize": 14,
-    "lines.markersize": 5,
-    "lines.linewidth": 2.0
-})
+_MARGIN_H_IN = 1.4  # inches for panel titles + top/bottom margins
+plt.rcParams.update(
+    {
+        "font.size": 13,
+        "axes.titlesize": 18,
+        "axes.labelsize": 14,
+        "lines.markersize": 5,
+        "lines.linewidth": 2.0,
+    }
+)
 
 # Fixed, semantic line colours so every row reads the same way, independent of
 # the per-variable field colormaps used by the spatial figures. Each colour is
@@ -78,13 +75,6 @@ plt.rcParams.update({
 _NWP_COLOR = "#5D5B5D"
 _PRE_OAT_COLOR = "#7b3294"  # purple
 _OAT_COLOR = "#008837"  # green
-
-
-def _load_plot_config(dataset):
-    path = _PLOT_CONFIG_PATHS.get(type(dataset))
-    if path and path.exists():
-        return OmegaConf.load(path).obs_plot_config
-    return None
 
 
 def _load_units(dataset_name: str) -> dict[str, str]:
@@ -98,8 +88,19 @@ def _load_units(dataset_name: str) -> dict[str, str]:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--dataset", default="cosmo_peakweather")
-    p.add_argument("--model", default="oat_temp_precip", help="Key in checkpoints.yaml")
+    p.add_argument(
+        "checkpoint",
+        nargs="?",
+        default=None,
+        help="Path to .ckpt file. Omit it to resolve the checkpoint "
+        "with --dataset and --model.",
+    )
+    p.add_argument(
+        "--dataset", default=None, help="Dataset key for the checkpoint registry."
+    )
+    p.add_argument(
+        "--model", default=None, help="Model key for the checkpoint registry."
+    )
     loc = p.add_mutually_exclusive_group()
     loc.add_argument(
         "--station",
@@ -129,7 +130,19 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--quantile-lo", type=float, default=0.05)
     p.add_argument("--quantile-hi", type=float, default=0.95)
     p.add_argument("--out", default=None)
-    return p.parse_args()
+    args = p.parse_args()
+    if args.checkpoint is None and (args.dataset is None or args.model is None):
+        p.error("--dataset and --model are required when no checkpoint path is given.")
+    if args.hours < 1:
+        p.error("--hours must be at least 1.")
+    return args
+
+
+def _resolve_main_checkpoint(args: argparse.Namespace) -> str:
+    """Return the main checkpoint path from the positional arg or the registry."""
+    if args.checkpoint is not None:
+        return args.checkpoint
+    return resolve_checkpoint(args.dataset, args.model)
 
 
 def _resolve_time_idx(dataset, time_str: str) -> int:
@@ -193,17 +206,27 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     args = _parse_args()
 
-    registry = OmegaConf.load(_CHECKPOINTS_YAML)
-    oat_ckpt = registry[args.dataset][args.model]
-    predictor_oat, cfg = load_checkpoint(OATPredictor, oat_ckpt, map_location="cpu")
+    checkpoint_path = _resolve_main_checkpoint(args)
+    predictor_oat, cfg = load_checkpoint(None, checkpoint_path, map_location="cpu")
     predictor_oat = predictor_oat.eval()
 
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
+    # load_from_checkpoint restores d_geo_bias but not the dataset-derived
+    # project_index_coords callable. Re-attach it from the fresh dataset:
+    # without it, ERA5 checkpoints crash with a geo-width shape mismatch once
+    # inference runs (see 2026-08-17-sphere-index-coords.md).
+    if hasattr(predictor_oat, "set_index_projection"):
+        predictor_oat.set_index_projection(dataset)
+
     test_ds = test_loader.dataset
-    obs_station_indices = list(test_ds.observed_indices)
-    eval_indices = list(test_ds.eval_indices)
+    # Cast to plain int: EvalDataset.observed_indices/eval_indices are 1-D
+    # tensors, and a 0-dim tensor hashes by identity, not value, so a plain
+    # int would never match one in a set (silently breaking the assimilated/
+    # held-out checks below). OATPlotter applies the same cast internally.
+    obs_station_indices = [int(i) for i in test_ds.observed_indices]
+    eval_indices = [int(i) for i in test_ds.eval_indices]
     logger.info(
         "Test split: %d observed, %d eval stations",
         len(obs_station_indices),
@@ -213,7 +236,7 @@ def main() -> None:
     if test_ds._time_indices is not None and len(test_ds._time_indices):
         first, last = int(test_ds._time_indices[0]), int(test_ds._time_indices[-1])
         logger.info(
-            "Test period: %s → %s (%d timesteps, dataset indices %d–%d)",
+            "Test period: %s - %s (%d timesteps, dataset indices %d-%d)",
             dataset.times[first].strftime("%Y-%m-%d %H:%M UTC"),
             dataset.times[last].strftime("%Y-%m-%d %H:%M UTC"),
             len(test_ds._time_indices),
@@ -229,11 +252,7 @@ def main() -> None:
             dataset.times[-1].strftime("%Y-%m-%d %H:%M UTC"),
         )
 
-    nwp_predictor = NWPInterpolatorPredictor(
-        config=NWPInterpolatorConfig(field_extent=dataset.nwp_extent),
-        output_var_names=dataset.config.obs_vars,
-        input_transform=dataset.get_baseline_pre_transform(),
-    ).eval()
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
 
     if args.time is not None:
         start_idx = _resolve_time_idx(dataset, args.time)
@@ -251,8 +270,12 @@ def main() -> None:
     start_iso = dataset.times[time_indices[0]].strftime("%Y-%m-%dT%H")
 
     variables = args.variables or list(predictor_oat.var_to_indx.keys())
-    plot_config = _load_plot_config(dataset)
-    units = _load_units(args.dataset)
+    unknown_vars = [v for v in variables if v not in predictor_oat.var_to_indx]
+    if unknown_vars:
+        valid = ", ".join(sorted(predictor_oat.var_to_indx.keys()))
+        raise ValueError(f"Unknown --variables {unknown_vars}. Valid names: {valid}.")
+    plot_config = load_plot_config(dataset)
+    units = _load_units(cfg.dataset.dataset_type)
 
     # With no location given, list the eligible stations and stop rather than
     # guessing one — the caller cannot be expected to know indices by heart.
@@ -290,9 +313,7 @@ def main() -> None:
         role = (
             "assimilated"
             if assimilated
-            else "held out"
-            if station_idx in set(eval_indices)
-            else "not in any split"
+            else "held out" if station_idx in set(eval_indices) else "not in any split"
         )
         loc_label = f"Station {station_idx} ({role})"
         loc_tag = f"station{station_idx}"
@@ -386,11 +407,14 @@ def main() -> None:
     fig.suptitle(f"{loc_label} — {start_iso}, {len(time_indices)} h")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    ds_tag = args.dataset if args.dataset is not None else cfg.dataset.dataset_type
+    model_tag = (
+        args.model if args.model is not None else Path(checkpoint_path).parent.name
+    )
     out_path = (
         Path(args.out)
         if args.out is not None
-        else OUT_DIR
-        / f"timeseries_{args.dataset}_{args.model}_{loc_tag}_{start_iso}_"
+        else OUT_DIR / f"timeseries_{ds_tag}_{model_tag}_{loc_tag}_{start_iso}_"
         f"{len(time_indices)}h.png"
     )
     fig.savefig(str(out_path), dpi=150, bbox_inches="tight")

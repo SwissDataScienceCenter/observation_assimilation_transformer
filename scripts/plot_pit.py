@@ -6,72 +6,177 @@ PIT values that are uniform on [0, 1] — visible as a flat histogram.
 
 Usage
 -----
-    python -m scripts.plot_pit <checkpoint> --split test --n-samples 1000 --n-timesteps 500 --no-title
+    # Resolve the checkpoint from configs/checkpoints.yaml
+    python -m scripts.plot_pit --dataset cosmo_peakweather --model oat_temp_precip
+
+    # Or give a checkpoint path directly, with a baseline outline on top
+    python -m scripts.plot_pit <checkpoint> --baseline uninformed_temp_precip \\
+        --dataset cosmo_peakweather --split test --n-samples 1000 --n-timesteps 500
 """
+
 import argparse
 import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import OmegaConf
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.data_module.setup import setup_data_and_transform
 from oat.plotting_module import OATPlotter
-from oat.predictor_module.checkpoint_utils import load_checkpoint
-from oat.predictor_module.oat_predictor import OATPredictor
+from oat.predictor_module.checkpoint_utils import (
+    load_checkpoint,
+    resolve_checkpoint,
+)
+from scripts.plotter_utils import load_plot_config
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
-_PROJECT_ROOT = Path(__file__).parents[1]
-_PLOT_CONFIG_PATHS = {
-    ERA5MeteostatDataset: _PROJECT_ROOT / "configs/dataset/era5_meteostat/plot_config.yaml",
-    CosmoPeakWeatherDataset: _PROJECT_ROOT / "configs/dataset/cosmo_peakweather/plot_config.yaml",
-}
 
 MODEL_VAR_TO_FULL_VAR_NAME = {
-    "temp": "Temperature",
-    "prcp": "Precipitation",
+    "temperature": "Temperature",
+    "precipitation": "Precipitation",
 }
 
-
-def _load_plot_config(dataset):
-    path = _PLOT_CONFIG_PATHS.get(type(dataset))
-    if path and path.exists():
-        return OmegaConf.load(path).obs_plot_config
-    return None
+N_BINS = 20
 
 
 def _parse_args():
     p = argparse.ArgumentParser(description="PIT calibration histogram per variable.")
-    p.add_argument("checkpoint", help="Path to .ckpt file")
-    p.add_argument("--split", choices=["val", "test"], default="test",
-                   help="Which split to evaluate (default: test)")
-    p.add_argument("--n-samples", type=int, default=200, metavar="N",
-                   help="Samples drawn per query point (default: 200)")
-    p.add_argument("--n-timesteps", type=int, default=None, metavar="N",
-                   help="Subsample this many timesteps for speed (default: all)")
+    p.add_argument(
+        "checkpoint",
+        nargs="?",
+        default=None,
+        help="Path to .ckpt file. Omit it to resolve the checkpoint "
+        "with --dataset and --model.",
+    )
+    p.add_argument(
+        "--dataset", default=None, help="Dataset key for the checkpoint registry."
+    )
+    p.add_argument(
+        "--model", default=None, help="Model key for the checkpoint registry."
+    )
+    p.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline model: a registry key (resolved with --dataset) "
+        "or a .ckpt path. Its PIT is drawn as an outline over the bars.",
+    )
+    p.add_argument(
+        "--split",
+        choices=["val", "test"],
+        default="test",
+        help="Which split to evaluate (default: test)",
+    )
+    p.add_argument(
+        "--n-samples",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Samples drawn per query point (default: 200)",
+    )
+    p.add_argument(
+        "--n-timesteps",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Subsample this many timesteps for speed (default: all)",
+    )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--no-title", action="store_true", default=False,
-                   help="Suppress the figure title (for paper figures). The metadata "
-                        "(split, timesteps, samples) is encoded in the output filename instead.")
-    p.add_argument("--out", default=None, metavar="PATH",
-                   help="Output path stem (extension ignored; .png and .pdf are both written). "
-                        "Default: data/figures/<tag>_pit_<split>_<T>steps_<S>samples")
-    return p.parse_args()
+    p.add_argument(
+        "--no-title",
+        action="store_true",
+        default=False,
+        help="Suppress the figure title (for paper figures). The metadata "
+        "(split, timesteps, samples) is encoded in the output filename instead.",
+    )
+    p.add_argument(
+        "--out",
+        default=None,
+        metavar="PATH",
+        help="Output path stem (extension ignored; .png and .pdf are both written). "
+        "Default: data/figures/<tag>_pit_<split>_<T>steps_<S>samples",
+    )
+    args = p.parse_args()
+    if args.checkpoint is None and (args.dataset is None or args.model is None):
+        p.error("--dataset and --model are required when no checkpoint path is given.")
+    return args
+
+
+def _resolve_main_checkpoint(args: argparse.Namespace) -> str:
+    """Return the main checkpoint path from the positional arg or the registry."""
+    if args.checkpoint is not None:
+        return args.checkpoint
+    return resolve_checkpoint(args.dataset, args.model)
+
+
+def _resolve_baseline_checkpoint(baseline: str, dataset: str | None) -> tuple[str, str]:
+    """Return (path, label) for the baseline from a registry key or a file path."""
+    if Path(baseline).exists():
+        return baseline, Path(baseline).parent.name
+    if dataset is None:
+        raise ValueError(
+            f"Baseline {baseline!r} is not a file. Give --dataset to resolve it "
+            "as a registry key."
+        )
+    try:
+        return resolve_checkpoint(dataset, baseline), baseline
+    except KeyError:
+        raise ValueError(
+            f"Baseline {baseline!r} is not a file and not a registry key for "
+            f"dataset={dataset!r}."
+        ) from None
+
+
+def _plot_baseline_outline(
+    plotter: OATPlotter,
+    ax,
+    baseline_data: dict | None,
+    var: str,
+    conditional: bool,
+    label: str,
+) -> None:
+    """Draw the baseline PIT as an outline on ax. Draw nothing if it has no data."""
+    if baseline_data is None or var not in baseline_data:
+        return
+    b = baseline_data[var]
+    if conditional:
+        counts = b.get("pit_nonzero_counts")
+        n = b.get("pit_nonzero_n", 0)
+    else:
+        counts = b["pit_counts"]
+        n = b["pit_n"]
+    if counts is None or n == 0:
+        return
+    plotter.plot_pit(ax, counts, n_bins=N_BINS, total=n, histtype="step", label=label)
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
     args = _parse_args()
 
-    predictor, cfg = load_checkpoint(OATPredictor, args.checkpoint, map_location="cpu")
+    checkpoint_path = _resolve_main_checkpoint(args)
+    predictor, cfg = load_checkpoint(None, checkpoint_path, map_location="cpu")
     cfg.dataset.data_points_for_stats = 0
     predictor = predictor.eval()
 
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
+
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+
+    baseline_predictor = None
+    baseline_tag = None
+    if args.baseline is not None:
+        baseline_path, baseline_tag = _resolve_baseline_checkpoint(
+            args.baseline, args.dataset
+        )
+        baseline_predictor, _ = load_checkpoint(None, baseline_path, map_location="cpu")
+        baseline_predictor = baseline_predictor.eval()
+        if hasattr(baseline_predictor, "set_index_projection"):
+            baseline_predictor.set_index_projection(dataset)
+        logger.info("Baseline: %s", baseline_path)
 
     split_loader = val_loader if args.split == "val" else test_loader
     split_dataset = split_loader.dataset
@@ -79,24 +184,31 @@ def main() -> None:
     eval_indices = list(split_dataset.eval_indices)  # type: ignore[attr-defined]
 
     if not eval_indices:
-        logger.error("No eval stations for split '%s' — cannot compute PIT.", args.split)
+        logger.error(
+            "No eval stations for split '%s' — cannot compute PIT.", args.split
+        )
         return
 
     logger.info(
         "Split '%s': %d obs stations, %d eval stations",
-        args.split, len(obs_station_indices), len(eval_indices),
+        args.split,
+        len(obs_station_indices),
+        len(eval_indices),
     )
 
-    # Evaluate ONLY the split's held-out time window, as positions into the BASE dataset
-    # (which is what compute_pit indexes: self.dataset[time_idx], obs_tensor[time_idx]).
-    # EvalDataset stores this window in `_time_indices`; with test_days>0 it is exactly the
-    # test window. We deliberately do NOT fall back to range(len): that would evaluate the
-    # first N base timesteps (inside the training period) instead of the test window.
+    # Evaluate ONLY the split's held-out time window, as positions into the BASE
+    # dataset (which is what compute_pit indexes: self.dataset[time_idx],
+    # obs_tensor[time_idx]). EvalDataset stores this window in `_time_indices`;
+    # with test_days>0 it is exactly the test window. We deliberately do NOT
+    # fall back to range(len): that would evaluate the first N base timesteps
+    # (inside the training period) instead of the test window.
     split_time_indices = getattr(split_dataset, "_time_indices", None)
     if split_time_indices is None:
         logger.error(
-            "The '%s' split has no time window (_time_indices is None) — refusing to guess. "
-            "This script requires a temporal split (test_days > 0).", args.split,
+            "The '%s' split has no time window (_time_indices is None) — "
+            "refusing to guess. This script requires a temporal split "
+            "(test_days > 0).",
+            args.split,
         )
         return
     time_indices: list[int] = [int(t) for t in split_time_indices]
@@ -105,7 +217,8 @@ def main() -> None:
     if args.n_timesteps is not None and args.n_timesteps < n_total:
         rng = np.random.default_rng(args.seed)
         time_indices = sorted(
-            int(t) for t in rng.choice(time_indices, size=args.n_timesteps, replace=False)
+            int(t)
+            for t in rng.choice(time_indices, size=args.n_timesteps, replace=False)
         )
         logger.info("Subsampled to %d / %d timesteps", len(time_indices), n_total)
 
@@ -116,10 +229,15 @@ def main() -> None:
         eval_indices=eval_indices,
         n_samples=args.n_samples,
         device="cpu",
-        plot_config=_load_plot_config(dataset),
+        plot_config=load_plot_config(dataset),
     )
 
-    all_data = plotter.compute_pit(time_indices)
+    main_data = plotter.compute_pit(time_indices, n_bins=N_BINS)
+    baseline_data = None
+    if baseline_predictor is not None:
+        baseline_data = plotter.compute_pit(
+            time_indices, n_bins=N_BINS, predictor=baseline_predictor
+        )
 
     try:
         var_to_dist = predictor.model.output_head.variable_to_distribution
@@ -133,37 +251,79 @@ def main() -> None:
     col_counts = [2 if v in zi_vars else 1 for v in vars_list]
     n_cols = sum(col_counts)
     width_ratios = [3.5 for v in vars_list for _ in range(2 if v in zi_vars else 1)]
-    fig, axes = plt.subplots(1, n_cols, figsize=(3.5 * n_cols, 3),
-                             gridspec_kw={"width_ratios": width_ratios, "wspace": 0.35})
+    fig, axes = plt.subplots(
+        1,
+        n_cols,
+        figsize=(3.5 * n_cols, 3),
+        gridspec_kw={"width_ratios": width_ratios, "wspace": 0.35},
+    )
     axes = np.atleast_1d(axes)
 
-    ckpt_tag = Path(args.checkpoint).parent.name
+    ckpt_tag = Path(checkpoint_path).parent.name
     if not args.no_title:
-        fig.suptitle(
+        title = (
             f"PIT calibration — {ckpt_tag}\n"
-            f"{args.split} split  |  {len(time_indices)} timesteps  |  {args.n_samples} samples",
-            y=1.03,
+            f"{args.split} split  |  {len(time_indices)} timesteps"
+            f"  |  {args.n_samples} samples"
         )
+        if baseline_tag is not None:
+            title += f"  |  vs {baseline_tag}"
+        fig.suptitle(title, y=1.03)
 
     col = 0
     for var in vars_list:
-        data = all_data[var]
+        data = main_data[var]
         if var in zi_vars:
             ax_rel = axes[col]
             ax_pit = axes[col + 1]
-            plotter.plot_zero_reliability(ax_rel, data["gate_pred"], data["is_zero"])
-            ax_rel.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nzero probability", fontsize=9)
-            # Use pit_nonzero (conditional on non-zero obs); swap for data["pit"] for full PIT.
-            n_nz = len(data["pit_nonzero"])
-            plotter.plot_pit(ax_pit, data["pit_nonzero"])
-            ax_pit.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nPIT | non-zero  (n={n_nz:,})", fontsize=9)
+            plotter.plot_zero_reliability(
+                ax_rel,
+                data["gate_counts"],
+                data["gate_zero_sums"],
+                data["gate_pred_sums"],
+            )
+            ax_rel.set_title(
+                f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nzero probability",
+                fontsize=9,
+            )
+            # Use pit_nonzero (conditional on non-zero obs).
+            n_nz = data["pit_nonzero_n"]
+            plotter.plot_pit(
+                ax_pit, data["pit_nonzero_counts"], n_bins=N_BINS, total=n_nz
+            )
+            if baseline_tag is not None:
+                _plot_baseline_outline(
+                    plotter,
+                    ax_pit,
+                    baseline_data,
+                    var,
+                    conditional=True,
+                    label=baseline_tag,
+                )
+            ax_pit.set_title(
+                f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n"
+                f"PIT | non-zero  (n={n_nz:,})",
+                fontsize=9,
+            )
             logger.info("%s: %d non-zero PIT values", var, n_nz)
             col += 2
         else:
             ax = axes[col]
-            plotter.plot_pit(ax, data["pit"])
-            ax.set_title(f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n{ax.get_title()}", fontsize=9)
-            logger.info("%s: %d PIT values", var, len(data["pit"]))
+            plotter.plot_pit(ax, data["pit_counts"], n_bins=N_BINS, total=data["pit_n"])
+            if baseline_tag is not None:
+                _plot_baseline_outline(
+                    plotter,
+                    ax,
+                    baseline_data,
+                    var,
+                    conditional=False,
+                    label=baseline_tag,
+                )
+            ax.set_title(
+                f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n{ax.get_title()}",
+                fontsize=9,
+            )
+            logger.info("%s: %d PIT values", var, data["pit_n"])
             col += 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -172,9 +332,13 @@ def main() -> None:
     if args.out is not None:
         stem = Path(args.out).with_suffix("")
     else:
-        stem = OUT_DIR / (
-            f"{ckpt_tag}_pit_{args.split}_{len(time_indices)}steps_{args.n_samples}samples"
+        name = (
+            f"{ckpt_tag}_pit_{args.split}_{len(time_indices)}steps"
+            f"_{args.n_samples}samples"
         )
+        if baseline_tag is not None:
+            name += f"_vs_{baseline_tag}"
+        stem = OUT_DIR / name
     for ext in ("png", "pdf"):
         out_path = f"{stem}.{ext}"
         fig.savefig(out_path, dpi=150, bbox_inches="tight")

@@ -27,13 +27,14 @@ import torch
 from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
-from oat.model_module.baseline import NWPInterpolatorConfig
-from oat.plotting_module import OATPlotter
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
 from oat.predictor_module.checkpoint_utils import (
     _DEFAULT_REGISTRY,
     load_checkpoint,
     resolve_checkpoint,
+)
+from scripts.plotter_utils import (
+    maybe_build_nwp_baseline,
+    select_plotter_cls,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
@@ -174,12 +175,12 @@ def main() -> None:
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
 
     if is_interpolator:
-        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-        predictor = NWPInterpolatorPredictor(
-            config=nwp_config,
-            output_var_names=dataset.config.obs_vars,
-            input_transform=dataset.get_baseline_pre_transform(),
-        ).eval()
+        from oat.predictor_module.baseline_predictor import create_baseline_predictor
+
+        predictor = create_baseline_predictor(dataset).eval()
+
+    if not is_interpolator and hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
 
     split_loader = val_loader if args.split == "val" else test_loader
     split_ds = split_loader.dataset  # EvalDataset
@@ -200,7 +201,8 @@ def main() -> None:
         args.split, len(time_indices), len(obs_indices), len(eval_indices),
     )
 
-    plotter = OATPlotter(
+    PlotterCls = select_plotter_cls(dataset)
+    plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
         obs_station_indices=obs_indices,
@@ -211,12 +213,7 @@ def main() -> None:
 
     nwp_predictor = None
     if args.baseline and not is_interpolator:
-        nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-        nwp_predictor = NWPInterpolatorPredictor(
-            config=nwp_config,
-            output_var_names=dataset.config.obs_vars,
-            input_transform=dataset.get_baseline_pre_transform(),
-        ).eval()
+        nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
 
     var_names = list(predictor.var_to_indx.keys())
 

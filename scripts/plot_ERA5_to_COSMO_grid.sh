@@ -14,17 +14,20 @@ source .venv/bin/activate
 start=$(date +%s)
 
 python -m scripts.plot_ERA5_to_COSMO_grid \
-    '/scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/debugging/oat_training_20260615_job255139/best-model-epoch=15-val_loss=0.5021.ckpt' \
+    --dataset era5_meteostat \
+    --model oat_temp_precip \
+    --uninformed-checkpoint uninformed_temp_precip \
     --var prcp \
     --time 2024-06-21:12 \
     --nwp-var TOT_PREC_1H \
-    --era5-var tp
+    --era5-var tp \
+    --split test
 
-# For wind:
-    # --var wspd \
+# For temperature:
+    # --var temp \
     # --time 2024-06-21:12 \
-    # --nwp-var wind_speed \
-    # --era5-var wind_speed
+    # --nwp-var T_2M \
+    # --era5-var 2t
 
 
 end=$(date +%s)

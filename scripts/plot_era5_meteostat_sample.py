@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from omegaconf import OmegaConf
 
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
+from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
 
 _CFG_DIR = Path(__file__).parent.parent / "configs" / "dataset" / "era5_meteostat"
 

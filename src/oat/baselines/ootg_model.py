@@ -23,11 +23,11 @@ from tnp.networks.transformer import GriddedTransformerEncoder
 from tnp.utils.helpers import preprocess_observations
 
 from oat.baselines.ootg_likelihood import MixedVariableLikelihood, decoder_out_dim
-from oat.model_module.topographic_encoder import CNNTopographyEncoder
+from oat.model_module.topographic_encoder import MLPTopographyEncoder, TopographyEncoder
 
 
 class TopoOOTGGriddedTNPEncoder(OOTGGriddedTNPEncoder):
-    """OOTG encoder that injects high-res topo into context/target tokens.
+    """OOTG encoder that injects pointwise topo into context/target tokens.
 
     Re-implements the parent forward (which is not cleanly hookable) to
     concatenate topo_encoder(topo_c/topo_t) into the zc/zt inputs before
@@ -35,15 +35,12 @@ class TopoOOTGGriddedTNPEncoder(OOTGGriddedTNPEncoder):
     """
 
     def __init__(
-        self, *args: Any, topo_encoder: CNNTopographyEncoder, **kwargs: Any
+        self, *args: Any, topo_encoder: TopographyEncoder, **kwargs: Any
     ) -> None:
         super().__init__(*args, **kwargs)
         self.topo_encoder = topo_encoder
 
     def _encode_topo(self, topo: torch.Tensor) -> torch.Tensor:
-        # CNNTopographyEncoder.forward reshapes with an inferred (-1) dim,
-        # which torch refuses when the token count is 0 (ambiguous size).
-        # Short-circuit to an empty tensor of the right shape in that case.
         if topo.shape[1] == 0:
             return topo.new_zeros(*topo.shape[:2], self.topo_encoder.out_channels)
         return self.topo_encoder(topo)
@@ -123,9 +120,7 @@ def build_ootg_model(
     use_topo: bool = False,
     topo_in_channels: int | None = None,
     topo_out_channels: int = 32,
-    topo_n_layers: int = 3,
-    topo_kernel_size: int = 3,
-    topo_initial_hw: tuple[int, int] | None = None,
+    topo_hidden_dims: list[int] | None = None,
 ) -> OOTGGriddedTNP:
     """Build OOTGGriddedTNP with per-variable output distributions.
 
@@ -205,15 +200,13 @@ def build_ootg_model(
     )
 
     if use_topo:
-        assert (
-            topo_in_channels is not None and topo_initial_hw is not None
-        ), "use_topo=True requires topo_in_channels and topo_initial_hw"
-        topo_encoder = CNNTopographyEncoder(
+        assert topo_in_channels is not None, (
+            "use_topo=True requires topo_in_channels"
+        )
+        topo_encoder = MLPTopographyEncoder(
             in_channels=topo_in_channels,
             out_channels=topo_out_channels,
-            n_layers=topo_n_layers,
-            kernel_sizes=topo_kernel_size,
-            initial_hw=topo_initial_hw,
+            hidden_dims=topo_hidden_dims,
             use_batchnorm=True,
         )
         encoder = TopoOOTGGriddedTNPEncoder(

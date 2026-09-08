@@ -18,31 +18,25 @@ def make_config(**kwargs) -> GPBaselineConfig:
     defaults = dict(
         obs_vars=["temperature"],
         nwp_vars=NWP_VARS,
-        field_extent=FIELD_EXTENT,
     )
     defaults.update(kwargs)
     return GPBaselineConfig(**defaults)
 
 
-def make_batch(B=2, N_obs=10, N_q=8, n_nwp=3, n_topo=5, H=32, W=32):
-    """Synthetic batch matching CosmoPeakWeather format (one obs var)."""
-    obs_coords = torch.rand(B, N_obs, 2) * 700000 + 2255500.0
-    query_coords = torch.rand(B, N_q, 2) * 700000 + 2255500.0
-    global_data = {
-        "global_field": torch.randn(B, n_nwp + n_topo, H, W),
-        "time_emb": torch.randn(B, 4),
-    }
+def make_batch(B=2, N_obs=10, N_q=8, n_nwp=3, n_topo=5):
+    """Synthetic field-shaped batch: flat per-point tensors, no grid/patches."""
+    global_data = {"time_emb": torch.randn(B, 4)}
     observation_data = {
-        "coords": obs_coords,
         "geo": torch.randn(B, N_obs, 3),
-        "topo": torch.randn(B, N_obs, n_topo, 32, 32),
+        "global_tokens": torch.randn(B, N_obs, n_nwp),
+        "topo": torch.randn(B, N_obs, n_topo),
         "obs": torch.randn(B, N_obs, 1),
         "mask_obs": torch.ones(B, N_obs, 1),
     }
     query_data = {
-        "coords": query_coords,
         "geo": torch.randn(B, N_q, 3),
-        "topo": torch.randn(B, N_q, n_topo, 32, 32),
+        "global_tokens": torch.randn(B, N_q, n_nwp),
+        "topo": torch.randn(B, N_q, n_topo),
         "obs": torch.randn(B, N_q, 1),
         "mask_obs": torch.ones(B, N_q, 1),
     }
@@ -78,21 +72,19 @@ class TestGPBaselineFeatureDim:
         assert model.feature_dim == 10
 
     def test_feature_dim_geo_nwp_time_topography(self):
-        topo_cfg = {
-            "in_channels": 5,
-            "out_channels": 16,
-            "n_layers": 3,
-            "initial_hw": (32, 32),
-            "kernel_sizes": 3,
-            "act_fn": "ReLU",
-            "use_batchnorm": True,
-        }
+        topo_cfg = TopographicEncoderConfig(
+            in_channels=5,
+            out_channels=16,
+            type="MLP",
+            hidden_dims=(8,),
+            act_fn="ReLU",
+        )
         model = GPBaseline(
             make_config(
                 use_nwp=True,
                 use_time_emb=True,
                 use_topography=True,
-                topography_encoder_kwargs=topo_cfg,
+                topographic_encoder=topo_cfg,
             )
         )
         assert model.feature_dim == 3 + 3 + 4 + 16
@@ -133,19 +125,8 @@ class TestGPBaselineFeatureSlicing:
             make_config(use_nwp=True, use_time_emb=False, use_topography=False)
         )
         assert model.mean_indices == (3, 4, 5)
-        assert model.stationary_covar_indices == (
-            0,
-            1,
-            2,
-        )
-        assert model.non_stationary_covar_indices == (
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-        )
+        assert model.stationary_covar_indices == (0, 1, 2)
+        assert model.non_stationary_covar_indices == (0, 1, 2, 3, 4, 5)
 
     def test_time_emb_excluded_from_both_by_default(self):
         # geo=0-2, nwp=3-5, time_emb=6-9 (not in groups), feature_dim=10
@@ -153,19 +134,8 @@ class TestGPBaselineFeatureSlicing:
             make_config(use_nwp=True, use_time_emb=True, use_topography=False)
         )
         assert model.mean_indices == (3, 4, 5)
-        assert model.stationary_covar_indices == (
-            0,
-            1,
-            2,
-        )
-        assert model.non_stationary_covar_indices == (
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-        )
+        assert model.stationary_covar_indices == (0, 1, 2)
+        assert model.non_stationary_covar_indices == (0, 1, 2, 3, 4, 5)
         assert model.feature_dim == 10
 
     def test_time_emb_included_when_in_groups(self):
@@ -211,21 +181,19 @@ class TestGPBaselineFeatureExtraction:
         assert feats.shape == (B, N_obs, 10)
 
     def test_shape_includes_topography_embedding(self):
-        topo_cfg = {
-            "in_channels": 5,
-            "out_channels": 16,
-            "n_layers": 3,
-            "initial_hw": (32, 32),
-            "kernel_sizes": 3,
-            "act_fn": "ReLU",
-            "use_batchnorm": True,
-        }
+        topo_cfg = TopographicEncoderConfig(
+            in_channels=5,
+            out_channels=16,
+            type="MLP",
+            hidden_dims=(8,),
+            act_fn="ReLU",
+        )
         model = GPBaseline(
             make_config(
                 use_nwp=True,
                 use_time_emb=True,
                 use_topography=True,
-                topography_encoder_kwargs=topo_cfg,
+                topographic_encoder=topo_cfg,
             )
         )
         B, N_obs = 2, 10
@@ -248,6 +216,25 @@ class TestGPBaselineFeatureExtraction:
         qry_feats = model._extract_features(global_data, query_data)
         assert obs_feats.shape[-1] == qry_feats.shape[-1]
 
+    def test_extra_global_channels_are_sliced_to_nwp_prefix(self):
+        # The global-role field may append extra context channels (e.g. topo.*)
+        # after the NWP scalars (see validate_field_config_against_scalars).
+        # The GP feature vector must consume only the len(nwp_vars) prefix, so
+        # the config-derived offsets for time_emb/topo/oat stay aligned.
+        model = GPBaseline(make_config(use_nwp=True, use_time_emb=True))
+        B, N_obs = 2, 10
+        global_data, obs_data, _ = make_batch(B=B, N_obs=N_obs)
+        obs_data["global_tokens"] = torch.cat(
+            [obs_data["global_tokens"], torch.randn(B, N_obs, 2)], dim=-1
+        )
+        feats = model._extract_features(global_data, obs_data)
+        assert feats.shape == (B, N_obs, model.feature_dim)
+        # NWP block keeps the leading nwp_vars channels, extras are dropped.
+        assert torch.equal(feats[..., 3:6], obs_data["global_tokens"][..., :3])
+        # time_emb still lands at its configured offset (6:10), unshifted.
+        time_emb = global_data["time_emb"].unsqueeze(1).expand(-1, N_obs, -1)
+        assert torch.equal(feats[..., 6:10], time_emb)
+
 
 class TestGPBaselineForward:
     def test_forward_output_shape(self):
@@ -261,6 +248,20 @@ class TestGPBaselineForward:
     def test_requires_observation_flag(self):
         model = GPBaseline(make_config())
         assert model.requires_observation is True
+
+    def test_forward_with_extra_global_channels(self):
+        model = GPBaseline(make_config(num_samples=5))
+        B, N_obs, N_q = 2, 10, 6
+        global_data, obs_data, query_data = make_batch(B=B, N_obs=N_obs, N_q=N_q)
+        obs_data["global_tokens"] = torch.cat(
+            [obs_data["global_tokens"], torch.randn(B, N_obs, 2)], dim=-1
+        )
+        query_data["global_tokens"] = torch.cat(
+            [query_data["global_tokens"], torch.randn(B, N_q, 2)], dim=-1
+        )
+        out = model.forward(global_data, obs_data, query_data, num_samples=5)
+        assert out["samples"].shape == (B, N_q, 5, 1)
+        assert torch.isfinite(out["samples"]).all()
 
 
 class TestGPBaselineForwardWithLossCRPS:
@@ -358,18 +359,25 @@ class TestGPBaselineForwardWithLossMLL:
 
 
 def make_pre_oat_config(d_model=16, n_topo=5, n_nwp=3):
-    """UninformedOAT trunk config (no output head) for use as the GP mean."""
+    """UninformedOAT trunk config (no output head) for use as the GP mean.
+
+    Field-mode: Point global encoder over global_tokens, MLP topo encoder over
+    flat topo values -- matches what make_batch() supplies.
+    """
     return UninformedOATConfig(
         global_encoder=GlobalEncoderConfig(
-            type="MLP",
-            in_channels=n_nwp + n_topo,
+            type="Point",
+            in_channels=n_nwp,
             out_channels=d_model // 2,
             hidden_dims=(8,),
             field_extent_min=tuple(FIELD_EXTENT["min"]),
             field_extent_max=tuple(FIELD_EXTENT["max"]),
         ),
         topographic_encoder=TopographicEncoderConfig(
-            in_channels=n_topo, out_channels=d_model // 2, n_layers=2
+            type="MLP",
+            in_channels=n_topo,
+            out_channels=d_model // 2,
+            hidden_dims=(8,),
         ),
         nwp_topo_fusion=NwpTopoFusionConfig(
             cond_dim=4, hidden_channels=d_model, out_channels=d_model
@@ -437,3 +445,25 @@ class TestGPBaselinePreOATMean:
         trunk_grads = [p.grad for p in model.pre_oat.parameters() if p.requires_grad]
         assert trunk_grads
         assert any(g is not None and g.abs().sum() > 0 for g in trunk_grads)
+
+
+def test_gp_geo_dim_shifts_feature_group_offsets():
+    from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
+
+    common = dict(
+        obs_vars=["t"],
+        nwp_vars=["a", "b"],
+        use_nwp=True,
+        use_time_emb=False,
+        use_topography=False,
+        mean_groups=["nwp"],
+        stationary_cov_groups=["geo"],
+        non_stationary_cov_groups=["geo", "nwp"],
+    )
+    # default geo_dim == 3: nwp indices start at 3
+    m3 = GPBaseline(GPBaselineConfig(geo_dim=3, **common))
+    # geo_dim == 4 (ERA5 sphere): nwp indices shift to start at 4
+    m4 = GPBaseline(GPBaseline.__init__.__globals__["GPBaselineConfig"](geo_dim=4, **common))
+    # The stationary kernel is defined over geo indices; its ard width equals geo_dim.
+    assert m3.config.geo_dim == 3
+    assert m4.config.geo_dim == 4

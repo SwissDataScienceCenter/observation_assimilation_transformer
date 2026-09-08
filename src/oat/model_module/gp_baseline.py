@@ -19,9 +19,13 @@ from obsweatherscale.models.mlp import MLP
 # from obsweatherscale.training.losses import crps_normal
 import torch.distributions as dist
 
-from oat.model_module.baseline import NWPInterpolator, NWPInterpolatorConfig
-from oat.model_module.model import UninformedOAT, UninformedOATConfig
-from oat.model_module.topographic_encoder import CNNTopographyEncoder
+from oat.model_module.model import (
+    TopographicEncoderConfig,
+    UninformedOAT,
+    UninformedOATConfig,
+    build_topographic_encoder,
+)
+from oat.model_module.topographic_encoder import TopographyEncoder
 
 _VALID_LOSS_FNS = ("mll", "crps")
 
@@ -87,11 +91,10 @@ def crps_normal(
 class GPBaselineConfig:
     obs_vars: List[str]
     nwp_vars: List[str]
-    field_extent: Dict[str, Any]
     use_nwp: bool = True
     use_time_emb: bool = True
     use_topography: bool = False
-    topography_encoder_kwargs: Optional[Dict[str, Any]] = None
+    topographic_encoder: Optional[TopographicEncoderConfig] = None
     # When set, the uninformed OAT trunk (Eq. 1-7) is built as a submodule and
     # its fusion tokens become the "oat" feature group. Trained end-to-end with
     # the rest of the GP -- no pretrained weights are loaded.
@@ -99,6 +102,7 @@ class GPBaselineConfig:
     mean_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_hidden_dims: Tuple[int, ...] = (32, 32)
     kernel_embed_dim: int = 4
+    geo_dim: int = 3
     mean_groups: List[str] = field(default_factory=lambda: ["nwp", "topo"])
     stationary_cov_groups: List[str] = field(
         default_factory=lambda: [
@@ -146,8 +150,8 @@ class GPBaseline(nn.Module):
         offset = 0
 
         # geo
-        geo_indices = list(range(offset, offset + 3))
-        offset += 3
+        geo_indices = list(range(offset, offset + config.geo_dim))
+        offset += config.geo_dim
         if "geo" in config.mean_groups:
             mean_indices += geo_indices
         if "geo" in config.stationary_cov_groups:
@@ -165,11 +169,6 @@ class GPBaseline(nn.Module):
                 stationary_covar_indices += nwp_indices
             if "nwp" in config.non_stationary_cov_groups:
                 non_stationary_covar_indices += nwp_indices
-            self.nwp_interpolator: Optional[NWPInterpolator] = NWPInterpolator(
-                NWPInterpolatorConfig(field_extent=config.field_extent)
-            )
-        else:
-            self.nwp_interpolator = None
 
         if config.use_time_emb:
             time_emb_indices = list(range(offset, offset + 4))
@@ -182,15 +181,14 @@ class GPBaseline(nn.Module):
                 non_stationary_covar_indices += time_emb_indices
 
         if config.use_topography:
-            if config.topography_encoder_kwargs is None:
+            if config.topographic_encoder is None:
                 raise ValueError(
-                    "topography_encoder_kwargs must be provided when "
-                    "use_topography=True."
+                    "topographic_encoder must be provided when " "use_topography=True."
                 )
-            self.topography_encoder: Optional[CNNTopographyEncoder] = (
-                CNNTopographyEncoder(**config.topography_encoder_kwargs)
+            self.topography_encoder: Optional[TopographyEncoder] = (
+                build_topographic_encoder(config.topographic_encoder)
             )
-            n = int(config.topography_encoder_kwargs["out_channels"])
+            n = int(config.topographic_encoder.out_channels)
             topo_indices = list(range(offset, offset + n))
             offset += n
             if "topo" in config.mean_groups:
@@ -320,14 +318,14 @@ class GPBaseline(nn.Module):
     ) -> torch.Tensor:
         parts: list[torch.Tensor] = [local_data["geo"]]
 
-        if self.nwp_interpolator is not None:
-            n_nwp = len(self.config.nwp_vars)
-            nwp_global_data = {
-                **global_data,
-                "global_field": global_data["global_field"][:, :n_nwp],
-            }
-            nwp_feats = self.nwp_interpolator(nwp_global_data, local_data)
-            parts.append(nwp_feats)
+        if self.config.use_nwp:
+            # The global-role field may carry extra context channels (e.g.
+            # topo.*) after the nwp_vars prefix (allowed by
+            # validate_field_config_against_scalars). Only the nwp prefix
+            # belongs to this feature group -- appending the full tensor would
+            # grow the feature vector and shift every subsequent group offset
+            # (time_emb/topo/oat) computed in __init__.
+            parts.append(local_data["global_tokens"][..., : len(self.config.nwp_vars)])
 
         if self.config.use_time_emb:
             num_points = local_data["geo"].shape[1]

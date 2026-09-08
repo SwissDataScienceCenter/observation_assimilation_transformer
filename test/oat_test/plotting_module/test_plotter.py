@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import matplotlib.pyplot as plt
 
+from oat.data_module.field import Field
 from oat.plotting_module.plotter import OATPlotter
 
 
@@ -36,6 +37,25 @@ def _make_baseline_predictor(N_q: int = 1, n_samples: int = 10, n_vars: int = 2)
     return predictor
 
 
+def _make_field_dict(n_points: int, n_vars: int, idx: int, coords_xy: torch.Tensor):
+    t_col = torch.full((n_points, 1), float(idx))
+    coords3 = torch.cat([coords_xy, t_col], dim=-1)
+    obs_names = ["temp", "wspd"][:n_vars]
+    return {
+        "obs": Field(
+            coords3,
+            torch.zeros(n_points, n_vars),
+            obs_names,
+            torch.ones(n_points, n_vars),
+        ),
+        "nwp": Field(coords3, torch.zeros(n_points, n_vars), obs_names, None),
+        "geo": Field(coords3, torch.zeros(n_points, 3), ["x", "y", "dem"], None),
+        "topo": Field(
+            coords3, torch.zeros(n_points, 5), [f"topo{i}" for i in range(5)], None
+        ),
+    }
+
+
 def _make_dataset(
     n_stations: int = 5,
     n_times: int = 4,
@@ -47,24 +67,24 @@ def _make_dataset(
     ds.obs_tensor = torch.zeros(n_times, n_stations, n_vars)
     ds.obs_mask_tensor = torch.ones(n_times, n_stations, n_vars)
     ds.times = pd.date_range("2022-01-01", periods=n_times, freq="h", tz="UTC")
-    ds.__getitem__.return_value = {
-        "global_data": {
-            "global_field": torch.zeros(4, 8, 8),
-            "time_emb": torch.zeros(4),
-        },
-        "observation_data": {
-            "coords": torch.zeros(n_stations, 2),
-            "geo": torch.zeros(n_stations, 3),
-            "topo": torch.zeros(n_stations, 1, 32, 32),
-            "obs": torch.zeros(n_stations, n_vars),
-            "mask_obs": torch.ones(n_stations, n_vars),
-        },
+    ds.roles.return_value = {
+        "target": "obs",
+        "global": "nwp",
+        "geo_bias": "geo",
+        "topo": "topo",
     }
-    ds.get_query.return_value = {
-        "coords": torch.zeros(1, 2),
-        "topo": torch.zeros(1, 1, 32, 32),
-        "geo": torch.zeros(1, 3),
+    station_xy = torch.zeros(n_stations, 2)
+    ds.__getitem__.side_effect = lambda idx: {
+        "index": idx,
+        "fields": _make_field_dict(n_stations, n_vars, idx, station_xy),
     }
+
+    def _get_query(query_coords, idx):
+        fields = _make_field_dict(query_coords.shape[0], n_vars, idx, query_coords)
+        del fields["obs"]  # get_query only returns query:true fields
+        return fields
+
+    ds.get_query.side_effect = _get_query
     config = MagicMock()
     config.obs_plot_config = plot_config
     ds.config = config
@@ -131,6 +151,20 @@ def test_run_inference_omits_stage_for_oat():
     )
     plotter._run_inference(0, torch.zeros(3, 2))
     assert "stage" not in predictor.predict_step.call_args.kwargs
+
+
+def test_run_inference_rejects_global_grid_predictor():
+    """OATPlotter never assembles global_data; a predictor that needs a
+    global_grid field (e.g. OOTG) must fail fast, not with a raw KeyError
+    deep inside the predictor's batch-unwrap code."""
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    predictor.field_roles = {"target": "obs", "global_grid": "nwp_grid_field"}
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    with pytest.raises(NotImplementedError, match="global_grid"):
+        plotter._run_inference(0, torch.zeros(3, 2))
 
 
 def test_predict_samples_threads_predictor_and_stage():
@@ -210,9 +244,7 @@ def test_plot_timeseries_label_and_color_apply_to_line_and_band():
     # axes cannot be told apart.
     assert ax.collections[0].get_label().startswith("Pre-OAT")
     band_rgba = ax.collections[0].get_facecolor()[0]
-    assert np.allclose(
-        band_rgba[:3], matplotlib.colors.to_rgb("tab:orange"), atol=1e-6
-    )
+    assert np.allclose(band_rgba[:3], matplotlib.colors.to_rgb("tab:orange"), atol=1e-6)
     plt.close(fig)
 
 
@@ -902,11 +934,45 @@ class TestOverlayStations:
         assert obs_scatter is not None
         plt.close(fig)
 
+    def test_color_by_with_tensor_keys_still_overrides(self):
+        # Guards the exact bug found in scripts/plot_assimilation_panel.py: a
+        # caller building color_by keyed by 0-dim Tensor station indices (e.g.
+        # from list(tensor)) must still have its values used, not silently
+        # fall back to the raw (always-positive-looking) obs_tensor value.
+        plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
+        plotter.dataset.obs_tensor[0, 0, 0] = (
+            999.0  # fallback value if key lookup fails
+        )
+        fig, ax = plt.subplots()
+        mesh = ax.pcolormesh([[0, 1], [2, 3]])
+        tensor_keyed = {torch.tensor(0): -5.0, torch.tensor(1): 2.0}
+        plotter._overlay_stations(
+            ax, time_idx=0, var_idx=0, mesh=mesh, color_by=tensor_keyed
+        )
+        obs_scatter = next(c for c in ax.collections if c.get_label() == "obs − NWP")
+        expected = mesh.cmap(mesh.norm(np.array([-5.0, 2.0])))
+        np.testing.assert_allclose(obs_scatter.get_facecolor(), expected)
+        plt.close(fig)
+
     def test_public_overlay_stations_draws_observed(self):
         plotter = self._make_plotter(obs_indices=[0, 1], eval_indices=[])
         fig, ax = plt.subplots()
         plotter.overlay_stations(ax, time_idx=0, var_idx=0)
         assert any(c.get_label() == "observed" for c in ax.collections)
+        plt.close(fig)
+
+    def test_tensor_indices_still_render_markers(self):
+        # Field-path split datasets expose observed_indices/eval_indices as
+        # torch.Tensor; list(tensor) yields 0-dim Tensor elements. These must
+        # not silently break the int-keyed set-membership checks below.
+        obs_indices = list(torch.tensor([0, 1]))
+        eval_indices = list(torch.tensor([2, 3]))
+        plotter = self._make_plotter(obs_indices=obs_indices, eval_indices=eval_indices)
+        fig, ax = plt.subplots()
+        plotter._overlay_stations(ax, time_idx=0, var_idx=0)
+        labels = [c.get_label() for c in ax.collections]
+        assert "observed" in labels
+        assert "eval observed" in labels
         plt.close(fig)
 
 
@@ -1239,4 +1305,172 @@ def test_draw_field_returns_mesh_and_sets_limits():
     assert abs(ax.get_xlim()[1] - 10.0) < 1e-6
     assert abs(ax.get_ylim()[1] - 20.0) < 1e-6
     assert mesh.norm.vmin == 0.0 and mesh.norm.vmax == 1.0
+    plt.close(fig)
+
+
+def test_compute_pit_returns_binned_counts():
+    n_samples, n_vars = 20, 2
+    predictor = _make_predictor(N_q=2, n_samples=n_samples, n_vars=n_vars)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
+    }
+    dataset = _make_dataset(n_stations=2, n_times=3, n_vars=n_vars)
+    dataset.obs_tensor = torch.rand(3, 2, n_vars)
+
+    plotter = OATPlotter(
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+    result = plotter.compute_pit(time_indices=[0, 1, 2])
+
+    assert set(result.keys()) == {"temp", "wspd"}
+    assert result["temp"]["pit_n"] == 3 * 2  # T timesteps * S eval stations
+    assert result["temp"]["pit_counts"].sum() == 3 * 2
+    assert result["temp"]["pit_counts"].shape == (20,)
+    assert set(result["temp"].keys()) == {"pit_counts", "pit_n"}  # not ZI
+
+
+def test_compute_pit_zero_inflated_populates_gate_and_conditional_pit():
+    n_samples, n_vars = 4, 2
+    predictor = _make_predictor(N_q=2, n_samples=n_samples, n_vars=n_vars)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "zero_inflated_lognormal",
+    }
+    samples = torch.zeros(1, 2, n_samples, n_vars)
+    samples[0, :, 2:, 1] = 2.0  # half of each station's "wspd" samples are > 0
+    predictor.predict_step.return_value = samples
+
+    dataset = _make_dataset(n_stations=2, n_times=1, n_vars=n_vars)
+    dataset.obs_tensor = torch.tensor([[[1.0, 0.0], [1.0, 3.0]]])  # [T=1, S=2, V=2]
+
+    plotter = OATPlotter(
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+    result = plotter.compute_pit(time_indices=[0])
+
+    # Two valid (station, timestep) pairs, each with a zero gate of 0.5.
+    assert result["wspd"]["gate_counts"].sum() == 2
+    assert result["wspd"]["gate_zero_sums"].sum() == 1.0  # one zero observation
+    assert result["wspd"]["gate_pred_sums"].sum() == pytest.approx(1.0)
+    # Only the station with obs=3.0 has a conditional PIT.
+    assert result["wspd"]["pit_nonzero_n"] == 1
+    assert result["wspd"]["pit_nonzero_counts"].sum() == 1
+    assert "gate_counts" not in result["temp"]  # "normal" is not zero-inflated
+
+
+def test_compute_pit_empty_eval_indices_returns_empty_dict():
+    predictor = _make_predictor()
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
+    }
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], eval_indices=[]
+    )
+
+    result = plotter.compute_pit(time_indices=[0, 1])
+
+    assert set(result.keys()) == {"temp", "wspd"}
+    for var in ("temp", "wspd"):
+        assert result[var]["pit_n"] == 0
+        assert (result[var]["pit_counts"] == 0).all()
+
+
+def test_compute_pit_predictor_override_uses_override_variables():
+    n_samples = 20
+    predictor = _make_predictor(N_q=2, n_samples=n_samples)
+    predictor.model.output_head.variable_to_distribution = {
+        "temp": "normal",
+        "wspd": "normal",
+    }
+    baseline = _make_predictor(N_q=2, n_samples=n_samples, n_vars=1)
+    baseline.var_to_indx = {"temp": 0}
+    baseline.output_var_names = ["temp"]
+    baseline.model.output_head.variable_to_distribution = {"temp": "normal"}
+    baseline.predict_step.return_value = torch.zeros(1, 2, n_samples, 1)
+
+    dataset = _make_dataset(n_stations=2, n_times=3)
+    dataset.obs_tensor = torch.rand(3, 2, 2)
+    plotter = OATPlotter(
+        predictor,
+        dataset,
+        obs_station_indices=[0, 1],
+        eval_indices=[0, 1],
+        n_samples=n_samples,
+    )
+
+    result = plotter.compute_pit(time_indices=[0, 1, 2], predictor=baseline)
+
+    assert set(result.keys()) == {"temp"}  # only the baseline's variables
+    assert result["temp"]["pit_n"] == 3 * 2
+    assert result["temp"]["pit_counts"].sum() == 3 * 2
+
+
+def test_plot_pit_draws_histogram_from_counts():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+    counts = np.zeros(20, dtype=np.int64)
+    counts[[2, 5, 9]] = [1, 3, 2]
+
+    plotter.plot_pit(ax, counts)
+
+    assert len(ax.patches) == 20
+    assert ax.get_xlim() == (0.0, 1.0)
+    plt.close(fig)
+
+
+def test_plot_pit_step_draws_outline_only():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+    counts = np.zeros(20, dtype=np.int64)
+    counts[[2, 5, 9]] = [1, 3, 2]
+
+    plotter.plot_pit(ax, counts, histtype="step", label="baseline")
+
+    assert len(ax.patches) == 1
+    assert not ax.patches[0].get_fill()  # outline only, no filled bars
+    labels = ax.get_legend_handles_labels()[1]
+    assert "baseline" in labels
+    plt.close(fig)
+
+
+def test_plot_pit_empty_counts_disables_axis():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+
+    plotter.plot_pit(ax, np.zeros(20, dtype=np.int64))
+
+    assert not ax.axison
+    plt.close(fig)
+
+
+def test_plot_zero_reliability_draws_reliability_curve():
+    predictor = _make_predictor()
+    dataset = _make_dataset()
+    plotter = OATPlotter(predictor, dataset)
+    fig, ax = plt.subplots()
+    gate_counts = np.full(10, 10, dtype=np.int64)
+    gate_zero_sums = np.full(10, 5.0)  # 50% zeros in every bin
+    gate_pred_sums = np.full(10, 5.0)  # mean gate prediction 0.5 per bin
+
+    plotter.plot_zero_reliability(ax, gate_counts, gate_zero_sums, gate_pred_sums)
+
+    assert len(ax.get_lines()) == 2  # perfect-calibration diagonal + model curve
+    assert np.allclose(ax.get_lines()[1].get_ydata(), 0.5)
     plt.close(fig)

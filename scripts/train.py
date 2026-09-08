@@ -6,8 +6,8 @@ run name used consistently for the checkpoint dir and W&B run.
 
 Usage:
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp_precip
-    python -m scripts.train --model gp --dataset era5_meteostat/temp --dry-run
-    python -m scripts.train --model ootg --dataset cosmo_peakweather/temp --submit
+    python -m scripts.train --model gp_field --dataset era5_meteostat/temp --dry-run
+    python -m scripts.train --model ootg --dataset cosmo_peakweather/temp_ootg --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
 """
@@ -21,11 +21,21 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-DATASET_VARIANTS = ("temp", "precip", "temp_precip")
+# Both families only ship "temp" (univariate) and "temp_precip" (multivariate)
+# at the top level now -- the old grid-only "precip" variant and the
+# "field_"-prefixed names were retired when Task 7 promoted the flat-Field
+# configs to these clean names and moved the grid-only ones to legacy/.
+DATASET_VARIANTS = (
+    "temp",
+    "precip",
+    "temp_precip",
+    "temp_ootg",
+    "temp_precip_ootg",
+)
 DATASETS = tuple(
     f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
 )
-UNIVARIATE_VARIANTS = ("temp", "precip")
+UNIVARIATE_VARIANTS = ("temp","precip")
 
 
 @dataclass(frozen=True)
@@ -41,27 +51,69 @@ MODEL_SPECS = {
         "scripts.train_model",
         ("model=uninformed_oat", "predictor=oat_predictor", "split=no_conditioning"),
     ),
-    "gp": ModelSpec(
+    # "_field" presets: same models with the point-wise global/topographic
+    # encoders pinned explicitly. Every non-legacy dataset is flat-Field-shaped
+    # now (Task 7 promoted those configs to the clean top-level names), and
+    # model=oat/uninformed_oat already default to point/mlp too, so these are
+    # a stable, explicit-override alias rather than a dataset-gated variant.
+    "oat_field": ModelSpec(
         "scripts.train_model",
-        ("model=gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=oat",
+            "predictor=oat_predictor",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
+    ),
+    "uninformed_oat_field": ModelSpec(
+        "scripts.train_model",
+        (
+            "model=uninformed_oat",
+            "predictor=oat_predictor",
+            "split=no_conditioning",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
+    ),
+    "gp_field": ModelSpec(
+        "scripts.train_model",
+        (
+            "model=gp_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "gp_oat": ModelSpec(
+    "deep_gp_field": ModelSpec(
         "scripts.train_model",
-        ("model=gp_oat_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=deep_gp_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "deep_gp": ModelSpec(
+    "gp_oat_field": ModelSpec(
         "scripts.train_model",
-        ("model=deep_gp_baseline", "predictor=gp_predictor", "trainer.precision=64"),
+        (
+            "model=gp_oat_baseline",
+            "predictor=gp_predictor",
+            "trainer.precision=64",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
+        ),
         univariate_only=True,
     ),
-    "deep_gp_oat": ModelSpec(
+    "deep_gp_oat_field": ModelSpec(
         "scripts.train_model",
         (
             "model=deep_gp_oat_baseline",
             "predictor=gp_predictor",
             "trainer.precision=64",
+            "model/global_encoder=point",
+            "model/topographic_encoder=mlp",
         ),
         univariate_only=True,
     ),
@@ -99,6 +151,12 @@ def validate(model: str, dataset: str) -> None:
         raise SystemExit(
             f"Model '{model}' is univariate-only (see gp_baseline.py); dataset variant "
             f"'{variant}' is multivariate. Use one of {UNIVARIATE_VARIANTS} instead."
+        )
+    if model == "ootg" and not variant.endswith("_ootg"):
+        raise SystemExit(
+            f"Model 'ootg' needs a dataset variant with a global_grid role "
+            f"(one ending in '_ootg'); got '{variant}'. Use 'temp_ootg' or "
+            f"'temp_precip_ootg' instead."
         )
 
 

@@ -1,0 +1,53 @@
+# CosmoPeakWeather Dataset Configuration
+# Default settings for neural weather downscaling
+# Data paths
+nwp_path: "/store_new/mch/msopr/ml/datasets/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+topo_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
+obs_path: "/scratch/mch/cdonner/data/peakweather"
+# Legacy-only: reference regridding grid for legacy.CosmoPeakWeatherDataset
+# (dataset_type: legacy_cosmo_peakweather) and the OOTG baseline, which is
+# built on top of it. Unused by the live field-based CosmoPeakWeatherDataset.
+ref_nwp_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
+nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
+
+# Topographic variables
+topo_vars:
+  - DEM                                    # Digital elevation model
+  - TPI_500M                               # Topographic position index 500m
+  - TPI_2000M                              # Topographic position index 2000m
+  - WE_DERIVATIVE_2000M_SIGRATIO1          # West-east derivative
+  - SN_DERIVATIVE_2000M_SIGRATIO1          # South-north derivative
+
+station_type: "meteo_station" # Must be either "null" to get all stations, "meteo_station" for meteorological stations, or "rain_gauge"  for rain gauges
+
+coord_vars:
+  - swiss_easting
+  - swiss_northing
+
+geo_vars:
+  - swiss_easting
+  - swiss_northing
+  - dem
+# Stations (null = all available stations)
+stations: null
+
+# Time range (null = full available range)
+start_date: null  # Format: 'YYYY-MM-DD'
+end_date: null    # Format: 'YYYY-MM-DD'
+
+# Legacy-only: grid patch extraction size in legacy.CosmoPeakWeatherDataset.
+# Unused by the live field-based CosmoPeakWeatherDataset.
+patch_size:
+  - 1
+  - 1
+
+# Time embedding
+use_time_embedding: true
+
+# Cache settings
+cache_dir: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/cache_constant_inputs"
+clear_cache: false
+
+dtype: float32
+
+data_points_for_stats: 4096

@@ -1,0 +1,31 @@
+defaults:
+  - cosmo_peakweather/settings@_here_
+  - _self_
+
+nwp_vars: [T_2M, T_G, TOT_PREC_1H, CLCT]
+
+obs_vars: [temperature, precipitation]
+
+obs_variable_to_distribution:
+  temperature: normal
+  precipitation: zero_inflated_lognormal
+
+station_type: null
+
+fields:
+  obs: {coords: stations, inputs: [obs.temperature, obs.precipitation]}
+  nwp:
+    coords: stations
+    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
+    query: true
+    interp: linear
+  nwp_grid_field:
+    coords: nwp_grid
+    inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]
+  topo: {coords: stations, inputs: [topo.DEM, topo.TPI_500M, topo.TPI_2000M,
+                                    topo.WE_DERIVATIVE_2000M_SIGRATIO1,
+                                    topo.SN_DERIVATIVE_2000M_SIGRATIO1], query: true}
+
+roles:
+  global_grid: nwp_grid_field
+  topo: topo

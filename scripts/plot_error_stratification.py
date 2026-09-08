@@ -1,4 +1,4 @@
-"""Plot model error stratified by season, elevation, nearest-obs distance, lon/lat.
+"""Plot model error stratified by season, elevation, nearest-obs distance.
 
 Requires per-(station, timestep) long dumps produced by
 ``scripts.evaluate_test_set --long`` for each model.
@@ -8,7 +8,7 @@ Usage
 python -m scripts.plot_error_stratification \
     --dataset cosmo_peakweather \
     --model oat_temp_precip \
-    --baselines ootg_temp_precip,gp_temp \
+    --baselines ootg_temp_precip,gp_oat_temp \
     --metric crps --split test
 """
 
@@ -38,8 +38,8 @@ def long_parquet_path(dataset: str, model: str, split: str) -> Path:
 def group_name(key: str) -> str:
     """Collapse a per-variable registry key onto its model name.
 
-    Per-variable checkpoints (e.g. ``gp_temp``/``gp_precip``,
-    ``deep_gp_temp``/``deep_gp_precip``) are trained one variable each; they
+    Per-variable checkpoints (e.g. ``gp_oat_temp``/``gp_oat_precip``,
+    ``deep_gp_oat_temp``/``deep_gp_oat_precip``) are trained one variable each; they
     are treated as a single model in the plot. The combined ``*_temp_precip``
     keys map to the same bare model name. Each frame only carries finite values
     for its own variable, so concatenating them under one model name yields the
@@ -105,7 +105,7 @@ def main() -> None:
     baselines = [b for b in args.baselines.split(",") if b]
     df = load_model_frames(args.dataset, args.model, baselines, args.split)
     # Dedup group names while preserving first-seen order (per-variable keys
-    # collapse onto a single model, e.g. gp_temp + gp_precip -> gp).
+    # collapse onto a single model, e.g. gp_oat_temp + gp_oat_precip -> gp_oat).
     model_order = list(dict.fromkeys(group_name(k) for k in [args.model, *baselines]))
     var_names = _var_names(df, args.metric)
 

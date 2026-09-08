@@ -1,6 +1,6 @@
 defaults:
-  - global_encoder: mlp
-  - topographic_encoder: default
+  - global_encoder: point
+  - topographic_encoder: mlp
   - nwp_topo_fusion: default
   - output_head: default
 

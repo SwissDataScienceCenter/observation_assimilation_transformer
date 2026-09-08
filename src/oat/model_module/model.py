@@ -21,6 +21,12 @@ from oat.model_module import (
 )
 
 
+def _search_coords(group: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Coords for neighbour search: projected ``search_coords`` if present,
+    else raw ``coords`` (unchanged behaviour for non-projecting datasets)."""
+    return group.get("search_coords", group["coords"])
+
+
 @dataclass
 class GlobalEncoderConfig:
     """Configuration for global encoder (Eq. 1)."""
@@ -40,6 +46,8 @@ class GlobalEncoderConfig:
     num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
     act_fn: str = "GELU"
+    use_layernorm: bool = False
+    use_batchnorm: bool = False
 
 
 @dataclass
@@ -53,6 +61,9 @@ class TopographicEncoderConfig:
     kernel_sizes: int = 3
     act_fn: str = "GELU"
     use_batchnorm: bool = True
+    type: str = "CNN"
+    hidden_dims: tuple[int, ...] = ()
+    use_layernorm: bool = False
 
 
 @dataclass
@@ -208,6 +219,32 @@ class UninformedOATConfig:
         )
 
 
+def build_topographic_encoder(
+    tc: TopographicEncoderConfig,
+) -> topographic_encoder.TopographyEncoder:
+    """Dispatch to CNN (grid patches) or MLP (flat field values) by ``tc.type``."""
+    if getattr(tc, "type", "CNN") == "CNN":
+        return topographic_encoder.CNNTopographyEncoder(
+            in_channels=tc.in_channels,
+            out_channels=tc.out_channels,
+            n_layers=tc.n_layers,
+            initial_hw=tc.initial_hw,
+            kernel_sizes=tc.kernel_sizes,
+            act_fn=tc.act_fn,
+            use_batchnorm=tc.use_batchnorm,
+        )
+    if tc.type == "MLP":
+        return topographic_encoder.MLPTopographyEncoder(
+            in_channels=tc.in_channels,
+            out_channels=tc.out_channels,
+            hidden_dims=tc.hidden_dims,
+            act_fn=tc.act_fn,
+            use_layernorm=tc.use_layernorm,
+            use_batchnorm=tc.use_batchnorm,
+        )
+    raise ValueError(f"Unsupported topographic encoder type: {tc.type}")
+
+
 class UninformedOAT(nn.Module):
     """
     Base class for Observation Assimilation Transformer for neural downscaling.
@@ -231,15 +268,7 @@ class UninformedOAT(nn.Module):
         d_topo = config.topographic_encoder.out_channels
 
         self.global_encoder = self._init_global_encoder(config=config)
-        self.topographic_encoder = topographic_encoder.CNNTopographyEncoder(
-            in_channels=config.topographic_encoder.in_channels,
-            out_channels=config.topographic_encoder.out_channels,
-            n_layers=config.topographic_encoder.n_layers,
-            initial_hw=config.topographic_encoder.initial_hw,
-            kernel_sizes=config.topographic_encoder.kernel_sizes,
-            act_fn=config.topographic_encoder.act_fn,
-            use_batchnorm=config.topographic_encoder.use_batchnorm,
-        )
+        self.topographic_encoder = self._init_topographic_encoder(config=config)
         self.fusion_layer1 = fusion_layer.GatedLinearUnitFusionLayer(
             in_channels=[d_global, d_topo],
             out_channels=config.nwp_topo_fusion.out_channels,
@@ -328,10 +357,24 @@ class UninformedOAT(nn.Module):
                     "max": torch.tensor(config.global_encoder.field_extent_max),
                 },
             )
+        elif config.global_encoder.type == "Point":
+            return global_encoder.PointGlobalEncoder(
+                mlp_params={
+                    "in_channels": config.global_encoder.in_channels,
+                    "out_channels": config.global_encoder.out_channels,
+                    "hidden_dims": config.global_encoder.hidden_dims,
+                    "act_fn": config.global_encoder.act_fn,
+                    "use_layernorm": config.global_encoder.use_layernorm,
+                    "use_batchnorm": config.global_encoder.use_batchnorm,
+                },
+            )
 
         raise ValueError(
-            f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', and 'ResNetCNN'."
+            f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', 'ResNetCNN', and 'Point'."
         )
+
+    def _init_topographic_encoder(self, config):
+        return build_topographic_encoder(config.topographic_encoder)
 
     def _init_output_head(self, config):
 
@@ -784,11 +827,11 @@ class OAT(UninformedOAT):
         )
 
         # Step 5: Create spatial masks (Eq. 14)
-        edges_src = self.mask_generator(coords_1=observation_data["coords"])
-        edges_tgt = self.mask_generator(coords_1=query_data["coords"])
+        edges_src = self.mask_generator(coords_1=_search_coords(observation_data))
+        edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
         edges_memory = self.mask_generator(
-            coords_1=observation_data["coords"],
-            coords_2=query_data["coords"],
+            coords_1=_search_coords(observation_data),
+            coords_2=_search_coords(query_data),
         )
 
         # Step 6: Apply transformer (Eq. 16-25)

@@ -1,0 +1,192 @@
+"""Data sources: one code path for nearest reads — point sets (cKDTree) and rasters."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
+
+import numpy as np
+import torch
+from scipy.spatial import Delaunay, cKDTree
+from torch import Tensor
+
+
+@dataclass
+class SourceInfo:
+    """Static metadata describing a `Source`."""
+
+    available_vars: list[str]
+    native_coords: str | None
+    has_mask: bool
+    units: dict[str, str]
+
+
+class Source(ABC):
+    """Common interface for reading variables at a set of destination coordinates."""
+
+    var_names: list[str]
+    units: dict[str, str]
+    has_mask: bool = False
+    native_coord_source: str | None = None
+
+    @abstractmethod
+    def load(self, time_idx: int) -> Tensor:
+        """All variables at the source's native points, shape [C, Npoints]."""
+
+    def load_mask(self, time_idx: int) -> Tensor | None:
+        """Validity mask [C, Npoints], or None when the source has no mask."""
+        return None
+
+    @abstractmethod
+    def build_index(self, dst_coords: Tensor) -> Tensor:
+        """Long tensor [M] mapping each destination point to a native point index."""
+
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Linear interpolation: long indices [M, P] and normalized weights [M, P]."""
+        raise NotImplementedError
+
+    @property
+    def info(self) -> SourceInfo:
+        """This source's metadata as a `SourceInfo`."""
+        return SourceInfo(
+            available_vars=list(self.var_names),
+            native_coords=self.native_coord_source,
+            has_mask=self.has_mask,
+            units=dict(self.units),
+        )
+
+
+class PointSetSource(Source):
+    """Source backed by an irregular point set, indexed via a cKDTree."""
+
+    def __init__(
+        self,
+        coords: Tensor,
+        var_names: list[str],
+        values_fn: Callable[[int], Tensor],
+        *,
+        units: dict[str, str] | None = None,
+        mask_fn: Callable[[int], Tensor] | None = None,
+        native_coord_source: str | None = None,
+        project_fn: Callable[[Tensor], Tensor] | None = None,
+    ) -> None:
+        self.var_names = list(var_names)
+        self.units = dict(units or {})
+        self._values_fn = values_fn
+        self._mask_fn = mask_fn
+        self.has_mask = mask_fn is not None
+        self.native_coord_source = native_coord_source
+        self._project_fn = project_fn
+        self._pts_2d = coords[..., :2].detach().cpu().numpy()
+        proj = self._project(coords[..., :2]).detach().cpu().numpy()
+        self._tree = cKDTree(proj)
+        self._tri: Delaunay | None = None
+
+    def _project(self, xy: Tensor) -> Tensor:
+        return self._project_fn(xy) if self._project_fn is not None else xy
+
+    def load(self, time_idx: int) -> Tensor:
+        """Delegate to `values_fn` for all variables at the native points."""
+        return self._values_fn(time_idx)
+
+    def load_mask(self, time_idx: int) -> Tensor | None:
+        """Delegate to `mask_fn`, or None when no mask function was given."""
+        return None if self._mask_fn is None else self._mask_fn(time_idx)
+
+    def build_index(self, dst_coords: Tensor) -> Tensor:
+        """Nearest native point index for each destination point (cKDTree query)."""
+        proj = self._project(dst_coords[..., :2]).detach().cpu().numpy()
+        _, idx = self._tree.query(proj)
+        return torch.as_tensor(idx, dtype=torch.long)
+
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Barycentric interpolation on 2D Delaunay triangulation."""
+        if self._tri is None:
+            self._tri = Delaunay(self._pts_2d)
+        pts = dst_coords[..., :2].detach().cpu().numpy()
+        simplex = self._tri.find_simplex(pts)
+        idx = self._tri.simplices[np.maximum(simplex, 0)]  # [M, 3]
+
+        # Barycentric coordinates via the affine transform stored by Delaunay.
+        r = self._tri.transform[np.maximum(simplex, 0)]
+        delta = pts - r[:, 2]
+        bary = np.einsum("...ij,...j->...i", r[:, :2], delta)
+        bary = np.column_stack([bary, 1.0 - bary.sum(axis=-1)])  # [M, 3]
+
+        # Points outside the convex hull: fall back to nearest (projected).
+        outside = simplex < 0
+        if outside.any():
+            proj = self._project(dst_coords[outside, :2]).detach().cpu().numpy()
+            _, nn = self._tree.query(proj)
+            idx[outside] = nn[:, np.newaxis]
+            bary[outside] = np.array([1.0, 0.0, 0.0])
+
+        return torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(
+            bary, dtype=torch.float32,
+        )
+
+
+class RasterSource(Source):
+    """Source backed by a regular raster grid, indexed via coordinate arithmetic."""
+
+    def __init__(
+        self,
+        raster: Tensor,
+        origin: tuple[float, float],
+        res: tuple[float, float],
+        var_names: list[str],
+        *,
+        units: dict[str, str] | None = None,
+        native_coord_source: str | None = None,
+    ) -> None:
+        self.var_names = list(var_names)
+        self.units = dict(units or {})
+        self.native_coord_source = native_coord_source
+        c, h, w = raster.shape
+        self._flat = raster.reshape(c, h * w)
+        self._h, self._w = h, w
+        self._x0, self._y0 = origin
+        self._rx, self._ry = res
+
+    def load(self, time_idx: int) -> Tensor:
+        """Return the flattened raster, shape [C, H*W] (time-invariant)."""
+        return self._flat
+
+    def build_index(self, dst_coords: Tensor) -> Tensor:
+        """Nearest raster cell (row-major flat index) for each destination point."""
+        xy = dst_coords[..., :2]
+        col = (
+            torch.round((xy[..., 0] - self._x0) / self._rx).long().clamp(0, self._w - 1)
+        )
+        row = (
+            torch.round((xy[..., 1] - self._y0) / self._ry).long().clamp(0, self._h - 1)
+        )
+        return row * self._w + col
+
+    def build_interp(self, dst_coords: Tensor) -> tuple[Tensor, Tensor]:
+        """Bilinear interpolation over the four surrounding raster cells."""
+        xy = dst_coords[..., :2]
+        x, y = xy[..., 0], xy[..., 1]
+        fx = (x - self._x0) / self._rx
+        fy = (y - self._y0) / self._ry
+        col0 = torch.floor(fx).long().clamp(0, self._w - 1)
+        col1 = (col0 + 1).clamp(0, self._w - 1)
+        row0 = torch.floor(fy).long().clamp(0, self._h - 1)
+        row1 = (row0 + 1).clamp(0, self._h - 1)
+
+        sx = (fx - col0.to(fx.dtype)).clamp(0.0, 1.0)
+        sy = (fy - row0.to(fy.dtype)).clamp(0.0, 1.0)
+
+        w00 = (1.0 - sx) * (1.0 - sy)
+        w10 = sx * (1.0 - sy)
+        w01 = (1.0 - sx) * sy
+        w11 = sx * sy
+
+        flat = torch.stack(
+            [row0 * self._w + col0, row0 * self._w + col1,
+             row1 * self._w + col0, row1 * self._w + col1],
+            dim=-1,
+        )
+        w = torch.stack([w00, w10, w01, w11], dim=-1)
+        return flat, w

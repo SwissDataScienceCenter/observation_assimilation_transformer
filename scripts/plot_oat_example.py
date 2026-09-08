@@ -22,31 +22,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from omegaconf import OmegaConf
-from typing import Any
 
-from oat.data_module.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 from oat.data_module.setup import setup_data_and_transform
-from oat.model_module.baseline import NWPInterpolatorConfig
-from oat.plotting_module import OATPlotter
-from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from oat.plotting_module.geo_overlays import _add_borders
+from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
+from scripts.plotter_utils import (
+    load_plot_config,
+    maybe_build_nwp_baseline,
+    select_plotter_cls,
+)
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
-_PROJECT_ROOT = Path(__file__).parents[1]
-_PLOT_CONFIG_PATHS: dict[type, Path] = {
-    ERA5MeteostatDataset: _PROJECT_ROOT / "configs/dataset/era5_meteostat/plot_config.yaml",
-    CosmoPeakWeatherDataset: _PROJECT_ROOT / "configs/dataset/cosmo_peakweather/plot_config.yaml",
-}
-
-
-def _load_plot_config(dataset: Any) -> Any:
-    path = _PLOT_CONFIG_PATHS.get(type(dataset))
-    if path and path.exists():
-        return OmegaConf.load(path).obs_plot_config
-    return None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -206,6 +192,9 @@ def main() -> None:
         cfg, logger
     )
 
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+
     if info_mode:
         _print_info(args.checkpoint, predictor, dataset)
         sys.exit(0)
@@ -276,31 +265,26 @@ def main() -> None:
         hours,
     )
 
-    plotter = OATPlotter(
+    PlotterCls = select_plotter_cls(dataset)
+    plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
         obs_station_indices=obs_station_indices,
         eval_indices=eval_indices,
         n_samples=args.n_samples,
         device="cpu",
-        plot_config=_load_plot_config(dataset),
+        plot_config=load_plot_config(dataset),
     )
 
-    nwp_config = NWPInterpolatorConfig(field_extent=dataset.nwp_extent)
-    baseline_pre_transform = dataset.get_baseline_pre_transform()
-    nwp_predictor = NWPInterpolatorPredictor(
-        config=nwp_config,
-        output_var_names=dataset.config.obs_vars,
-        input_transform=baseline_pre_transform,
-    ).eval()
-    nwp_plotter = OATPlotter(
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    nwp_plotter = PlotterCls(
         predictor=nwp_predictor,
         dataset=dataset,
         obs_station_indices=obs_station_indices,
         eval_indices=eval_indices,
         n_samples=1,
         device="cpu",
-        plot_config=_load_plot_config(dataset),
+        plot_config=load_plot_config(dataset),
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

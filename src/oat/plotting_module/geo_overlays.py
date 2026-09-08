@@ -151,8 +151,9 @@ def build_domain_grid(
     points across the domain width.
 
     Args:
-        dataset: Exposes ``nwp_extent``, ``topo_extent``, ``topo_grid``,
-            ``topo_field`` (C, H, W), ``station_coords`` (N, 2).
+        dataset: Exposes ``nwp_extent``, ``topo_extent``,
+            ``topo_field`` (C, H, W), ``station_coords`` (N, 2). ``topo_grid``
+            is optional (only the deprecated patch-based topo path sets it).
         margin: Fractional margin around the station bounding box.
         resolution: Grid spacing; default domain_width / 100.
         center: Optional (E, N) grid centre overriding the station bbox.
@@ -165,7 +166,8 @@ def build_domain_grid(
 
     ext = dataset.nwp_extent
     topo_ext = dataset.topo_extent
-    patch_margin = dataset.topo_grid.abs().max().item()
+    topo_grid = getattr(dataset, "topo_grid", None)
+    patch_margin = topo_grid.abs().max().item() if topo_grid is not None else 0.0
     H, W = dataset.topo_field.shape[1:]
     topo_dx = (topo_ext["max"][0].item() - topo_ext["min"][0].item()) / (W - 1)
     topo_dy = (topo_ext["max"][1].item() - topo_ext["min"][1].item()) / (H - 1)

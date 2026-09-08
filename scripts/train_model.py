@@ -209,25 +209,21 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Config :\n {OmegaConf.to_yaml(cfg)}")
 
     if model_type == "baseline":
-        from oat.model_module.baseline import NWPInterpolatorConfig
         from oat.predictor_module.baseline_predictor import create_baseline_predictor
 
-        baseline_config = NWPInterpolatorConfig(field_extent=field_extent, **cfg.model)
-        pre_transform = dataset.get_baseline_pre_transform()
-        predictor = create_baseline_predictor(
-            config=baseline_config,
-            obs_vars=list(dataset.config.obs_vars),
-            pre_transform=pre_transform,
-        )
+        predictor = create_baseline_predictor(dataset)
 
         trainer = Trainer(**cfg.trainer, logger=wandb_logger)
         trainer.validate(predictor, val_loader)
     elif _is_gp_model(cfg):
+        from oat.predictor_module.field_batch_utils import resolve_index_projection
+
         predictor = setup_gp_predictor(
             cfg=cfg,
             field_extent=field_extent,
             obs_vars=list(dataset.config.obs_vars),
             transforms=[input_transform, output_transform],
+            project_index_coords=resolve_index_projection(dataset),
         )
 
         profiler = setup_profiler(cfg=cfg)
@@ -248,7 +244,12 @@ def main(cfg: DictConfig) -> None:
         if profiler is not None and trainer.is_global_zero:
             print(profiler.summary())
     else:
-        oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
+        from oat.predictor_module.field_batch_utils import resolve_index_projection
+
+        index_projection = resolve_index_projection(dataset)
+        oat_model_cfg = setup_oat_cfg(
+            cfg, field_extent, logger, project_index_coords=index_projection
+        )
 
         var_names = dataset.config.obs_vars
 
@@ -279,6 +280,7 @@ def main(cfg: DictConfig) -> None:
             transforms=[input_transform, output_transform],
             cfg=cfg,
         )
+        predictor.set_index_projection(dataset)
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)

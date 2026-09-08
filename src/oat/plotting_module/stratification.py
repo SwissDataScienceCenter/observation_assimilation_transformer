@@ -87,6 +87,29 @@ def season_labels(times: Any) -> NDArray:
     return np.array([_MONTH_TO_SEASON[int(m)] for m in months], dtype=object)
 
 
+_ELEVATION_NAMES = ("dem", "elevation")
+
+
+def _station_elevation(dataset: Any) -> NDArray:
+    """Read per-station elevation from the dataset's geo-bias field.
+
+    Field datasets (post-#116) hold per-station statics in ``fields``, not on
+    a ``station_geo`` attribute -- pull the elevation channel straight from
+    the geo-bias field of one sample (its values don't vary across time).
+    """
+    geo_name = dataset.roles()["geo_bias"]
+    geo_field = dataset.field_config.fields[geo_name]
+    try:
+        channel = next(i for i, v in enumerate(geo_field.out) if v in _ELEVATION_NAMES)
+    except StopIteration as exc:
+        raise ValueError(
+            f"No elevation-like channel (one of {_ELEVATION_NAMES}) found in "
+            f"geo-bias field {geo_name!r} outputs {list(geo_field.out)!r}"
+        ) from exc
+    sample = dataset[0]["fields"][geo_name]
+    return np.asarray(sample.values[:, channel].cpu().numpy())
+
+
 def collect_station_covariates(
     dataset: Any, eval_indices: list[int], obs_indices: list[int]
 ) -> dict[str, NDArray]:
@@ -94,7 +117,7 @@ def collect_station_covariates(
     coords = dataset.station_coords.cpu().numpy()
     eval_coords = coords[eval_indices]
     obs_coords = coords[obs_indices]
-    geo = dataset.station_geo.cpu().numpy()  # [N, 3] easting, northing, dem
+    elevation = _station_elevation(dataset)
     lon, lat = detect_lonlat(eval_coords)
     # Reproject both sides to WGS84 so nearest-obs distance is geodesic km.
     obs_lonlat = (
@@ -108,7 +131,7 @@ def collect_station_covariates(
         "station_y": eval_coords[:, 1],
         "lon": lon,
         "lat": lat,
-        "elevation": geo[eval_indices, 2],
+        "elevation": elevation[eval_indices],
         "nearest_obs_dist": nearest_obs_distance(
             np.column_stack([lon, lat]), obs_lonlat
         ),
@@ -166,23 +189,6 @@ def _assign_fixed_width_bins(values: NDArray, nbins: int) -> tuple[NDArray, NDAr
     return idx, edges
 
 
-def _assign_integer_bins(values: NDArray, nbins: int) -> tuple[NDArray, NDArray]:
-    """Fixed-width bins snapped to whole-number edges; return (bin_idx, edges).
-
-    Edges span ``floor(min)..ceil(max)`` with an integer width chosen to land
-    near ``nbins`` bins, so lon/lat bins fall on full degrees.
-    """
-    finite = values[np.isfinite(values)]
-    lo = float(np.floor(finite.min()))
-    hi = float(np.ceil(finite.max()))
-    width = max(1, round((hi - lo) / max(1, nbins)))
-    edges = np.arange(lo, hi + width, width, dtype=float)
-    if edges.size < 2:
-        edges = np.array([lo, lo + width], dtype=float)
-    idx = np.clip(np.digitize(values, edges[1:-1]), 0, len(edges) - 2)
-    return idx, edges
-
-
 def _bin_label(edges: NDArray, i: int) -> str:
     lo, hi = edges[i], edges[i + 1]
     width = abs(hi - lo)
@@ -232,14 +238,6 @@ def _bin_keys(
         label_for = {i: labels[i] for i in present}
         order_for = {i: i for i in present}
         return keys, present, label_for, order_for
-    if stratifier in _INTEGER_BIN_STRATIFIERS:
-        idx, edges = _assign_integer_bins(values, nbins)
-        keys = idx.astype(int)
-        keys[~finite] = -1
-        present = sorted({int(i) for i in keys[finite]})
-        label_for = {i: f"{int(edges[i])}-{int(edges[i + 1])}" for i in present}
-        order_for = {i: i for i in present}
-        return keys, present, label_for, order_for
     idx, edges = _assign_fixed_width_bins(values, nbins)
     keys = idx.astype(int)
     # NaN covariate values (e.g. a station outside the topo extent) must NOT be
@@ -252,7 +250,7 @@ def _bin_keys(
     return keys, present, label_for, order_for
 
 
-STRATIFIERS = ["season", "elevation", "nearest_obs_dist", "lon", "lat"]
+STRATIFIERS = ["season", "elevation", "nearest_obs_dist"]
 
 # Stratifiers with fixed, hand-chosen bins. ``edges`` are the interior cut
 # points fed to np.digitize; ``labels`` (one per resulting bin) describe the
@@ -264,15 +262,10 @@ _CUSTOM_BINS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Stratifiers whose bin edges are snapped to whole numbers (degrees).
-_INTEGER_BIN_STRATIFIERS = {"lon", "lat"}
-
 _STRATIFIER_LABEL = {
     "season": "Season",
     "elevation": "Elevation [m]",
     "nearest_obs_dist": "Dist. to nearest obs. [km]",
-    "lon": "Longitude [°E]",
-    "lat": "Latitude [°N]",
 }
 
 # Okabe & Ito (2008) colourblind-safe categorical palette, in assignment order.

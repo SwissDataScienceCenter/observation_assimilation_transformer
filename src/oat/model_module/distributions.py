@@ -201,6 +201,14 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
     support = constraints.nonnegative
     has_rsample = False  # Bernoulli gate is not reparameterizable
 
+    # crps() computes m = exp(loc + 0.5*scale**2). scale is exp(raw decoder
+    # output), so this is exp-of-exp: scale=13.5 already overflows float32.
+    # Clamp both here so every method (not just crps) sees safe values;
+    # loc=20, scale=10 keeps the worst-case exponent at 70, far under
+    # float32's ~88 overflow point.
+    _LOC_MAX = 20.0
+    _SCALE_MAX = 10.0
+
     def __init__(
         self,
         gate: torch.Tensor,
@@ -209,8 +217,8 @@ class ZeroInflatedLogNormal(OATDistribution, torch.distributions.Distribution):
         validate_args=None,
     ):
         self.gate = gate
-        self.loc = loc
-        self.scale = scale
+        self.loc = loc.clamp(min=-self._LOC_MAX, max=self._LOC_MAX)
+        self.scale = scale.clamp(min=1e-4, max=self._SCALE_MAX)
         batch_shape = torch.broadcast_shapes(gate.shape, loc.shape, scale.shape)
         super().__init__(batch_shape=batch_shape, validate_args=validate_args)
 

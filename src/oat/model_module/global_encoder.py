@@ -1,9 +1,21 @@
 import torch
 from typing import Any, Dict
-from oat.data_module.wind_dataset import pos_transform
 from oat.model_module.activations import get_activation
+from oat.model_module.topographic_encoder import _FlattenedBatchNorm1d
 from torch.nn import functional as F
 from abc import ABC, abstractmethod
+
+
+def pos_transform(
+    val: torch.Tensor, min: torch.Tensor, max: torch.Tensor
+) -> torch.Tensor:
+    """Transform positions from high-res to low-res grid coordinates."""
+    assert (
+        val.shape[-1] == min.shape[-1] == max.shape[-1]
+    ), "Dimension mismatch in position transformation."
+    val_scaled = 2 * (val - min) / (max - min) - 1  # Scale to [-1, 1]
+    return val_scaled
+
 
 class BaseGlobalEncoder(torch.nn.Module, ABC):
     """Base class for global encoders processing global data inputs."""
@@ -35,6 +47,12 @@ class InterpolationGlobalEncoder(BaseGlobalEncoder):
             interpolation_params: Parameters for interpolation. Should contain 'mode' and 'padding_mode' keys for F.grid_sample. Defaults to bilinear and border respectively.
             field_extent: Dictionary with 'min' and 'max', having the extent for all coordinates to allow for interpolation.
         """
+        raise NotImplementedError(
+            "InterpolationGlobalEncoder (grid global encoders MLP/UNet/ResNetCNN/"
+            "SwinUNETR, and the interpolation baseline) is deprecated with the old "
+            "grid data path. Use the point-based field path (global_encoder type "
+            "'Point'). Revive by removing this guard."
+        )
         super().__init__()
         self.register_buffer("field_min", torch.as_tensor(field_extent['min']))
         self.register_buffer("field_max", torch.as_tensor(field_extent['max']))
@@ -218,11 +236,44 @@ class SwinUNETRGlobalEncoder(InterpolationGlobalEncoder):
         output = self.model(global_field_padded)
         output = self._pad(output, padding_x, padding_y, unpad=True)
         # interpolation
-        # pos_transformed = pos_transform(local_data['coords'], 
-        #                         self.field_min, 
+        # pos_transformed = pos_transform(local_data['coords'],
+        #                         self.field_min,
         #                         self.field_max).unsqueeze(2)
         # emb = F.grid_sample(output, pos_transformed, align_corners=True, mode='bilinear', padding_mode='border')
         # emb = emb.squeeze(-1).permute(0, 2, 1)
         # interpolation
         emb = self.interpolate(output, local_data)
         return emb
+
+class PointGlobalEncoder(BaseGlobalEncoder):
+    """Point-based global encoder: MLP over pre-sampled NWP tokens.
+
+    Reads local_data['global_tokens'] [B, N, C_nwp] and returns [B, N, out].
+    No grid_sample, no field_extent, no global_field.
+    """
+
+    def __init__(self, *, mlp_params: dict[str, Any], **kwargs: Any) -> None:
+        super().__init__()
+        in_dim = mlp_params['in_channels']
+        out_dim = mlp_params['out_channels']
+        hidden_dims = list(mlp_params.get('hidden_dims', []) or [])
+        act_fn = mlp_params.get('act_fn', 'GELU')
+        use_layernorm = mlp_params.get('use_layernorm', False)
+        use_batchnorm = mlp_params.get('use_batchnorm', False)
+        layers: list[torch.nn.Module] = []
+        d = in_dim
+        for h in hidden_dims:
+            layers.append(torch.nn.Linear(d, h))
+            if use_layernorm:
+                layers.append(torch.nn.LayerNorm(h))
+            if use_batchnorm:
+                layers.append(_FlattenedBatchNorm1d(h))
+            layers.append(get_activation(act_fn))
+            d = h
+        layers.append(torch.nn.Linear(d, out_dim))
+        self.model = torch.nn.Sequential(*layers)
+
+    def forward(
+        self, global_data: dict[str, Any], local_data: dict[str, Any]
+    ) -> torch.Tensor:
+        return self.model(local_data['global_tokens'])

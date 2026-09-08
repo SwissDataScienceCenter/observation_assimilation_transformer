@@ -21,7 +21,6 @@ def make_predictor(loss_fn="crps") -> GPPredictor:
     cfg = GPBaselineConfig(
         obs_vars=OBS_VAR,
         nwp_vars=NWP_VARS,
-        field_extent=FIELD_EXTENT,
         loss_fn=loss_fn,
         num_samples=3,
     )
@@ -34,25 +33,20 @@ def make_predictor(loss_fn="crps") -> GPPredictor:
     )
 
 
-def make_batch(B=2, N_obs=8, N_q=5, n_nwp=3, n_topo=5, H=32, W=32):
-    obs_coords = torch.rand(B, N_obs, 2) * 700000 + 2255500.0
-    query_coords = torch.rand(B, N_q, 2) * 700000 + 2255500.0
+def make_batch(B=2, N_obs=8, N_q=5, n_nwp=3, n_topo=5):
     return {
-        "global_data": {
-            "global_field": torch.randn(B, n_nwp + n_topo, H, W),
-            "time_emb": torch.randn(B, 4),
-        },
+        "global_data": {"time_emb": torch.randn(B, 4)},
         "observation_data": {
-            "coords": obs_coords,
             "geo": torch.randn(B, N_obs, 3),
-            "topo": torch.randn(B, N_obs, n_topo, 32, 32),
+            "global_tokens": torch.randn(B, N_obs, n_nwp),
+            "topo": torch.randn(B, N_obs, n_topo),
             "obs": torch.randn(B, N_obs, 1),
             "mask_obs": torch.ones(B, N_obs, 1),
         },
         "query_data": {
-            "coords": query_coords,
             "geo": torch.randn(B, N_q, 3),
-            "topo": torch.randn(B, N_q, n_topo, 32, 32),
+            "global_tokens": torch.randn(B, N_q, n_nwp),
+            "topo": torch.randn(B, N_q, n_topo),
             "obs": torch.randn(B, N_q, 1),
             "mask_obs": torch.ones(B, N_q, 1),
         },
@@ -231,7 +225,10 @@ def test_train_model_routes_gp_configs_to_the_gp_path(model_name, is_gp):
     with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
         cfg = compose(
             config_name="config",
-            overrides=[f"model={model_name}", "dataset=cosmo_peakweather/precip"],
+            overrides=[
+                f"model={model_name}",
+                "dataset=cosmo_peakweather/legacy/precip",
+            ],
         )
 
     assert _is_gp_model(cfg) is is_gp

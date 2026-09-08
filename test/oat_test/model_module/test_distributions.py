@@ -400,6 +400,25 @@ def test_ziln_sample_gate_one_all_zeros() -> None:
     assert (samples == 0).all()
 
 
+def test_ziln_crps_finite_for_extreme_scale() -> None:
+    """crps must stay finite even for pathologically large loc/scale.
+
+    m = exp(loc + 0.5*scale**2) overflows float32 well before scale=50 --
+    the root cause of the OOTG training crash in job 5177171, where the
+    precip head's scale (itself exp(raw_decoder_output)) drifted large
+    enough to send crps (and then gradients) to nan.
+    """
+    B, S = 2, 3
+    d = ZeroInflatedLogNormal(
+        gate=torch.full((B, S), 0.1),
+        loc=torch.full((B, S), 50.0),
+        scale=torch.full((B, S), 50.0),
+    )
+    target = torch.full((B, S), 0.02)
+    crps = d.crps(target)
+    assert torch.isfinite(crps).all(), f"crps has non-finite values: {crps}"
+
+
 def test_ziln_crps_gradients_all_params() -> None:
     """CRPS must back-propagate through gate, loc, and scale."""
     torch.manual_seed(0)

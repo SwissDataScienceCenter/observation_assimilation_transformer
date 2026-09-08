@@ -5,6 +5,7 @@ import torch.nn as nn
 import yaml
 from typing import Any, Dict, cast
 
+from oat.data_module.field import Field
 from oat.data_module.support import VariableSupport
 
 TRANSFORM_REGISTRY: dict[str, type['Transform']] = {}
@@ -723,6 +724,52 @@ class NestedTransform(nn.Module):
 
         body = "\n".join(render(self.transform_dict))
         return f"{self.__class__.__name__}(\n{body}\n)"
+
+@register_transform
+class FieldValueTransform(Transform):
+    """Apply inner Transform to Field.values, passing coords/mask/var_names through."""
+
+    def __init__(self, inner: Transform) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def forward(self, sample: Field) -> Field:  # type: ignore[override]
+        return Field(
+            sample.coords,
+            self.inner(sample.values),
+            sample.var_names,
+            sample.mask,
+        )
+
+    def inverse(self, sample: Field) -> Field:  # type: ignore[override]
+        return Field(
+            sample.coords,
+            self.inner.inverse(sample.values),
+            sample.var_names,
+            sample.mask,
+        )
+
+    @property
+    def input_support(self) -> "VariableSupport":
+        return self.inner.input_support
+
+    def transform_support(
+        self, support: "VariableSupport"
+    ) -> "VariableSupport | Dict[str, Any]":
+        return self.inner.transform_support(support)
+
+    def inverse_transform_support(
+        self, support: "VariableSupport"
+    ) -> "VariableSupport | Dict[str, Any]":
+        return self.inner.inverse_transform_support(support)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"type": "FieldValueTransform", "inner": self.inner.to_dict()}
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "FieldValueTransform":
+        return cls(Transform.from_dict(d["inner"]))
+
 
 def transform_dict_to_yaml(transform_dict: dict[str, Transform]) -> str:
     transform_dicts = {key: tr.to_dict() for key, tr in transform_dict.items()}
