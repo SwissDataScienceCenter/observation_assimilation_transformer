@@ -36,10 +36,10 @@ class Field:
                 f"var_names has {len(self.var_names)} entries but values has "
                 f"{self.values.shape[-1]} channels"
             )
-        if self.coords.ndim != self.values.ndim:
+        if self.coords.ndim not in (2, 3) or self.values.ndim != self.coords.ndim:
             raise ValueError(
-                f"coords ({self.coords.ndim}d) and values ({self.values.ndim}d) "
-                "must have the same number of dims"
+                "coords and values must both be 2D (unbatched) or 3D (batched); "
+                f"got {self.coords.ndim}d and {self.values.ndim}d"
             )
         if self.coords.shape[-2] != self.values.shape[-2]:
             raise ValueError(
