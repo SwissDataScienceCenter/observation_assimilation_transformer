@@ -75,3 +75,19 @@ def test_gp_field_model_requires_univariate_dataset():
     with pytest.raises(SystemExit):
         validate("gp_field", "cosmo_peakweather/temp_precip")
     validate("gp_field", "cosmo_peakweather/temp")
+
+
+def test_ootg_datasets_are_selectable():
+    assert "cosmo_peakweather/temp_ootg" in DATASETS
+    assert "cosmo_peakweather/temp_precip_ootg" in DATASETS
+    assert "era5_meteostat/temp_ootg" in DATASETS
+    assert "era5_meteostat/temp_precip_ootg" in DATASETS
+
+
+def test_ootg_model_requires_ootg_dataset_variant():
+    with pytest.raises(SystemExit):
+        validate("ootg", "cosmo_peakweather/temp")
+    with pytest.raises(SystemExit):
+        validate("ootg", "cosmo_peakweather/temp_precip")
+    validate("ootg", "cosmo_peakweather/temp_ootg")
+    validate("ootg", "cosmo_peakweather/temp_precip_ootg")

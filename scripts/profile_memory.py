@@ -19,6 +19,7 @@ import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from oat.data_module.field import Field
 from oat.data_module.setup import setup_data_and_transform
 from oat.predictor_module.oat_predictor import setup_oat_cfg, setup_oat_predictor
 
@@ -35,17 +36,6 @@ def mem(tag: str) -> None:
     peak   = torch.cuda.max_memory_allocated(_DEVICE) / 1e9
     print(f"[{_STAGE:02d}] {tag:<60s}  alloc={alloc:6.2f} GB  reserv={reserv:6.2f} GB  peak={peak:6.2f} GB")
     _STAGE += 1
-
-
-def to_device(obj, device):
-    if isinstance(obj, torch.Tensor):
-        return obj.to(device)
-    if isinstance(obj, dict):
-        return {k: to_device(v, device) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return type(obj)(to_device(v, device) for v in obj)
-    return obj
-
 
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
@@ -74,6 +64,7 @@ def main(cfg: DictConfig) -> None:
         transforms=[input_transform, output_transform],
         cfg=cfg,
     )
+    predictor.set_index_projection(dataset)
     predictor = predictor.to(_DEVICE).eval()
     mem("model on GPU")
 
@@ -81,22 +72,31 @@ def main(cfg: DictConfig) -> None:
     batch = next(iter(val_loader))
     mem("after fetching batch (CPU)")
 
-    batch = to_device(batch, _DEVICE)
+    # Field-aware transfer (plain tensor.to() does not know about Field
+    # dataclasses, so it silently leaves field-collated data on CPU).
+    batch = predictor.transfer_batch_to_device(batch, _DEVICE, 0)
     mem("batch on GPU")
 
     print("\n── Batch tensor sizes ──────────────────────────────────────────────────")
     def _report(obj, prefix=""):
         if isinstance(obj, torch.Tensor):
             print(f"  {prefix:<60s} {str(tuple(obj.shape)):<30s} {obj.nbytes/1e6:8.1f} MB")
+        elif isinstance(obj, Field):
+            _report(obj.coords, f"{prefix}.coords")
+            _report(obj.values, f"{prefix}.values")
+            if obj.mask is not None:
+                _report(obj.mask, f"{prefix}.mask")
         elif isinstance(obj, dict):
             for k, v in obj.items():
                 _report(v, f"{prefix}.{k}" if prefix else k)
     _report(batch)
     print()
 
-    if input_transform is not None:
-        batch = input_transform(batch)
-    mem("after input transform")
+    # Predictor-owned normalization: applies input_transform and unwraps
+    # Field batches into the flat tensors forward() expects (plain
+    # input_transform(batch) alone leaves Field objects in place).
+    batch = predictor._normalize_batch(batch)
+    mem("after normalize (transform + field unwrap)")
 
     # ── forward pass with memory snapshot ────────────────────────────────
     torch.cuda.reset_peak_memory_stats(_DEVICE)

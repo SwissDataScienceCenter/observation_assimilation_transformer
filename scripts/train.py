@@ -7,7 +7,7 @@ run name used consistently for the checkpoint dir and W&B run.
 Usage:
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp_precip
     python -m scripts.train --model gp_field --dataset era5_meteostat/temp --dry-run
-    python -m scripts.train --model ootg --dataset cosmo_peakweather/temp --submit
+    python -m scripts.train --model ootg --dataset cosmo_peakweather/temp_ootg --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
 """
@@ -29,6 +29,7 @@ DATASET_VARIANTS = (
     "temp",
     "precip",
     "temp_precip",
+    "temp_ootg",
     "temp_precip_ootg",
 )
 DATASETS = tuple(
@@ -150,6 +151,12 @@ def validate(model: str, dataset: str) -> None:
         raise SystemExit(
             f"Model '{model}' is univariate-only (see gp_baseline.py); dataset variant "
             f"'{variant}' is multivariate. Use one of {UNIVARIATE_VARIANTS} instead."
+        )
+    if model == "ootg" and not variant.endswith("_ootg"):
+        raise SystemExit(
+            f"Model 'ootg' needs a dataset variant with a global_grid role "
+            f"(one ending in '_ootg'); got '{variant}'. Use 'temp_ootg' or "
+            f"'temp_precip_ootg' instead."
         )
 
 

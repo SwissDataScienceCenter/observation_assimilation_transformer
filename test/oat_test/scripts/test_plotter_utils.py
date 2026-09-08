@@ -83,10 +83,11 @@ def test_maybe_build_nwp_baseline_warns_and_returns_none_on_legacy_path(caplog):
 
 def test_maybe_build_nwp_baseline_required_raises_systemexit_on_legacy_path(caplog):
     with caplog.at_level(logging.WARNING):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             maybe_build_nwp_baseline(
                 _legacy_dataset(), logging.getLogger(__name__), required=True
             )
+    assert exc_info.value.code != 0
 
 
 def test_load_plot_config_returns_none_for_unrecognized_dataset_type():

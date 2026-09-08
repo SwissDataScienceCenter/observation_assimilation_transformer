@@ -105,6 +105,13 @@ class OATPlotter:
         """
         p = predictor if predictor is not None else self.predictor
         p = p.to(self.device)
+        if p.field_roles is not None and "global_grid" in p.field_roles:
+            raise NotImplementedError(
+                "OATPlotter._run_inference only builds observation_data/"
+                "query_data batches; it cannot drive a predictor that "
+                f"requires a global_grid field ({type(p).__name__}). "
+                "Grid-aware plotting is not implemented yet."
+            )
 
         roles = self.dataset.roles()
         target_name = roles["target"]

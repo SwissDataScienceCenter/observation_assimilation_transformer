@@ -160,6 +160,39 @@ def test_metric_mask_excludes_masked_query_row(step_name, prefix):
     )
 
 
+@pytest.mark.parametrize(
+    "step_name,loss_key",
+    [("training_step", "train_loss"), ("validation_step", "val_loss")],
+)
+def test_loss_excludes_masked_query_row(step_name, loss_key):
+    from unittest.mock import patch
+
+    predictor = _make_predictor()
+
+    def _run(batch):
+        logged = {}
+
+        def capture(key, val, **kwargs):
+            logged[key] = val.item() if hasattr(val, "item") else float(val)
+
+        with patch.object(predictor, "log", side_effect=capture):
+            result = getattr(predictor, step_name)(batch, 0)
+        loss = result.item() if result is not None else logged[loss_key]
+        return loss, logged[loss_key]
+
+    batch = _make_field_batch(n_query=3)
+    query_field = batch["query_data"]["fields"]["obs"]
+    # An extreme target value on one row: it must not move the training/
+    # validation loss once that row is masked out.
+    query_field.values[0, 1, 0] = 1e6
+    loss_counted, logged_counted = _run(batch)
+    query_field.mask[0, 1, 0] = 0.0
+    loss_masked, logged_masked = _run(batch)
+    assert loss_counted > loss_masked
+    assert logged_counted == pytest.approx(loss_counted)
+    assert logged_masked == pytest.approx(loss_masked)
+
+
 def test_transfer_batch_to_device_preserves_fields():
     predictor = _make_predictor()
     batch = _make_field_batch()

@@ -16,9 +16,8 @@ station_type: null
 
 fields:
   obs: {coords: stations, inputs: [obs.temperature, obs.precipitation]}
-  # Topo vars are appended to the global (nwp) field so topography enters the
-  # global encoder too, mirroring the old grid path's global_field = NWP + topo
-  # (topo still also feeds the separate topographic encoder).
+  # NWP-only global field (no topo channels here). Topography reaches the
+  # model through the separate topographic encoder, not the global encoder.
   nwp:
     coords: stations
     inputs: [nwp.T_2M, nwp.T_G, nwp.TOT_PREC_1H, nwp.CLCT]

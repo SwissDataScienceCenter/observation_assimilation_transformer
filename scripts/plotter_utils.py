@@ -68,7 +68,7 @@ def maybe_build_nwp_baseline(
     interpreted as "use the primary model", not "no baseline". Callers whose
     entire output depends on a real baseline (plot_oat_example.py,
     plot_nwp_domain.py, plot_assimilation_panel.py) pass required=True, which
-    raises SystemExit(0) instead of returning None — otherwise they'd
+    raises SystemExit(1) instead of returning None — otherwise they'd
     silently render the primary model's own output as if it were the NWP
     baseline, with no error. Only evaluate_test_set.py's --baseline flag
     (genuinely optional, already gated on `if reference is not None`) uses
@@ -80,7 +80,7 @@ def maybe_build_nwp_baseline(
             "data path; skipping."
         )
         if required:
-            raise SystemExit(0)
+            raise SystemExit(1)
         return None
     from oat.predictor_module.baseline_predictor import create_baseline_predictor
 

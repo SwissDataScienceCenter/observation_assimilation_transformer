@@ -85,6 +85,23 @@ class OOTGPredictor(BasePredictor):
             args = (*args, ootg_batch.topo_c, ootg_batch.topo_t)
         return self.model(*args)
 
+    @staticmethod
+    def _masked_crps_loss(
+        dist: Any, yt: torch.Tensor, mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Mean CRPS over valid query targets only.
+
+        Missing targets are zero-filled upstream (see
+        ``_unwrap_fields_to_ootg_batch``); without the mask, those filler
+        zeros are trained and checkpoint-selected as if they were real
+        observations.
+        """
+        per_elem = dist.crps(yt)
+        if mask is None:
+            return per_elem.mean()
+        mask = mask.to(per_elem.dtype)
+        return (per_elem * mask).sum() / mask.sum().clamp(min=1.0)
+
     def _draw_samples(self, dist: Any) -> torch.Tensor:
         """Draw self.n_samples samples in normalized space.
 
@@ -120,9 +137,10 @@ class OOTGPredictor(BasePredictor):
                 )
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+        query_mask = batch["query_data"]["fields"][self.roles["target"]].mask
         ootg_batch = self._normalize_batch(batch)
         dist = self._forward(ootg_batch)
-        loss: torch.Tensor = dist.crps(ootg_batch.yt).mean()
+        loss = self._masked_crps_loss(dist, ootg_batch.yt, query_mask)
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
@@ -130,7 +148,7 @@ class OOTGPredictor(BasePredictor):
         query_mask = batch["query_data"]["fields"][self.roles["target"]].mask
         ootg_batch = self._normalize_batch(batch)
         dist = self._forward(ootg_batch)
-        loss = dist.crps(ootg_batch.yt).mean()
+        loss = self._masked_crps_loss(dist, ootg_batch.yt, query_mask)
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         with torch.no_grad():
             samples_phys = self.output_transform.inverse(self._draw_samples(dist))

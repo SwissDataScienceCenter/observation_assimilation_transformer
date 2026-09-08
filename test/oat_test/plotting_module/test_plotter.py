@@ -153,6 +153,20 @@ def test_run_inference_omits_stage_for_oat():
     assert "stage" not in predictor.predict_step.call_args.kwargs
 
 
+def test_run_inference_rejects_global_grid_predictor():
+    """OATPlotter never assembles global_data; a predictor that needs a
+    global_grid field (e.g. OOTG) must fail fast, not with a raw KeyError
+    deep inside the predictor's batch-unwrap code."""
+    predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
+    predictor.field_roles = {"target": "obs", "global_grid": "nwp_grid_field"}
+    dataset = _make_dataset()
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
+    )
+    with pytest.raises(NotImplementedError, match="global_grid"):
+        plotter._run_inference(0, torch.zeros(3, 2))
+
+
 def test_predict_samples_threads_predictor_and_stage():
     predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
     dataset = _make_dataset()
