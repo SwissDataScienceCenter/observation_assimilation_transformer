@@ -33,6 +33,7 @@ from oat.predictor_module.checkpoint_utils import (
     resolve_checkpoint,
 )
 from scripts.plotter_utils import (
+    is_field_path,
     maybe_build_nwp_baseline,
     select_plotter_cls,
 )
@@ -219,6 +220,12 @@ def main() -> None:
 
     tm: dict[str, torch.Tensor] | None = None
     if args.long:
+        if not is_field_path(dataset):
+            raise SystemExit(
+                "--long requires a field-path dataset (stratification reads "
+                "the geo-bias field via dataset.roles()); legacy grid-path "
+                "datasets are not supported."
+            )
         from oat.plotting_module.stratification import (
             build_long_dataframe,
             collect_station_covariates,
