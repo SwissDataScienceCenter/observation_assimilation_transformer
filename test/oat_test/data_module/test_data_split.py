@@ -35,6 +35,18 @@ def test_as_index_array_string_without_station_ids_raises():
         _as_index_array(["a", "b"])
 
 
+def test_as_index_array_integer_in_range_passes_with_station_ids():
+    all_ids = np.array(["a", "b", "c"])
+    result = _as_index_array([0, 2], all_ids)
+    assert np.array_equal(result, np.array([0, 2]))
+
+
+def test_as_index_array_integer_out_of_range_raises():
+    all_ids = np.array(["a", "b", "c"])
+    with pytest.raises(ValueError, match="out of range"):
+        _as_index_array([2, 99], all_ids)
+
+
 class _Base:
     """Minimal base field dataset: 4 stations, 3 times, one 'obs' field."""
 
@@ -212,6 +224,21 @@ def test_create_splits_without_test_context_is_unchanged():
     )
     tr, va, te = out["datasets"]
     assert te.observed_indices.tolist() == [0, 1, 2]  # train+val only, as today
+
+
+def test_create_splits_overlapping_station_groups_raises():
+    """An explicit override that puts one station in two groups must fail."""
+    base = _Base(num_stations=6)
+    with pytest.raises(ValueError, match="disjoint"):
+        create_splits(
+            base,
+            train_station_indices=["a", "b"],
+            val_station_indices=["c"],
+            test_station_indices=["b", "d"],  # "b" also in train
+            test_context_station_indices=["e", "f"],
+            test_days=0,
+            seed=0,
+        )
 
 
 def test_create_splits_random_observed_includes_train_and_val():

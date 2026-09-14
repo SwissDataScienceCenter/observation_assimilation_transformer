@@ -27,11 +27,19 @@ def _as_index_array(
     if isinstance(x, (list, ListConfig)):
         x = np.array(x)
     if x.dtype.kind in "iu":
+        # Check the bounds only when we have a station list to check against.
+        # The random-split branch calls this with all_station_ids=None, so
+        # there is nothing to bound against there.
+        if all_station_ids is not None and x.size:
+            if x.min() < 0 or x.max() >= len(all_station_ids):
+                raise ValueError(
+                    f"station index out of range: values must be in "
+                    f"[0, {len(all_station_ids)}), got min={x.min()}, "
+                    f"max={x.max()}"
+                )
         return x
     if all_station_ids is None:
-        raise ValueError(
-            "all_station_ids is required to resolve station-ID overrides"
-        )
+        raise ValueError("all_station_ids is required to resolve station-ID overrides")
     id_to_pos = {sid: i for i, sid in enumerate(all_station_ids)}
     missing = [sid for sid in x if sid not in id_to_pos]
     if missing:
@@ -194,10 +202,11 @@ def create_splits(
     test_size = int(num_stations * test_station_fraction)
     val_size = int(num_stations * val_station_fraction)
 
-    if all(
+    resolved_from_override = not all(
         x is None
         for x in (train_station_indices, val_station_indices, test_station_indices)
-    ):
+    )
+    if not resolved_from_override:
         assert val_station_fraction + test_station_fraction < 1.0
         indices = np.arange(num_stations, dtype=int)
         rng = torch.Generator().manual_seed(seed) if seed is not None else None
@@ -208,18 +217,31 @@ def create_splits(
         ]
         test_station_indices = indices[num_stations - test_size :]
     else:
-        train_station_indices = _as_index_array(
-            train_station_indices, dataset.stations
-        )
+        train_station_indices = _as_index_array(train_station_indices, dataset.stations)
         val_station_indices = _as_index_array(val_station_indices, dataset.stations)
-        test_station_indices = _as_index_array(
-            test_station_indices, dataset.stations
-        )
+        test_station_indices = _as_index_array(test_station_indices, dataset.stations)
     test_context_station_indices = (
         np.array([], dtype=int)
         if test_context_station_indices is None
         else _as_index_array(test_context_station_indices, dataset.stations)
     )
+
+    if resolved_from_override:
+        # Check that the four explicit station groups do not share a
+        # station. The random-split branch is disjoint by construction and
+        # does not need this check.
+        groups = (
+            train_station_indices,
+            val_station_indices,
+            test_station_indices,
+            test_context_station_indices,
+        )
+        all_indices = np.concatenate(groups)
+        if len(all_indices) != len(set(all_indices.tolist())):
+            raise ValueError(
+                "station index groups (train/val/test/test_context) must "
+                "be disjoint; found overlapping station indices"
+            )
 
     assert (
         len(train_station_indices) > 0

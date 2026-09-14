@@ -60,6 +60,16 @@ def _sibling_checkpoint(dataset: str) -> str:
     )
 
 
+def _ckpt_tag(base_tag: str, exclude_context: bool) -> str:
+    """Add a suffix to the tag when the run excludes test-context stations.
+
+    This keeps the output files of the two eval arms apart. Without this
+    suffix, a run with --exclude-context writes to the same file as a run
+    without it, and the second run overwrites the first.
+    """
+    return base_tag + ("_nocontext" if exclude_context else "")
+
+
 def _exclude_context(
     obs_indices: list[int], cfg_split: Any, dataset_stations: np.ndarray
 ) -> list[int]:
@@ -208,6 +218,13 @@ def main() -> None:
         predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
         predictor = predictor.eval()
 
+    base_tag = (
+        f"{INTERPOLATOR_MODEL}_{args.dataset}"
+        if is_interpolator
+        else Path(args.checkpoint).parent.name
+    )
+    ckpt_tag = _ckpt_tag(base_tag, args.exclude_context)
+
     cfg.dataset.data_points_for_stats = 0
 
     dataset, _, _, val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
@@ -287,11 +304,6 @@ def main() -> None:
             var_names=var_names,
         )
         OUT_DIR.mkdir(parents=True, exist_ok=True)
-        ckpt_tag = (
-            f"{INTERPOLATOR_MODEL}_{args.dataset}"
-            if is_interpolator
-            else Path(args.checkpoint).parent.name
-        )
         long_path = (
             Path(args.out)
             if args.out
@@ -328,11 +340,6 @@ def main() -> None:
             rows[f"{key}_{var}"] = tensor[:, vi].tolist()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_tag = (
-        f"{INTERPOLATOR_MODEL}_{args.dataset}"
-        if is_interpolator
-        else Path(args.checkpoint).parent.name
-    )
     # In --long mode, args.out names the Parquet dump; auto-name the CSV to avoid a clash.
     out_path = (
         Path(args.out)
