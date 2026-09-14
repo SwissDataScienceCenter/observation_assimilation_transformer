@@ -21,7 +21,9 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 from omegaconf import OmegaConf
@@ -58,13 +60,34 @@ def _sibling_checkpoint(dataset: str) -> str:
     )
 
 
+def _exclude_context(
+    obs_indices: list[int], cfg_split: Any, dataset_stations: np.ndarray
+) -> list[int]:
+    """Remove test context stations from observed indices.
+
+    Resolves test_context_station_indices from cfg_split against dataset_stations.
+    Returns obs_indices unchanged if cfg_split has no test_context_station_indices.
+    """
+    ctx = cfg_split.get("test_context_station_indices")
+    if not ctx:
+        return obs_indices
+    from oat.data_module.data_split import _as_index_array
+
+    ctx_positions = set(_as_index_array(list(ctx), dataset_stations).tolist())
+    return [i for i in obs_indices if i not in ctx_positions]
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Aggregate test-set metrics for an OAT checkpoint."
     )
     p.add_argument("checkpoint", nargs="?", default=None, help="Path to .ckpt file")
-    p.add_argument("--dataset", default=None, help="Dataset key in configs/checkpoints.yaml")
-    p.add_argument("--model", default=None, help="Model key in configs/checkpoints.yaml")
+    p.add_argument(
+        "--dataset", default=None, help="Dataset key in configs/checkpoints.yaml"
+    )
+    p.add_argument(
+        "--model", default=None, help="Model key in configs/checkpoints.yaml"
+    )
     p.add_argument(
         "--split",
         choices=["val", "test"],
@@ -113,6 +136,12 @@ def _parse_args() -> argparse.Namespace:
         help="Write a per-(station, timestep) Parquet dump for stratification "
         "plots instead of the aggregate CSV.",
     )
+    p.add_argument(
+        "--exclude-context",
+        action="store_true",
+        help="Drop test_context_station_indices from the observed set "
+        "(zero-context spatial-holdout eval arm)",
+    )
     return p.parse_args()
 
 
@@ -126,8 +155,12 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         global_key = f"{key}_global"
         if global_key not in metrics:
             continue
-        per_var = torch.nanmean(metrics[key], dim=0)  # average over stations, ignoring NaN → [V]
-        vals = "".join(f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names)))
+        per_var = torch.nanmean(
+            metrics[key], dim=0
+        )  # average over stations, ignoring NaN → [V]
+        vals = "".join(
+            f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names))
+        )
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
 
@@ -149,7 +182,9 @@ def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tens
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
@@ -158,7 +193,9 @@ def main() -> None:
 
     if is_interpolator:
         # Borrow the data config from a sibling checkpoint; build predictor below.
-        cfg = OmegaConf.load(Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml")
+        cfg = OmegaConf.load(
+            Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml"
+        )
         predictor = None
     else:
         if args.checkpoint is None:
@@ -187,6 +224,8 @@ def main() -> None:
     split_ds = split_loader.dataset  # EvalDataset
 
     obs_indices = list(map(int, split_ds.observed_indices))
+    if args.exclude_context:
+        obs_indices = _exclude_context(obs_indices, cfg.split, dataset.stations)
     eval_indices = list(map(int, split_ds.eval_indices))
 
     if split_ds._time_indices is not None:
@@ -199,7 +238,10 @@ def main() -> None:
 
     logger.info(
         "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d",
-        args.split, len(time_indices), len(obs_indices), len(eval_indices),
+        args.split,
+        len(time_indices),
+        len(obs_indices),
+        len(eval_indices),
     )
 
     PlotterCls = select_plotter_cls(dataset)
@@ -274,7 +316,10 @@ def main() -> None:
 
     # Build per-station CSV
     coords = dataset.station_coords[eval_indices].numpy()  # [S, 2]
-    rows: dict = {"station_x": coords[:, 0].tolist(), "station_y": coords[:, 1].tolist()}
+    rows: dict = {
+        "station_x": coords[:, 0].tolist(),
+        "station_y": coords[:, 1].tolist(),
+    }
     for key in ("crps", "mae", "crpss"):
         if key not in metrics:
             continue
@@ -303,7 +348,10 @@ def main() -> None:
         if global_key not in metrics:
             continue
         summary[global_key] = metrics[global_key].item()
-        per_var = {var: torch.nanmean(metrics[key][:, vi]).item() for vi, var in enumerate(var_names)}
+        per_var = {
+            var: torch.nanmean(metrics[key][:, vi]).item()
+            for vi, var in enumerate(var_names)
+        }
         summary[key] = per_var
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2))
