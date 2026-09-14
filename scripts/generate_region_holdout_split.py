@@ -233,19 +233,19 @@ def render_config(
         "train_station_indices:",
     ]
     for sid in train_ids:
-        lines.append(f"  - {sid}")
+        lines.append(f'  - "{sid}"')
 
     lines.append("val_station_indices:")
     for sid in val_ids:
-        lines.append(f"  - {sid}")
+        lines.append(f'  - "{sid}"')
 
     lines.append("test_station_indices:")
     for sid in test_eval_ids:
-        lines.append(f"  - {sid}")
+        lines.append(f'  - "{sid}"')
 
     lines.append("test_context_station_indices:")
     for sid in test_context_ids:
-        lines.append(f"  - {sid}")
+        lines.append(f'  - "{sid}"')
 
     return "\n".join(lines) + "\n"
 
@@ -281,13 +281,19 @@ def main() -> None:
     p.add_argument(
         "--station-meta-path",
         type=str,
-        default="data/station_quality.parquet",
+        default=(
+            "/scratch/mch/cdonner/meteostats_dataset/data/processed/"
+            "station_quality.parquet"
+        ),
         help="Path to the station metadata file",
     )
     p.add_argument(
         "--obs-path",
         type=str,
-        default="data/observations.parquet",
+        default=(
+            "/scratch/mch/cdonner/meteostats_dataset/data/processed/"
+            "hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
+        ),
         help="Path to the observation file",
     )
     p.add_argument(
