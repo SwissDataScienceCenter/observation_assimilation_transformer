@@ -61,6 +61,7 @@ def _make_dataset(
     n_times: int = 4,
     n_vars: int = 2,
     plot_config: dict | None = None,
+    grid_shape: tuple[int, int] | None = None,
 ):
     ds = MagicMock()
     ds.station_coords = torch.zeros(n_stations, 2)
@@ -72,12 +73,27 @@ def _make_dataset(
         "global": "nwp",
         "geo_bias": "geo",
         "topo": "topo",
+        **({"global_grid": "nwp_grid_field"} if grid_shape is not None else {}),
     }
+    ds.target_coord_source.return_value = "stations"
+    field_coord_sources = {"obs": "stations", "nwp": "stations", "geo": "stations", "topo": "stations"}
+    if grid_shape is not None:
+        field_coord_sources["nwp_grid_field"] = "nwp_grid"
+    ds.field_coord_sources.return_value = field_coord_sources
     station_xy = torch.zeros(n_stations, 2)
-    ds.__getitem__.side_effect = lambda idx: {
-        "index": idx,
-        "fields": _make_field_dict(n_stations, n_vars, idx, station_xy),
-    }
+
+    def _getitem(idx):
+        fields = _make_field_dict(n_stations, n_vars, idx, station_xy)
+        if grid_shape is not None:
+            h, w = grid_shape
+            n_grid = h * w
+            grid_xy = torch.zeros(n_grid, 2)
+            fields["nwp_grid_field"] = _make_field_dict(
+                n_grid, n_vars, idx, grid_xy
+            )["nwp"]
+        return {"index": idx, "fields": fields}
+
+    ds.__getitem__.side_effect = _getitem
 
     def _get_query(query_coords, idx):
         fields = _make_field_dict(query_coords.shape[0], n_vars, idx, query_coords)
@@ -153,18 +169,27 @@ def test_run_inference_omits_stage_for_oat():
     assert "stage" not in predictor.predict_step.call_args.kwargs
 
 
-def test_run_inference_rejects_global_grid_predictor():
-    """OATPlotter never assembles global_data; a predictor that needs a
-    global_grid field (e.g. OOTG) must fail fast, not with a raw KeyError
-    deep inside the predictor's batch-unwrap code."""
+def test_run_inference_builds_global_data_for_grid_predictor():
+    """A predictor that needs a global_grid field (e.g. OOTG) gets a batch
+    with an unsliced global_data group holding the full grid field."""
     predictor = _make_predictor(N_q=3, n_samples=10, n_vars=2)
     predictor.field_roles = {"target": "obs", "global_grid": "nwp_grid_field"}
-    dataset = _make_dataset()
+    dataset = _make_dataset(n_stations=5, grid_shape=(3, 4))
     plotter = OATPlotter(
         predictor, dataset, obs_station_indices=[0, 1, 2], n_samples=10
     )
-    with pytest.raises(NotImplementedError, match="global_grid"):
-        plotter._run_inference(0, torch.zeros(3, 2))
+    samples = plotter._run_inference(0, torch.zeros(3, 2))
+
+    assert samples.shape == (3, 10, 2)
+    batch = predictor.predict_step.call_args[0][0]
+    assert "global_data" in batch
+    grid_field = batch["global_data"]["fields"]["nwp_grid_field"]
+    assert grid_field.values.shape[1] == 12  # full 3x4 grid, not station-sliced
+
+    # obs_fields only got the station-sliced obs indices, not the grid field.
+    obs_fields = batch["observation_data"]["fields"]
+    assert "nwp_grid_field" not in obs_fields
+    assert obs_fields["obs"].values.shape[1] == 3
 
 
 def test_predict_samples_threads_predictor_and_stage():

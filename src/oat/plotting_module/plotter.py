@@ -105,38 +105,52 @@ class OATPlotter:
         """
         p = predictor if predictor is not None else self.predictor
         p = p.to(self.device)
-        if p.field_roles is not None and "global_grid" in p.field_roles:
-            raise NotImplementedError(
-                "OATPlotter._run_inference only builds observation_data/"
-                "query_data batches; it cannot drive a predictor that "
-                f"requires a global_grid field ({type(p).__name__}). "
-                "Grid-aware plotting is not implemented yet."
-            )
+        needs_grid = p.field_roles is not None and "global_grid" in p.field_roles
 
         roles = self.dataset.roles()
         target_name = roles["target"]
 
         all_fields = self.dataset[time_idx]["fields"]
         obs_idx = torch.as_tensor(self.obs_indices, dtype=torch.long)
-        obs_fields = {n: _slice_field(f, obs_idx) for n, f in all_fields.items()}
+
+        if needs_grid:
+            target_cs = self.dataset.target_coord_source()
+            fcs = self.dataset.field_coord_sources()
+            station_fields = {
+                n: f for n, f in all_fields.items() if fcs[n] == target_cs
+            }
+            grid_fields = {
+                n: f for n, f in all_fields.items() if fcs[n] != target_cs
+            }
+        else:
+            station_fields = all_fields
+            grid_fields = {}
+
+        obs_fields = {n: _slice_field(f, obs_idx) for n, f in station_fields.items()}
 
         query_fields = self.dataset.get_query(query_coords, time_idx)
         coords = next(iter(query_fields.values())).coords  # [N_q, 3]: (x, y, t)
-        n_obs_vars = len(all_fields[target_name].var_names)
+        n_obs_vars = len(station_fields[target_name].var_names)
         query_fields[target_name] = Field(
             coords,
             torch.zeros(coords.shape[0], n_obs_vars),
-            list(all_fields[target_name].var_names),
+            list(station_fields[target_name].var_names),
             torch.zeros(coords.shape[0], n_obs_vars),
         )
 
-        sample = {
+        sample: dict[str, Any] = {
             "index": time_idx,
             "observation_data": {"fields": obs_fields},
             "query_data": {"fields": query_fields},
         }
+        if grid_fields:
+            sample["global_data"] = {"fields": grid_fields}
+
         batch = collate([sample])
-        for group in ("observation_data", "query_data"):
+        groups = ["observation_data", "query_data"]
+        if "global_data" in batch:
+            groups.append("global_data")
+        for group in groups:
             batch[group]["fields"] = {
                 n: _field_to_device(f, self.device)
                 for n, f in batch[group]["fields"].items()
