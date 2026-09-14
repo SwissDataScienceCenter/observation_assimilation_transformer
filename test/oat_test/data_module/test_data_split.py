@@ -194,7 +194,7 @@ def test_create_splits_with_test_context_stations():
         seed=0,
     )
     tr, va, te = out["datasets"]
-    assert set(te.observed_indices.tolist()) == {0, 1, 4, 5}  # a,b,e,f
+    assert set(te.observed_indices.tolist()) == {0, 1, 2, 4, 5}  # a,b,c,e,f
     assert te.eval_indices.tolist() == [3]  # d only
     assert tr.num_stations == 2
     assert va.observed_indices.tolist() == [0, 1]  # unchanged: just train
@@ -211,4 +211,21 @@ def test_create_splits_without_test_context_is_unchanged():
         seed=0,
     )
     tr, va, te = out["datasets"]
-    assert te.observed_indices.tolist() == [0, 1]  # train+val only, as today
+    assert te.observed_indices.tolist() == [0, 1, 2]  # train+val only, as today
+
+
+def test_create_splits_random_observed_includes_train_and_val():
+    """Regression: random-split branch must keep observed = train + val."""
+    base = _Base()
+    out = create_splits(
+        base,
+        val_station_fraction=0.25,
+        test_station_fraction=0.25,
+        train_split_fraction=0.5,
+        seed=1,
+    )
+    train_ids, val_ids, test_ids = out["station_indices"]
+    _, _, test_dataset = out["datasets"]
+    observed_set = set(test_dataset.observed_indices.tolist())
+    expected_set = set(train_ids) | set(val_ids)
+    assert observed_set == expected_set

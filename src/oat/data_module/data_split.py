@@ -248,7 +248,9 @@ def create_splits(
     observed_for_test = (
         np.array([], dtype=int)
         if train_split_fraction == 0.0
-        else np.concatenate((train_station_indices, test_context_station_indices))
+        else np.concatenate(
+            (train_station_indices, val_station_indices, test_context_station_indices)
+        )
     )
     test_time_indices_arg = test_time_indices if test_days > 0 else None
     test_dataset = EvalDataset(
