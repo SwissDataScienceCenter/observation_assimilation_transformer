@@ -1,21 +1,50 @@
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from oat.data_module.data_split import (
     EvalDataset,
     TrainDataset,
+    _as_index_array,
     _slice_field,
     create_splits,
 )
 from oat.data_module.field import Field
 
 
+def test_as_index_array_integer_list_passthrough():
+    result = _as_index_array([1, 3, 2])
+    assert np.array_equal(result, np.array([1, 3, 2]))
+
+
+def test_as_index_array_resolves_station_ids():
+    all_ids = np.array(["a", "b", "c", "d"])
+    result = _as_index_array(["b", "d"], all_ids)
+    assert np.array_equal(result, np.array([1, 3]))
+
+
+def test_as_index_array_missing_id_raises():
+    all_ids = np.array(["a", "b", "c", "d"])
+    with pytest.raises(ValueError, match="z"):
+        _as_index_array(["b", "z"], all_ids)
+
+
+def test_as_index_array_string_without_station_ids_raises():
+    with pytest.raises(ValueError, match="all_station_ids"):
+        _as_index_array(["a", "b"])
+
+
 class _Base:
     """Minimal base field dataset: 4 stations, 3 times, one 'obs' field."""
 
-    def __init__(self):
-        self.stations = np.array(["a", "b", "c", "d"])
+    def __init__(self, num_stations=4):
+        if num_stations == 4:
+            self.stations = np.array(["a", "b", "c", "d"])
+        elif num_stations == 6:
+            self.stations = np.array(["a", "b", "c", "d", "e", "f"])
+        else:
+            self.stations = np.array([chr(ord("a") + i) for i in range(num_stations)])
         self.times = pd.date_range("2020-01-01", periods=3, freq="1h", tz="UTC")
 
     def __len__(self):
@@ -151,3 +180,35 @@ def test_train_dataset_no_global_data_when_no_grid_fields():
     train = TrainDataset(base, np.array([0, 1, 2, 3]), split_fraction=0.5, seed=0)
     sample = train[0]
     assert "global_data" not in sample
+
+
+def test_create_splits_with_test_context_stations():
+    base = _Base(num_stations=6)
+    out = create_splits(
+        base,
+        train_station_indices=["a", "b"],
+        val_station_indices=["c"],
+        test_station_indices=["d"],
+        test_context_station_indices=["e", "f"],
+        test_days=0,
+        seed=0,
+    )
+    tr, va, te = out["datasets"]
+    assert set(te.observed_indices.tolist()) == {0, 1, 4, 5}  # a,b,e,f
+    assert te.eval_indices.tolist() == [3]  # d only
+    assert tr.num_stations == 2
+    assert va.observed_indices.tolist() == [0, 1]  # unchanged: just train
+
+
+def test_create_splits_without_test_context_is_unchanged():
+    base = _Base()
+    out = create_splits(
+        base,
+        train_station_indices=["a", "b"],
+        val_station_indices=["c"],
+        test_station_indices=["d"],
+        test_days=0,
+        seed=0,
+    )
+    tr, va, te = out["datasets"]
+    assert te.observed_indices.tolist() == [0, 1]  # train+val only, as today

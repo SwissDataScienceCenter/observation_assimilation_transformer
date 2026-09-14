@@ -21,10 +21,22 @@ def _slice_field(field: Field, idx: Tensor) -> Field:
     return Field(field.coords[idx], field.values[idx], list(field.var_names), mask)
 
 
-def _as_index_array(x: Any) -> np.ndarray:  # type: ignore[type-arg]
+def _as_index_array(
+    x: Any, all_station_ids: np.ndarray | None = None  # type: ignore[type-arg]
+) -> np.ndarray:  # type: ignore[type-arg]
     if isinstance(x, (list, ListConfig)):
-        return np.array(x)
-    return x  # type: ignore[no-any-return]
+        x = np.array(x)
+    if x.dtype.kind in "iu":
+        return x
+    if all_station_ids is None:
+        raise ValueError(
+            "all_station_ids is required to resolve station-ID overrides"
+        )
+    id_to_pos = {sid: i for i, sid in enumerate(all_station_ids)}
+    missing = [sid for sid in x if sid not in id_to_pos]
+    if missing:
+        raise ValueError(f"station IDs not found in dataset.stations: {missing}")
+    return np.array([id_to_pos[sid] for sid in x])
 
 
 class TrainDataset(Dataset[dict[str, Any]]):
@@ -162,6 +174,7 @@ def create_splits(
     train_station_indices: Any = None,
     val_station_indices: Any = None,
     test_station_indices: Any = None,
+    test_context_station_indices: Any = None,
     test_days: int = 0,
     seed: int | None = None,
     logger: logging.Logger | None = None,
@@ -195,9 +208,18 @@ def create_splits(
         ]
         test_station_indices = indices[num_stations - test_size :]
     else:
-        train_station_indices = _as_index_array(train_station_indices)
-        val_station_indices = _as_index_array(val_station_indices)
-        test_station_indices = _as_index_array(test_station_indices)
+        train_station_indices = _as_index_array(
+            train_station_indices, dataset.stations
+        )
+        val_station_indices = _as_index_array(val_station_indices, dataset.stations)
+        test_station_indices = _as_index_array(
+            test_station_indices, dataset.stations
+        )
+    test_context_station_indices = (
+        np.array([], dtype=int)
+        if test_context_station_indices is None
+        else _as_index_array(test_context_station_indices, dataset.stations)
+    )
 
     assert (
         len(train_station_indices) > 0
@@ -226,7 +248,7 @@ def create_splits(
     observed_for_test = (
         np.array([], dtype=int)
         if train_split_fraction == 0.0
-        else np.concatenate((train_station_indices, val_station_indices))
+        else np.concatenate((train_station_indices, test_context_station_indices))
     )
     test_time_indices_arg = test_time_indices if test_days > 0 else None
     test_dataset = EvalDataset(
