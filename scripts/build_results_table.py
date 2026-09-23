@@ -104,10 +104,33 @@ def _base_and_vars(key: str) -> tuple[str, list[str]]:
     return key, ["temperature", "precipitation"]
 
 
-def _resolve_tag(dataset: str, key: str, value: Any) -> str | None:
-    """Result-file tag for a registry entry (dir name, mirroring evaluate_test_set)."""
+# Sentinels whose result-file tag varies with --split-config, because
+# evaluate_test_set.py borrows an existing checkpoint's saved config for
+# them and needs --split-config to pin the split explicitly. cosmo_interpolator
+# is not in this set: it composes its own config directly and hardcodes
+# split=spatial_region_holdout internally, so its result-file tag never
+# carries a split suffix, regardless of --split-config.
+_SPLIT_CONFIG_AWARE_SENTINELS = frozenset({"interpolator"})
+
+
+def _resolve_tag(
+    dataset: str, key: str, value: Any, split_config: str | None = None
+) -> str | None:
+    """Result-file tag for a registry entry (dir name, mirroring evaluate_test_set).
+
+    ``split_config`` mirrors evaluate_test_set.py's ``--split-config`` flag:
+    when a sentinel in ``_SPLIT_CONFIG_AWARE_SENTINELS`` was evaluated with
+    ``--split-config NAME``, its result file is tagged
+    ``<key>_<dataset>_<NAME>`` (see ``_base_tag`` there), not
+    ``<key>_<dataset>``. Without this, a table built after an interpolator
+    run on a non-default split silently falls back to a stale result file
+    from an earlier, differently-windowed run.
+    """
     if key == value:  # sentinel: the model key stands in for a checkpoint path
-        return f"{key}_{dataset}"
+        base = f"{key}_{dataset}"
+        if split_config and key in _SPLIT_CONFIG_AWARE_SENTINELS:
+            return f"{base}_{split_config}"
+        return base
     if value is None:
         return None
     return Path(str(value)).parent.name
@@ -216,6 +239,7 @@ def _collect(
     n_boot: int,
     seed: int,
     pct: tuple[float, float],
+    split_config: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Build {dataset: [row, ...]} of aggregated per-method metrics."""
     rng = np.random.default_rng(seed)
@@ -227,7 +251,7 @@ def _collect(
         order: list[str] = []
         for key, value in models.items():
             base, key_vars = _base_and_vars(key)
-            tag = _resolve_tag(dataset, key, value)
+            tag = _resolve_tag(dataset, key, value, split_config)
             if base not in rows:
                 rows[base] = {
                     "base": base,
@@ -401,6 +425,17 @@ def main() -> None:
         default=None,
         help="Output prefix; writes <prefix>_means.* and <prefix>_ci.* (.tex, .txt).",
     )
+    p.add_argument(
+        "--split-config",
+        default=None,
+        metavar="NAME",
+        help="Resolve the interpolator sentinel's result file with the "
+        "_<NAME> suffix evaluate_test_set.py's --split-config adds, e.g. "
+        "spatial_region_holdout. Only affects sentinels in "
+        "_SPLIT_CONFIG_AWARE_SENTINELS (currently just 'interpolator'); "
+        "cosmo_interpolator hardcodes its own split and is unaffected, as "
+        "are real checkpoint paths.",
+    )
     args = p.parse_args()
 
     if args.results_dir:
@@ -415,7 +450,9 @@ def main() -> None:
         dict[str, Any],
         OmegaConf.to_container(OmegaConf.load(args.registry), resolve=True),
     )
-    data = _collect(registry, args.split, args.n_boot, args.seed, pct)
+    data = _collect(
+        registry, args.split, args.n_boot, args.seed, pct, args.split_config
+    )
 
     outputs = {
         "means": "point estimates (main text)",

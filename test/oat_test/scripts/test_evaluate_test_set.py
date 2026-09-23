@@ -11,6 +11,7 @@ from scripts.evaluate_test_set import (
     _base_tag,
     _ckpt_tag,
     _compose_cosmo_interpolator_cfg,
+    _cosmo_interpolator_dataset_is_valid,
     _exclude_context,
     _override_split,
     _print_summary,
@@ -136,6 +137,15 @@ def test_override_split_replaces_cfg_split_with_named_config():
     cfg = OmegaConf.create({"split": {"train_station_indices": None}})
     cfg = _override_split(cfg, "spatial_region_holdout")
     assert "02926" in list(cfg.split.train_station_indices)
+
+
+def test_cosmo_interpolator_dataset_is_valid_for_era5_meteostat():
+    assert _cosmo_interpolator_dataset_is_valid("era5_meteostat") is True
+
+
+def test_cosmo_interpolator_dataset_is_valid_rejects_other_datasets():
+    assert _cosmo_interpolator_dataset_is_valid("cosmo_peakweather") is False
+    assert _cosmo_interpolator_dataset_is_valid(None) is False
 
 
 def test_sibling_checkpoint_skips_both_interpolator_sentinels(tmp_path, monkeypatch):

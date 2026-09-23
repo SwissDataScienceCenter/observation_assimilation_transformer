@@ -107,6 +107,17 @@ def _override_split(cfg: Any, split_config: str) -> Any:
     return cfg
 
 
+def _cosmo_interpolator_dataset_is_valid(dataset: str | None) -> bool:
+    """cosmo_interpolator only makes sense under --dataset era5_meteostat.
+
+    It always evaluates the era5_meteostat (Meteostat station) universe
+    with COSMO-E1 NWP, regardless of what --dataset is passed. Any other
+    value would silently resolve to the same data while writing results
+    under a misleading tag.
+    """
+    return dataset == "era5_meteostat"
+
+
 def _base_tag(
     is_interpolator: bool,
     model: str,
@@ -312,6 +323,15 @@ def main() -> None:
 
     if is_interpolator:
         if args.model == COSMO_INTERPOLATOR_MODEL:
+            if not _cosmo_interpolator_dataset_is_valid(args.dataset):
+                logger.error(
+                    "cosmo_interpolator always evaluates the era5_meteostat "
+                    "(Meteostat station) universe with COSMO-E1 NWP; "
+                    "--dataset %r is not supported. Use "
+                    "--dataset era5_meteostat.",
+                    args.dataset,
+                )
+                raise SystemExit(2)
             cfg = _compose_cosmo_interpolator_cfg()
         else:
             # Borrow the data config from a sibling checkpoint; build predictor below.
