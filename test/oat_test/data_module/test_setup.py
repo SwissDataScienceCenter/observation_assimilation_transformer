@@ -249,6 +249,33 @@ def test_setup_dispatches_field_type(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called["hit"] == "cosmo_peakweather"
 
 
+def test_setup_dispatches_cosmo_meteostat_to_field_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging
+
+    import oat.data_module.setup as S
+
+    called: dict[str, str] = {}
+
+    def fake(cfg: Any, logger: Any) -> tuple[str, int, None, None, None, None, None]:
+        called["hit"] = cfg.dataset.dataset_type
+        return ("d", 1, None, None, None, None, None)
+
+    monkeypatch.setattr("oat.data_module.setup._setup_field_data_and_transform", fake)
+    cfg = OmegaConf.create({"dataset": {"dataset_type": "cosmo_meteostat"}})
+    S.setup_data_and_transform(cfg, logging.getLogger("t"))
+    assert called["hit"] == "cosmo_meteostat"
+
+
+def test_instantiate_dataset_raises_for_unknown_type_still_lists_cosmo_meteostat() -> None:
+    import oat.data_module.setup as S
+
+    cfg = OmegaConf.create({"dataset": {"dataset_type": "not_a_real_type"}})
+    with pytest.raises(ValueError, match="cosmo_meteostat"):
+        S._instantiate_dataset(cfg)
+
+
 def test_obs_source_callables_are_picklable() -> None:
     import types
 
