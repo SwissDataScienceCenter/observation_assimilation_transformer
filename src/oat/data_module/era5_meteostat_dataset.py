@@ -146,6 +146,9 @@ class ERA5MeteostatDataset(DatasetBase):
     all coordinates here are geographic ``[longitude, latitude]`` in degrees.
     """
 
+    _derived_features = DERIVED_FEATURES
+    _obs_to_nwp_map = ERA5_OBS_TO_NWP
+
     def __init__(self, config: Any) -> None:
         self.config = config
         self.catalog = config.catalog
@@ -202,7 +205,7 @@ class ERA5MeteostatDataset(DatasetBase):
     def obs_to_nwp(
         self,
     ) -> dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]]:
-        return ERA5_OBS_TO_NWP
+        return self._obs_to_nwp_map
 
     def project_index_coords(self, coords: Tensor) -> Tensor:
         """Project (lon, lat) degrees onto the unit sphere (ECEF xyz).
@@ -232,12 +235,12 @@ class ERA5MeteostatDataset(DatasetBase):
         nwp_vars = [str(v) for v in config.nwp_vars]
         source_vars = list(
             dict.fromkeys(
-                [v for v in nwp_vars if v not in DERIVED_FEATURES]
+                [v for v in nwp_vars if v not in self._derived_features]
                 + [
                     dep
                     for v in nwp_vars
-                    if v in DERIVED_FEATURES
-                    for dep in DERIVED_FEATURES[v][0]
+                    if v in self._derived_features
+                    for dep in self._derived_features[v][0]
                 ]
             )
         )
@@ -315,8 +318,10 @@ class ERA5MeteostatDataset(DatasetBase):
         source = {var: raw_t[i] for i, var in enumerate(self._nwp_source_vars)}
         channels = [
             (
-                DERIVED_FEATURES[v][1](*[source[d] for d in DERIVED_FEATURES[v][0]])
-                if v in DERIVED_FEATURES
+                self._derived_features[v][1](
+                    *[source[d] for d in self._derived_features[v][0]]
+                )
+                if v in self._derived_features
                 else source[v]
             )
             for v in self._nwp_out_vars
