@@ -50,7 +50,6 @@ from omegaconf import OmegaConf
 # resolved directly to avoid importing the heavy oat/torch stack for one Path.
 _DEFAULT_REGISTRY = Path(__file__).parents[1] / "configs" / "checkpoints.yaml"
 RESULTS_DIR = Path(__file__).parents[1] / "data/results"
-INTERPOLATOR_SENTINEL = "interpolator"
 
 # Canonical variables (order = table column order) and their dataset-specific
 # aliases: cosmo uses temperature/precipitation, era5 uses temp/prcp.
@@ -79,6 +78,7 @@ def _col(df: pd.DataFrame, metric: str, var: str) -> str | None:
 # Pretty labels; fall back to the raw base key when absent.
 MODEL_LABELS = {
     "interpolator": "NWP Interp.",
+    "cosmo_interpolator": "COSMO NWP Interp.",
     "uninformed": "Uninformed baseline",
     "gp": "Gaussian Process",
     "deep_gp": "Deep Gaussian Process",
@@ -106,8 +106,8 @@ def _base_and_vars(key: str) -> tuple[str, list[str]]:
 
 def _resolve_tag(dataset: str, key: str, value: Any) -> str | None:
     """Result-file tag for a registry entry (dir name, mirroring evaluate_test_set)."""
-    if key == INTERPOLATOR_SENTINEL or value == INTERPOLATOR_SENTINEL:
-        return f"interpolator_{dataset}"
+    if key == value:  # sentinel: the model key stands in for a checkpoint path
+        return f"{key}_{dataset}"
     if value is None:
         return None
     return Path(str(value)).parent.name

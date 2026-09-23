@@ -36,8 +36,13 @@ COSMO_METEOSTAT_DERIVED_FEATURES: dict[
 # Mapping from Meteostat obs variable name -> (required COSMO NWP vars,
 # conversion fn). wspd/wpgt both fall back to wind *speed* (COSMO has no
 # gust field), matching ERA5_OBS_TO_NWP's existing wpgt -> wind-speed
-# approximation for the same reason. The precipitation factor (600.0)
-# matches cosmo_peakweather_dataset.COSMO_OBS_TO_NWP.
+# approximation for the same reason. Precip factor is 1000.0 (metres ->
+# mm/h), verified against the archive's own rescale metadata (scale:
+# 0.001, i.e. kg/m^2 -> m) and matching ERA5_OBS_TO_NWP's identical
+# m -> mm/h conversion for the same unit. This intentionally differs from
+# cosmo_peakweather_dataset.COSMO_OBS_TO_NWP's 600.0, which was not
+# re-verified here and is out of scope for this fix — see the project's
+# project_time_alignment_verified memory note.
 COSMO_METEOSTAT_OBS_TO_NWP: dict[
     str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]
 ] = {
@@ -50,7 +55,7 @@ COSMO_METEOSTAT_OBS_TO_NWP: dict[
         ["U_10M", "V_10M"],
         lambda n: torch.sqrt(n["U_10M"] ** 2 + n["V_10M"] ** 2),
     ),
-    "prcp": (["TOT_PREC_1H"], lambda n: 600.0 * n["TOT_PREC_1H"]),
+    "prcp": (["TOT_PREC_1H"], lambda n: 1000.0 * n["TOT_PREC_1H"]),
 }
 
 

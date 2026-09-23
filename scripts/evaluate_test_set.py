@@ -230,6 +230,23 @@ def _parse_args() -> argparse.Namespace:
         "spatial_region_holdout (default: whatever the checkpoint/model "
         "would otherwise carry)",
     )
+    p.add_argument(
+        "--start-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Override cfg.dataset.start_date (default: whatever the "
+        "checkpoint/model config carries)",
+    )
+    p.add_argument(
+        "--end-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Override cfg.dataset.end_date (default: whatever the "
+        "checkpoint/model config carries). Needed to align the trailing "
+        "test_days=365 window across NWP sources with different native "
+        "date ranges — see docs/superpowers/specs/2026-09-23-cosmo-"
+        "meteostat-interpolator-design.md's time-alignment risk note.",
+    )
     return p.parse_args()
 
 
@@ -316,6 +333,11 @@ def main() -> None:
     if args.split_config is not None:
         cfg = _override_split(cfg, args.split_config)
 
+    if args.start_date is not None:
+        cfg.dataset.start_date = args.start_date
+    if args.end_date is not None:
+        cfg.dataset.end_date = args.end_date
+
     base_tag = _base_tag(
         is_interpolator, args.model, args.dataset, args.checkpoint, args.split_config
     )
@@ -350,11 +372,14 @@ def main() -> None:
         time_indices = time_indices[: args.max_timesteps]
 
     logger.info(
-        "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d",
+        "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d  "
+        "time_range=%s..%s",
         args.split,
         len(time_indices),
         len(obs_indices),
         len(eval_indices),
+        dataset.times[time_indices[0]],
+        dataset.times[time_indices[-1]],
     )
 
     PlotterCls = select_plotter_cls(dataset)
