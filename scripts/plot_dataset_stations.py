@@ -1,15 +1,21 @@
-"""Two-panel overview of station splits for CosmoPeakWeather and ERA5-Meteostat.
+"""Two- or three-panel overview of station splits, CosmoPeakWeather & ERA5-Meteostat.
 
-Left panel:  CosmoPeakWeather — Switzerland, Swiss LV95, plain axes (metric → equal aspect).
-Right panel: ERA5-Meteostat  — Europe, Lambert Conformal projection via cartopy.
+Left panel:   CosmoPeakWeather — Switzerland, Swiss LV95, plain axes (metric → equal aspect).
+Middle panel: ERA5-Meteostat  — Europe, Lambert Conformal projection via cartopy.
+Right panel (optional, --region-holdout): ERA5-Meteostat — same projection, colored
+    by the region-holdout split (train / val / test-context / test-eval) instead.
 
-Both panels mark train (white squares), val (grey triangles), test (black circles)
-stations and draw a dashed rectangle around the NWP data domain.
+The first two panels mark train (white squares), val (grey triangles), test
+(black circles) stations and draw a dashed rectangle around the NWP data domain.
+The optional third panel marks train, val, test-eval the same way, adds an
+orange diamond for test-context stations (revealed as context at test time),
+and draws the region bounding box instead of the NWP domain box.
 
 Usage:
     python -m scripts.plot_dataset_stations
     python -m scripts.plot_dataset_stations --out data/figures/dataset_stations.pdf
     python -m scripts.plot_dataset_stations --seed 0 --dpi 200 --out my_plot.png
+    python -m scripts.plot_dataset_stations --region-holdout
 """
 from __future__ import annotations
 
@@ -22,8 +28,6 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import OmegaConf
-from pyproj import Transformer
-from shapely.geometry import Polygon
 
 from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
 from oat.data_module.legacy.data_split import create_splits
@@ -39,8 +43,8 @@ _MLW = 0.1  # marker edge linewidth
 def _load_cosmo_cfg() -> OmegaConf:
     cfg_dir = _CFG_DIR / "cosmo_peakweather"
     cfg = OmegaConf.merge(
-        OmegaConf.load(cfg_dir / "settings.yaml"),
-        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "temp_precip.yaml").items()
+        OmegaConf.load(cfg_dir / "base.yaml"),
+        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "legacy" / "temp_precip.yaml").items()
                           if k != "defaults"}),
     )
     cfg.catalog = OmegaConf.load(cfg_dir / "catalog.yaml")
@@ -50,8 +54,8 @@ def _load_cosmo_cfg() -> OmegaConf:
 def _load_era5_cfg() -> OmegaConf:
     cfg_dir = _CFG_DIR / "era5_meteostat"
     cfg = OmegaConf.merge(
-        OmegaConf.load(cfg_dir / "settings.yaml"),
-        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "temp_precip.yaml").items()
+        OmegaConf.load(cfg_dir / "base.yaml"),
+        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "legacy" / "temp_precip.yaml").items()
                           if k != "defaults"}),
     )
     cfg.catalog = OmegaConf.load(cfg_dir / "catalog.yaml")
@@ -77,6 +81,64 @@ def _markers(ax, coords, train_idx, val_idx, test_idx, *, transform=None):
     )
 
 
+def _markers_region_holdout(
+    ax, coords, train_idx, val_idx, test_context_idx, test_eval_idx, *, transform=None,
+):
+    """Plot the region-holdout split: train, val, test-context, test-eval."""
+    kw: dict = {} if transform is None else {"transform": transform}
+    ax.plot(
+        coords[train_idx, 0], coords[train_idx, 1],
+        "s", color="C0", markeredgecolor="C0", markeredgewidth=_MLW,
+        markersize=_MS, zorder=5, label=f"Train ({len(train_idx)})", **kw,
+    )
+    ax.plot(
+        coords[val_idx, 0], coords[val_idx, 1],
+        "^", color="C2", markeredgecolor="C2", markeredgewidth=_MLW,
+        markersize=_MS, zorder=6, label=f"Val ({len(val_idx)})", **kw,
+    )
+    ax.plot(
+        coords[test_context_idx, 0], coords[test_context_idx, 1],
+        "D", color="C1", markeredgecolor="C1", markeredgewidth=_MLW,
+        markersize=_MS, zorder=7, label=f"Test-context ({len(test_context_idx)})", **kw,
+    )
+    ax.plot(
+        coords[test_eval_idx, 0], coords[test_eval_idx, 1],
+        "o", color="C3", markeredgecolor="C3", markeredgewidth=_MLW,
+        markersize=_MS, zorder=8, label=f"Test-eval ({len(test_eval_idx)})", **kw,
+    )
+
+
+def _load_region_holdout_indices(
+    split_path: Path, stations: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Resolve the region-holdout split's station IDs to positions.
+
+    Parameters
+    ----------
+    split_path : Path
+        Path to the region-holdout split YAML (station-ID lists).
+    stations : np.ndarray
+        ERA5-Meteostat dataset station IDs, in ``station_coords`` order.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Position arrays: train_idx, val_idx, test_context_idx, test_eval_idx.
+    """
+    split_cfg = OmegaConf.load(split_path)
+    id_to_pos = {sid: i for i, sid in enumerate(stations)}
+
+    def _resolve(ids: list[str]) -> np.ndarray:
+        return np.array([id_to_pos[sid] for sid in ids], dtype=int)
+
+    return (
+        _resolve(split_cfg.train_station_indices),
+        _resolve(split_cfg.val_station_indices),
+        _resolve(split_cfg.test_context_station_indices),
+        _resolve(split_cfg.test_station_indices),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="data/figures/dataset_stations.png",
@@ -84,6 +146,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducible train/val/test split.")
     parser.add_argument("--dpi", type=int, default=150)
+    parser.add_argument("--region-holdout", action="store_true",
+                        help="Add a third panel showing the region-holdout split.")
+    parser.add_argument("--region-holdout-split",
+                        default="configs/split/spatial_region_holdout.yaml",
+                        help="Path to the region-holdout split YAML.")
+    parser.add_argument("--region-lat-min", type=float, default=43.8)
+    parser.add_argument("--region-lat-max", type=float, default=49.2)
+    parser.add_argument("--region-lon-min", type=float, default=3.3)
+    parser.add_argument("--region-lon-max", type=float, default=11.8)
     args = parser.parse_args()
 
     # ── Load datasets & compute splits ───────────────────────────────────────
@@ -97,6 +168,12 @@ def main() -> None:
     era5_train, era5_val, era5_test = create_splits(era5_ds, seed=args.seed)["station_indices"]
     era5_coords = era5_ds.station_coords.numpy()    # (N, 2): longitude, latitude  [° WGS84]
 
+    if args.region_holdout:
+        print("Loading region-holdout split …")
+        rh_train, rh_val, rh_test_context, rh_test_eval = _load_region_holdout_indices(
+            Path(args.region_holdout_split), era5_ds.stations,
+        )
+
     # ── COSMO domain bounds (LV95 m) ──────────────────────────────────────────
     cx0 = float(cosmo_ds.nwp_extent["min"][0]); cx1 = float(cosmo_ds.nwp_extent["max"][0])
     cy0 = float(cosmo_ds.nwp_extent["min"][1]); cy1 = float(cosmo_ds.nwp_extent["max"][1])
@@ -107,23 +184,19 @@ def main() -> None:
     ex0 = float(era5_ds._ref_lons.min()); ex1 = float(era5_ds._ref_lons.max())
     ey0 = float(era5_ds._ref_lats.min()); ey1 = float(era5_ds._ref_lats.max())
 
-    # ── COSMO domain in WGS84 (for inset box on Europe panel) ────────────────
-    # Densify the LV95 boundary before reprojecting so the polygon is accurate.
-    _tf = Transformer.from_crs("EPSG:2056", "EPSG:4326", always_xy=True)
-    _n = 60
-    _be = np.concatenate([np.linspace(cx0, cx1, _n), np.full(_n, cx1),
-                          np.linspace(cx1, cx0, _n), np.full(_n, cx0)])
-    _bn = np.concatenate([np.full(_n, cy1), np.linspace(cy1, cy0, _n),
-                          np.full(_n, cy0), np.linspace(cy0, cy1, _n)])
-    _blon, _blat = _tf.transform(_be, _bn)
-    cosmo_wgs84_poly = Polygon(zip(_blon, _blat))
-
-    # ── Figure: plain axes (left) + cartopy axes (right) ─────────────────────
+    # ── Figure: plain axes (left) + cartopy axes (middle[, right]) ───────────
     proj = ccrs.LambertConformal(central_longitude=10.0, central_latitude=52.0)
-    fig = plt.figure(figsize=(15, 5.5))
-    gs = gridspec.GridSpec(1, 2, figure=fig, width_ratios=[1, 2.5], wspace=0.08)
+    if args.region_holdout:
+        fig = plt.figure(figsize=(21, 5.5))
+        gs = gridspec.GridSpec(
+            1, 3, figure=fig, width_ratios=[1, 2.5, 2.5], wspace=0.08,
+        )
+    else:
+        fig = plt.figure(figsize=(15, 5.5))
+        gs = gridspec.GridSpec(1, 2, figure=fig, width_ratios=[1, 2.5], wspace=0.08)
     ax0 = fig.add_subplot(gs[0])
     ax1 = fig.add_subplot(gs[1], projection=proj)
+    ax2 = fig.add_subplot(gs[2], projection=proj) if args.region_holdout else None
 
     # ── Left: CosmoPeakWeather (LV95 plain axes) ──────────────────────────────
     cosmo_xs = np.linspace(cx0, cx1, 100)
@@ -166,10 +239,14 @@ def main() -> None:
     ax1.plot(_era5_box[:, 0], _era5_box[:, 1], "--", color="black", linewidth=0.8,
              transform=ccrs.PlateCarree(), zorder=4, dash_capstyle="butt")
 
-    # COSMO-1e domain inset (black dashed) — already densified in LV95→WGS84 step
-    _cosmo_box = np.array(cosmo_wgs84_poly.exterior.coords)
-    ax1.plot(_cosmo_box[:, 0], _cosmo_box[:, 1], "--", color="black", linewidth=1.0,
-             transform=ccrs.PlateCarree(), zorder=10, dash_capstyle="butt")
+    # Region-holdout box (same box as the optional third panel)
+    rx0, rx1 = args.region_lon_min, args.region_lon_max
+    ry0, ry1 = args.region_lat_min, args.region_lat_max
+    ax1.plot(
+        [rx0, rx1, rx1, rx0, rx0], [ry0, ry0, ry1, ry1, ry0],
+        "--", color="black", linewidth=1.0, transform=ccrs.PlateCarree(),
+        zorder=10, dash_capstyle="butt",
+    )
 
     # One label per edge of the ERA5 domain box, placed at the midpoint,
     # showing the coordinate value that defines that edge.
@@ -188,6 +265,36 @@ def main() -> None:
 
     ax1.set_title("Europe dataset", fontsize=10)
     ax1.legend(loc="lower left", fontsize=8, framealpha=0.9)
+
+    # ── Optional third panel: ERA5-Meteostat region-holdout split ────────────
+    if ax2 is not None:
+        ax2.add_feature(cfeature.NaturalEarthFeature("physical", "coastline", "10m", **_NE_STYLE))
+        ax2.add_feature(cfeature.NaturalEarthFeature("cultural", "admin_0_boundary_lines_land", "10m", **_NE_STYLE))
+        ax2.add_feature(cfeature.NaturalEarthFeature("physical", "lakes", "10m", **_NE_STYLE))
+        ax2.set_facecolor("white")
+        ax2.set_extent([ex0 - 3, ex1 + 3, ey0 - 1, ey1 + 1], crs=ccrs.PlateCarree())
+
+        ax2.plot(_era5_box[:, 0], _era5_box[:, 1], "--", color="black", linewidth=0.8,
+                 transform=ccrs.PlateCarree(), zorder=4, dash_capstyle="butt")
+
+        ax2.text(ex0, _mid_lat, _fmt_lon(ex0), ha="right",  va="center", **_tkw)
+        ax2.text(ex1, _mid_lat, _fmt_lon(ex1), ha="left",   va="center", **_tkw)
+        ax2.text(_mid_lon, ey0,  f"{ey0:g}°N", ha="center", va="top",    **_tkw)
+        ax2.text(_mid_lon, ey1,  f"{ey1:g}°N", ha="center", va="bottom",  **_tkw)
+
+        ax2.plot(
+            [rx0, rx1, rx1, rx0, rx0], [ry0, ry0, ry1, ry1, ry0],
+            "--", color="black", linewidth=1.0, transform=ccrs.PlateCarree(),
+            zorder=10, dash_capstyle="butt",
+        )
+
+        _markers_region_holdout(
+            ax2, era5_coords, rh_train, rh_val, rh_test_context, rh_test_eval,
+            transform=ccrs.PlateCarree(),
+        )
+
+        ax2.set_title("Europe dataset — region holdout", fontsize=10)
+        ax2.legend(loc="lower left", fontsize=8, framealpha=0.9)
 
     # ── Save ──────────────────────────────────────────────────────────────────
     out_path = Path(args.out)

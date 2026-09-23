@@ -10,10 +10,10 @@ python -m scripts.generate_region_holdout_split [options]
 
 Options
 -------
---lat-min FLOAT              Minimum latitude (default: 44)
---lat-max FLOAT              Maximum latitude (default: 48)
---lon-min FLOAT              Minimum longitude (default: 5)
---lon-max FLOAT              Maximum longitude (default: 10.5)
+--lat-min FLOAT              Minimum latitude (default: 43.8)
+--lat-max FLOAT              Maximum latitude (default: 49.2)
+--lon-min FLOAT              Minimum longitude (default: 3.3)
+--lon-max FLOAT              Maximum longitude (default: 11.8)
 --context-fraction FLOAT     Fraction of the box stations for test-context
                               (default: 0.8)
 --val-station-fraction FLOAT Fraction of the out-of-box stations for val
@@ -254,16 +254,16 @@ def main() -> None:
     """Run the CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--lat-min", type=float, default=44, help="Minimum latitude (default: 44)"
+        "--lat-min", type=float, default=43.8, help="Minimum latitude (default: 43.8)"
     )
     p.add_argument(
-        "--lat-max", type=float, default=48, help="Maximum latitude (default: 48)"
+        "--lat-max", type=float, default=49.2, help="Maximum latitude (default: 49.2)"
     )
     p.add_argument(
-        "--lon-min", type=float, default=5, help="Minimum longitude (default: 5)"
+        "--lon-min", type=float, default=3.3, help="Minimum longitude (default: 3.3)"
     )
     p.add_argument(
-        "--lon-max", type=float, default=10.5, help="Maximum longitude (default: 10.5)"
+        "--lon-max", type=float, default=11.8, help="Maximum longitude (default: 11.8)"
     )
     p.add_argument(
         "--context-fraction",

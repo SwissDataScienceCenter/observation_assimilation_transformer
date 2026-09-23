@@ -1236,11 +1236,19 @@ def test_compute_station_metrics_returns_expected_keys():
             time_indices=[0, 1, 2, 3],
             eval_station_indices=[3, 4],
         )
-    assert set(result.keys()) == {"crps", "mae", "crps_global", "mae_global"}
+    assert set(result.keys()) == {
+        "crps",
+        "mae",
+        "crps_global",
+        "mae_global",
+        "n_nonfinite",
+    }
     assert result["crps"].shape == (n_eval, n_vars)
     assert result["mae"].shape == (n_eval, n_vars)
     assert result["crps_global"].ndim == 0
     assert result["mae_global"].ndim == 0
+    assert result["n_nonfinite"].shape == (n_eval, n_vars)
+    assert torch.equal(result["n_nonfinite"], torch.zeros(n_eval, n_vars))
 
 
 def test_compute_station_metrics_with_reference_includes_skill():
@@ -1299,8 +1307,72 @@ def test_compute_station_metrics_incremental_matches_batch():
             batch_size=2,
         )
 
-    for key in ("crps", "mae", "crps_global", "mae_global"):
+    for key in ("crps", "mae", "crps_global", "mae_global", "n_nonfinite"):
         torch.testing.assert_close(one_shot[key], incremental[key], atol=1e-5, rtol=0)
+
+
+def test_compute_station_metrics_guards_non_finite_predictions():
+    """One non-finite predictive sample must not NaN out a station's whole
+    CRPS/MAE aggregate -- only the (timestep, station, feature) it belongs
+    to should be excluded, leaving everything else unaffected."""
+    T, S_eval, n_samples, V = 3, 2, 4, 1
+    torch.manual_seed(0)
+    predictor = _make_predictor(N_q=S_eval, n_samples=n_samples, n_vars=V)
+    dataset = _make_dataset(n_stations=5, n_times=T, n_vars=V)
+    dataset.obs_tensor = torch.randn(T, 5, V)
+    dataset.obs_mask_tensor = torch.ones(T, 5, V)
+    eval_station_indices = [2, 3]
+
+    clean_samples_by_t = [torch.randn(S_eval, n_samples, V) for _ in range(T)]
+    bad_samples_by_t = [s.clone() for s in clean_samples_by_t]
+    # Corrupt one sample draw for eval station 0 (index 2) at time 1 only.
+    bad_samples_by_t[1][0, 0, 0] = float("inf")
+
+    def _clean_inference(time_idx, query_coords, predictor=None):
+        return clean_samples_by_t[time_idx]
+
+    def _bad_inference(time_idx, query_coords, predictor=None):
+        return bad_samples_by_t[time_idx]
+
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
+    )
+
+    with patch.object(plotter, "_run_inference", side_effect=_bad_inference):
+        guarded = plotter.compute_station_metrics(
+            time_indices=list(range(T)),
+            eval_station_indices=eval_station_indices,
+            batch_size=T,
+        )
+
+    assert torch.isfinite(guarded["crps"]).all()
+    assert torch.isfinite(guarded["mae"]).all()
+
+    # The exclusion must be visible in the result, not silent: exactly one
+    # entry, at eval station index 0 (dataset station 2), was excluded.
+    assert torch.equal(guarded["n_nonfinite"], torch.tensor([[1.0], [0.0]]))
+
+    # Station index 3 never saw a bad sample: its score must match the fully
+    # clean computation exactly.
+    with patch.object(plotter, "_run_inference", side_effect=_clean_inference):
+        clean = plotter.compute_station_metrics(
+            time_indices=list(range(T)),
+            eval_station_indices=eval_station_indices,
+            batch_size=T,
+        )
+    torch.testing.assert_close(guarded["crps"][1], clean["crps"][1], atol=1e-5, rtol=0)
+    torch.testing.assert_close(guarded["mae"][1], clean["mae"][1], atol=1e-5, rtol=0)
+
+    # Station index 2 had time index 1 excluded by the guard: its score must
+    # match computing over only the remaining, unaffected timesteps.
+    with patch.object(plotter, "_run_inference", side_effect=_clean_inference):
+        excl = plotter.compute_station_metrics(
+            time_indices=[0, 2],
+            eval_station_indices=eval_station_indices,
+            batch_size=2,
+        )
+    torch.testing.assert_close(guarded["crps"][0], excl["crps"][0], atol=1e-5, rtol=0)
+    torch.testing.assert_close(guarded["mae"][0], excl["mae"][0], atol=1e-5, rtol=0)
 
 
 def test_plot_domain_overview_first_panel_applies_configured_vmin():

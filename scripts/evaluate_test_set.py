@@ -173,6 +173,20 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         )
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
+    if "n_nonfinite" in metrics:
+        n_bad = int(metrics["n_nonfinite"].sum().item())
+        n_stations_hit = int((metrics["n_nonfinite"] > 0).any(dim=-1).sum().item())
+        if n_bad:
+            logger.warning(
+                "%d non-finite prediction entries were excluded from the "
+                "metrics above, across %d station(s) — see n_nonfinite in "
+                "the CSV/summary for the breakdown. This means the model "
+                "produced bad output (e.g. sampler overflow), not that "
+                "observations were missing.",
+                n_bad,
+                n_stations_hit,
+            )
+
 
 def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """Derive per-station + global CRPS/MAE from the per-(time, station) dump.
@@ -332,7 +346,7 @@ def main() -> None:
         "station_x": coords[:, 0].tolist(),
         "station_y": coords[:, 1].tolist(),
     }
-    for key in ("crps", "mae", "crpss"):
+    for key in ("crps", "mae", "crpss", "n_nonfinite"):
         if key not in metrics:
             continue
         tensor = metrics[key]  # [S, V]
@@ -360,6 +374,14 @@ def main() -> None:
             for vi, var in enumerate(var_names)
         }
         summary[key] = per_var
+    if "n_nonfinite" in metrics:
+        # Count, not an error metric: sum (not nanmean) per variable, plus
+        # the grand total, so a non-zero value can't get lost/averaged away.
+        summary["n_nonfinite_total"] = int(metrics["n_nonfinite"].sum().item())
+        summary["n_nonfinite"] = {
+            var: int(metrics["n_nonfinite"][:, vi].sum().item())
+            for vi, var in enumerate(var_names)
+        }
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Saved summary → %s", summary_path)

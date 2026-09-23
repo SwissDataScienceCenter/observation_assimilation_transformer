@@ -30,3 +30,5 @@ era5_meteostat:
   gp_oat_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp_oat_field/gp_oat_field_era5_meteostat-precip_20260824_job5175183/best-model-epoch=12-val_crps_prcp=0.0731.ckpt
   deep_gp_oat_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp_oat_field/deep_gp_oat_field_era5_meteostat-temp_20260824_job5175187/best-model-epoch=37-val_crps_temp=0.9096.ckpt
   deep_gp_oat_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/deep_gp_oat_field/deep_gp_oat_field_era5_meteostat-precip_20260824_job5175186/best-model-epoch=05-val_crps_prcp=0.0712.ckpt
+  oat_spatial_holdout_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat/oat_era5_meteostat-temp_precip_20260923_job5379412/best-model-epoch=95-val_loss=0.1903.ckpt
+  uninformed_spatial_holdout_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat/uninformed_oat_era5_meteostat-temp_precip_20260923_job5380005/best-model-epoch=88-val_loss=0.2350.ckpt
