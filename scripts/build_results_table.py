@@ -39,6 +39,7 @@ python -m scripts.build_results_table [--split test] [--n-boot 1000] [--ci-level
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -104,36 +105,59 @@ def _base_and_vars(key: str) -> tuple[str, list[str]]:
     return key, ["temperature", "precipitation"]
 
 
-# Sentinels whose result-file tag varies with --split-config, because
-# evaluate_test_set.py borrows an existing checkpoint's saved config for
-# them and needs --split-config to pin the split explicitly. cosmo_interpolator
-# is not in this set: it composes its own config directly and hardcodes
-# split=spatial_region_holdout internally, so its result-file tag never
-# carries a split suffix, regardless of --split-config.
-_SPLIT_CONFIG_AWARE_SENTINELS = frozenset({"interpolator"})
-
-
-def _resolve_tag(
-    dataset: str, key: str, value: Any, split_config: str | None = None
-) -> str | None:
-    """Result-file tag for a registry entry (dir name, mirroring evaluate_test_set).
-
-    ``split_config`` mirrors evaluate_test_set.py's ``--split-config`` flag:
-    when a sentinel in ``_SPLIT_CONFIG_AWARE_SENTINELS`` was evaluated with
-    ``--split-config NAME``, its result file is tagged
-    ``<key>_<dataset>_<NAME>`` (see ``_base_tag`` there), not
-    ``<key>_<dataset>``. Without this, a table built after an interpolator
-    run on a non-default split silently falls back to a stale result file
-    from an earlier, differently-windowed run.
+def _resolve_tag(dataset: str, key: str, value: Any) -> str | None:
+    """Base result-file tag for a registry entry (dir name for a checkpoint
+    path; ``<key>_<dataset>`` for a sentinel, i.e. an entry where the
+    registry key stands in for its own value instead of a checkpoint path).
     """
-    if key == value:  # sentinel: the model key stands in for a checkpoint path
-        base = f"{key}_{dataset}"
-        if split_config and key in _SPLIT_CONFIG_AWARE_SENTINELS:
-            return f"{base}_{split_config}"
-        return base
+    if key == value:
+        return f"{key}_{dataset}"
     if value is None:
         return None
     return Path(str(value)).parent.name
+
+
+def _summary_exists(tag: str, split: str) -> bool:
+    return (RESULTS_DIR / f"{tag}_metrics_{split}.summary.json").exists()
+
+
+def _tag_for_run(
+    dataset: str, key: str, value: Any, split: str, split_config: str | None
+) -> str | None:
+    """Which result-file tag to actually read for this registry entry.
+
+    ``split_config`` mirrors evaluate_test_set.py's ``--split-config`` flag,
+    which tags a run's result file ``<base>_<split_config>`` (see
+    ``_base_tag`` there) instead of plain ``<base>``. This tries that
+    suffixed tag first and prefers it when its summary file exists --
+    regardless of whether the entry is a sentinel or a real checkpoint
+    path, since either can be evaluated with ``--split-config``.
+
+    Falls back to the base (unsuffixed) tag, with a warning, when no
+    suffixed file exists: e.g. ``split_config`` doesn't apply to this
+    dataset (cosmo_peakweather has no ``spatial_region_holdout`` split),
+    or this entry was evaluated without the flag (cosmo_interpolator
+    pins its own split internally, so it is normally run without one).
+    Without this fallback, a --split-config that only applies to some
+    registry entries would blank the rest out to NA instead of showing
+    their real, unrelated results.
+    """
+    base = _resolve_tag(dataset, key, value)
+    if base is None or not split_config:
+        return base
+    suffixed = f"{base}_{split_config}"
+    if _summary_exists(suffixed, split):
+        return suffixed
+    if _summary_exists(base, split):
+        print(
+            f"WARNING: no {suffixed}_metrics_{split}.summary.json for "
+            f"{dataset}/{key}; falling back to {base} (split_config="
+            f"{split_config!r} may not apply to this entry, or it was "
+            f"evaluated without --split-config)",
+            file=sys.stderr,
+        )
+        return base
+    return suffixed  # neither exists; _load_summary/_load_stations return {}/None
 
 
 def _load_summary(tag: str, split: str) -> dict[str, dict[str, float]]:
@@ -251,7 +275,7 @@ def _collect(
         order: list[str] = []
         for key, value in models.items():
             base, key_vars = _base_and_vars(key)
-            tag = _resolve_tag(dataset, key, value, split_config)
+            tag = _tag_for_run(dataset, key, value, split, split_config)
             if base not in rows:
                 rows[base] = {
                     "base": base,
@@ -429,12 +453,11 @@ def main() -> None:
         "--split-config",
         default=None,
         metavar="NAME",
-        help="Resolve the interpolator sentinel's result file with the "
-        "_<NAME> suffix evaluate_test_set.py's --split-config adds, e.g. "
-        "spatial_region_holdout. Only affects sentinels in "
-        "_SPLIT_CONFIG_AWARE_SENTINELS (currently just 'interpolator'); "
-        "cosmo_interpolator hardcodes its own split and is unaffected, as "
-        "are real checkpoint paths.",
+        help="Prefer the _<NAME>-suffixed result file evaluate_test_set.py's "
+        "--split-config produces, e.g. spatial_region_holdout, for any "
+        "registry entry where one exists. Falls back to the unsuffixed "
+        "file (with a warning) where NAME doesn't apply, e.g. a dataset "
+        "without that split, or an entry evaluated without the flag.",
     )
     args = p.parse_args()
 
