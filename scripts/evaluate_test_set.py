@@ -46,6 +46,13 @@ OUT_DIR = Path(__file__).parents[1] / "data/results"
 # the data config from any sibling checkpoint of the same dataset.
 INTERPOLATOR_MODEL = "interpolator"
 
+# Same idea, but reads COSMO-E1 instead of ERA5: no dataset key of its own
+# in checkpoints.yaml (no trained checkpoint exists for cosmo_meteostat —
+# it's eval-only), so its config is composed fresh via Hydra instead of
+# borrowed from a sibling checkpoint. See
+# docs/superpowers/specs/2026-09-23-cosmo-meteostat-interpolator-design.md
+COSMO_INTERPOLATOR_MODEL = "cosmo_interpolator"
+
 
 def _sibling_checkpoint(dataset: str) -> str:
     """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
@@ -58,6 +65,41 @@ def _sibling_checkpoint(dataset: str) -> str:
         f"No sibling checkpoint to borrow a data config from for the "
         f"interpolator on dataset={dataset!r}."
     )
+
+
+def _compose_cosmo_interpolator_cfg() -> Any:
+    """Compose a fresh Hydra config for the cosmo_interpolator model.
+
+    Unlike INTERPOLATOR_MODEL, no trained checkpoint exists for the
+    cosmo_meteostat dataset to borrow a saved config from, so this
+    composes directly from configs/ instead.
+    """
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).parents[1] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        return compose(
+            config_name="config",
+            overrides=[
+                "dataset=cosmo_meteostat/temp_precip",
+                "split=spatial_region_holdout",
+            ],
+        )
+
+
+def _base_tag(
+    is_interpolator: bool, model: str, dataset: str | None, checkpoint: str | None
+) -> str:
+    """Result-filename stem, before the _nocontext/_metrics_<split> suffixes.
+
+    Interpolator sentinels (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
+    have no checkpoint path to derive a name from, so they tag by
+    model+dataset instead.
+    """
+    if is_interpolator:
+        return f"{model}_{dataset}"
+    assert checkpoint is not None
+    return Path(checkpoint).parent.name
 
 
 def _ckpt_tag(base_tag: str, exclude_context: bool) -> str:
@@ -213,13 +255,16 @@ def main() -> None:
 
     args = _parse_args()
 
-    is_interpolator = args.model == INTERPOLATOR_MODEL
+    is_interpolator = args.model in (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
 
     if is_interpolator:
-        # Borrow the data config from a sibling checkpoint; build predictor below.
-        cfg = OmegaConf.load(
-            Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml"
-        )
+        if args.model == COSMO_INTERPOLATOR_MODEL:
+            cfg = _compose_cosmo_interpolator_cfg()
+        else:
+            # Borrow the data config from a sibling checkpoint; build predictor below.
+            cfg = OmegaConf.load(
+                Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml"
+            )
         predictor = None
     else:
         if args.checkpoint is None:
@@ -232,11 +277,7 @@ def main() -> None:
         predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
         predictor = predictor.eval()
 
-    base_tag = (
-        f"{INTERPOLATOR_MODEL}_{args.dataset}"
-        if is_interpolator
-        else Path(args.checkpoint).parent.name
-    )
+    base_tag = _base_tag(is_interpolator, args.model, args.dataset, args.checkpoint)
     ckpt_tag = _ckpt_tag(base_tag, args.exclude_context)
 
     cfg.dataset.data_points_for_stats = 0

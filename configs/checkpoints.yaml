@@ -23,6 +23,7 @@ cosmo_peakweather:
 
 era5_meteostat:
   interpolator: interpolator
+  cosmo_interpolator: cosmo_interpolator
   oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_era5_meteostat-temp_precip_20260821_job5157594/best-model-epoch=238-val_loss=0.1906.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat_field/uninformed_oat_field_era5_meteostat-temp_precip_20260821_job5160673/best-model-epoch=154-val_loss=0.2315.ckpt
   ootg_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/ootg/ootg_era5_meteostat-temp_precip_ootg_20260909_job114744/epoch=13-val_loss=0.1091.ckpt

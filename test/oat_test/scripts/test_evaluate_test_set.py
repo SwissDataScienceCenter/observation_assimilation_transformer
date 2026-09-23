@@ -4,7 +4,15 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from scripts.evaluate_test_set import _ckpt_tag, _exclude_context, _print_summary
+from scripts.evaluate_test_set import (
+    COSMO_INTERPOLATOR_MODEL,
+    INTERPOLATOR_MODEL,
+    _base_tag,
+    _ckpt_tag,
+    _compose_cosmo_interpolator_cfg,
+    _exclude_context,
+    _print_summary,
+)
 
 
 def test_exclude_context_removes_context_stations():
@@ -68,3 +76,29 @@ def test_print_summary_handles_missing_n_nonfinite(caplog):
     with caplog.at_level(logging.WARNING, logger=logger.name):
         _print_summary(_base_metrics(), ["prcp"], logger)
     assert "non-finite" not in caplog.text
+
+
+def test_base_tag_for_interpolator():
+    assert (
+        _base_tag(True, INTERPOLATOR_MODEL, "era5_meteostat", None)
+        == "interpolator_era5_meteostat"
+    )
+
+
+def test_base_tag_for_cosmo_interpolator():
+    assert (
+        _base_tag(True, COSMO_INTERPOLATOR_MODEL, "era5_meteostat", None)
+        == "cosmo_interpolator_era5_meteostat"
+    )
+
+
+def test_base_tag_for_checkpoint():
+    checkpoint = "/checkpoints/oat_field/oat_era5_meteostat_run5379412/best.ckpt"
+    assert _base_tag(False, "oat", None, checkpoint) == "oat_era5_meteostat_run5379412"
+
+
+def test_compose_cosmo_interpolator_cfg_uses_cosmo_dataset_and_spatial_split():
+    cfg = _compose_cosmo_interpolator_cfg()
+    assert cfg.dataset.dataset_type == "cosmo_meteostat"
+    assert "02926" in list(cfg.split.train_station_indices)
+    assert list(cfg.dataset.obs_vars) == ["temp", "prcp"]
