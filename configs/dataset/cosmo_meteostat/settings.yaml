@@ -1,0 +1,23 @@
+defaults:
+  - base@_here_
+  - catalog@catalog
+  - _self_
+
+dataset_type: cosmo_meteostat
+
+coord_sources:
+  stations: {from: obs}
+  nwp_grid: {from: nwp}
+
+fields:
+  obs:  {coords: stations, inputs: [obs.temp]}
+  nwp:  {coords: stations, inputs: [nwp.T_2M], query: true}
+  topo: {coords: stations, inputs: [topo.elevation, topo.distance_to_coast], query: true}
+  geo:  {coords: stations, inputs: [coords.x, coords.y, topo.elevation],
+         out: [longitude, latitude, elevation], query: true, interp: linear}
+
+roles:
+  target: obs
+  global: nwp
+  geo_bias: geo
+  topo: topo

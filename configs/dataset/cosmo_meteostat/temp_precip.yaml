@@ -1,0 +1,19 @@
+defaults:
+  - cosmo_meteostat/settings@_here_
+  - _self_
+
+nwp_vars: [T_2M, TOT_PREC_1H, CLCT]
+
+obs_vars: [temp, prcp]
+
+obs_variable_to_distribution:
+  temp: normal
+  prcp: zero_inflated_lognormal
+
+fields:
+  obs: {coords: stations, inputs: [obs.temp, obs.prcp]}
+  nwp:
+    coords: stations
+    inputs: [nwp.T_2M, nwp.TOT_PREC_1H, nwp.CLCT]
+    query: true
+    interp: linear

@@ -1,0 +1,92 @@
+# Variable catalog for the COSMO-Meteostat dataset (COSMO-E1 NWP,
+# Meteostat observations). obs/topo/coord/geo vars copied from
+# era5_meteostat/catalog.yaml; nwp_vars copied from
+# cosmo_peakweather/catalog.yaml.
+obs_vars:
+  temp:
+    description: "2m air temperature"
+    unit: "°C"
+
+  rhum:
+    description: "Relative humidity"
+    unit: "%"
+    lower_bound: 0.0
+    upper_bound: 100.0
+
+  prcp:
+    description: "Hourly precipitation accumulation"
+    unit: "mm/h"
+    lower_bound: 0.0
+    lower_open: false
+
+  wspd:
+    description: "10m horizontal wind speed magnitude"
+    unit: "m/s"
+    lower_bound: 0.0
+    lower_open: true
+
+  wpgt:
+    description: "Maximum 10m wind gust speed"
+    unit: "m/s"
+    lower_bound: 0.0
+    lower_open: true
+
+nwp_vars:
+  T_2M:
+    description: "2m temperature from COSMO NWP model"
+    unit: "K"
+
+  T_G:
+    description: "Ground/soil temperature from COSMO NWP model"
+    unit: "K"
+
+  U_10M:
+    description: "10m zonal wind component from COSMO NWP model"
+    unit: "m/s"
+
+  V_10M:
+    description: "10m meridional wind component from COSMO NWP model"
+    unit: "m/s"
+
+  CLCT:
+    description: "Total cloud cover from COSMO NWP model"
+    unit: "%"
+
+  wind_speed:
+    description: "Derived 10m horizontal wind speed magnitude"
+    unit: "m/s"
+
+  TOT_PREC_1H:
+    description: "Total precipitation in 1 hour"
+    unit: "mm/h"
+
+  wind_direction:
+    description: "10m wind direction derived from U_10M and V_10M"
+    unit: "degrees [0, 360)"
+
+topo_vars:
+  elevation:
+    description: "Surface elevation (SRTM DEM)"
+    unit: "m"
+  distance_to_coast:
+    description: "Distance to nearest ocean pixel"
+    unit: "m"
+
+coord_vars:
+  longitude:
+    description: "Station longitude (WGS84)"
+    unit: "degrees_east"
+  latitude:
+    description: "Station latitude (WGS84)"
+    unit: "degrees_north"
+
+geo_vars:
+  longitude:
+    description: "Station longitude (WGS84)"
+    unit: "degrees_east"
+  latitude:
+    description: "Station latitude (WGS84)"
+    unit: "degrees_north"
+  elevation:
+    description: "Station elevation interpolated from DEM"
+    unit: "m"
