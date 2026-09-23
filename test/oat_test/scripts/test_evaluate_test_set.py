@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
+import scripts.evaluate_test_set as evaluate_test_set_module
 from scripts.evaluate_test_set import (
     COSMO_INTERPOLATOR_MODEL,
     INTERPOLATOR_MODEL,
@@ -12,6 +13,7 @@ from scripts.evaluate_test_set import (
     _compose_cosmo_interpolator_cfg,
     _exclude_context,
     _print_summary,
+    _sibling_checkpoint,
 )
 
 
@@ -102,3 +104,23 @@ def test_compose_cosmo_interpolator_cfg_uses_cosmo_dataset_and_spatial_split():
     assert cfg.dataset.dataset_type == "cosmo_meteostat"
     assert "02926" in list(cfg.split.train_station_indices)
     assert list(cfg.dataset.obs_vars) == ["temp", "prcp"]
+
+
+def test_sibling_checkpoint_skips_both_interpolator_sentinels(tmp_path, monkeypatch):
+    """A registry with two sentinel entries must not return a sentinel value.
+
+    Regression test: adding cosmo_interpolator right after interpolator in
+    checkpoints.yaml made _sibling_checkpoint return the literal string
+    "cosmo_interpolator" instead of skipping past it to the real checkpoint
+    path, breaking the pre-existing --model interpolator invocation.
+    """
+    registry_path = tmp_path / "checkpoints.yaml"
+    registry_path.write_text(
+        "era5_meteostat:\n"
+        "  interpolator: interpolator\n"
+        "  cosmo_interpolator: cosmo_interpolator\n"
+        "  oat_temp_precip: /checkpoints/oat_field/oat_era5_meteostat_run1/best.ckpt\n"
+    )
+    monkeypatch.setattr(evaluate_test_set_module, "_DEFAULT_REGISTRY", registry_path)
+    result = _sibling_checkpoint("era5_meteostat")
+    assert result == "/checkpoints/oat_field/oat_era5_meteostat_run1/best.ckpt"

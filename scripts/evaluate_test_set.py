@@ -58,8 +58,9 @@ def _sibling_checkpoint(dataset: str) -> str:
     """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
     registry = OmegaConf.load(_DEFAULT_REGISTRY)
     models = registry.get(dataset) or {}
+    sentinels = (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
     for model, path in models.items():
-        if model != INTERPOLATOR_MODEL and path is not None:
+        if model not in sentinels and path is not None:
             return str(path)
     raise ValueError(
         f"No sibling checkpoint to borrow a data config from for the "
