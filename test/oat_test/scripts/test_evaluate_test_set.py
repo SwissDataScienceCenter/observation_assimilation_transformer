@@ -12,6 +12,7 @@ from scripts.evaluate_test_set import (
     _ckpt_tag,
     _compose_cosmo_interpolator_cfg,
     _exclude_context,
+    _override_split,
     _print_summary,
     _sibling_checkpoint,
 )
@@ -104,6 +105,37 @@ def test_compose_cosmo_interpolator_cfg_uses_cosmo_dataset_and_spatial_split():
     assert cfg.dataset.dataset_type == "cosmo_meteostat"
     assert "02926" in list(cfg.split.train_station_indices)
     assert list(cfg.dataset.obs_vars) == ["temp", "prcp"]
+
+
+def test_base_tag_appends_split_config_when_given():
+    assert (
+        _base_tag(
+            True,
+            INTERPOLATOR_MODEL,
+            "era5_meteostat",
+            None,
+            "spatial_region_holdout",
+        )
+        == "interpolator_era5_meteostat_spatial_region_holdout"
+    )
+
+
+def test_base_tag_omits_split_config_suffix_when_none():
+    assert (
+        _base_tag(True, INTERPOLATOR_MODEL, "era5_meteostat", None, None)
+        == "interpolator_era5_meteostat"
+    )
+
+
+def test_override_split_replaces_cfg_split_with_named_config():
+    """--split-config must pin the split regardless of what cfg already had.
+
+    Uses a real Hydra compose of configs/split/spatial_region_holdout.yaml
+    (no mocks) and checks for a known station ID from that file.
+    """
+    cfg = OmegaConf.create({"split": {"train_station_indices": None}})
+    cfg = _override_split(cfg, "spatial_region_holdout")
+    assert "02926" in list(cfg.split.train_station_indices)
 
 
 def test_sibling_checkpoint_skips_both_interpolator_sentinels(tmp_path, monkeypatch):

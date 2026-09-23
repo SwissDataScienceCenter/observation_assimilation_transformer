@@ -15,6 +15,7 @@ Options
 --max-timesteps M     Evaluate only the first M timesteps (quick smoke-test)
 --device cpu|cuda     Torch device (default: cpu)
 --out PATH            Output CSV (default: data/results/<tag>_metrics_<split>.csv)
+--split-config NAME   Override cfg.split with configs/split/<NAME>.yaml
 """
 
 import argparse
@@ -88,19 +89,45 @@ def _compose_cosmo_interpolator_cfg() -> Any:
         )
 
 
+def _override_split(cfg: Any, split_config: str) -> Any:
+    """Override ``cfg.split`` by composing ``configs/split/<split_config>.yaml``.
+
+    Any model's split can be pinned this way. ``--model interpolator``
+    borrows a sibling checkpoint's saved config, but ``checkpoints.yaml``
+    may list several siblings on different splits — the sibling picked is
+    whichever comes first in the file, not necessarily the split the
+    caller wants. This makes the split explicit instead.
+    """
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).parents[1] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        split_cfg = compose(config_name="config", overrides=[f"split={split_config}"])
+    cfg.split = split_cfg.split
+    return cfg
+
+
 def _base_tag(
-    is_interpolator: bool, model: str, dataset: str | None, checkpoint: str | None
+    is_interpolator: bool,
+    model: str,
+    dataset: str | None,
+    checkpoint: str | None,
+    split_config: str | None = None,
 ) -> str:
     """Result-filename stem, before the _nocontext/_metrics_<split> suffixes.
 
     Interpolator sentinels (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
     have no checkpoint path to derive a name from, so they tag by
-    model+dataset instead.
+    model+dataset instead. When --split-config overrides the split, its
+    name is appended, so a run on a non-default split does not collide
+    with one on the checkpoint's own split.
     """
     if is_interpolator:
-        return f"{model}_{dataset}"
-    assert checkpoint is not None
-    return Path(checkpoint).parent.name
+        base = f"{model}_{dataset}"
+    else:
+        assert checkpoint is not None
+        base = Path(checkpoint).parent.name
+    return f"{base}_{split_config}" if split_config else base
 
 
 def _ckpt_tag(base_tag: str, exclude_context: bool) -> str:
@@ -195,6 +222,14 @@ def _parse_args() -> argparse.Namespace:
         help="Drop test_context_station_indices from the observed set "
         "(zero-context spatial-holdout eval arm)",
     )
+    p.add_argument(
+        "--split-config",
+        default=None,
+        metavar="NAME",
+        help="Override cfg.split with configs/split/<NAME>.yaml, e.g. "
+        "spatial_region_holdout (default: whatever the checkpoint/model "
+        "would otherwise carry)",
+    )
     return p.parse_args()
 
 
@@ -278,7 +313,12 @@ def main() -> None:
         predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
         predictor = predictor.eval()
 
-    base_tag = _base_tag(is_interpolator, args.model, args.dataset, args.checkpoint)
+    if args.split_config is not None:
+        cfg = _override_split(cfg, args.split_config)
+
+    base_tag = _base_tag(
+        is_interpolator, args.model, args.dataset, args.checkpoint, args.split_config
+    )
     ckpt_tag = _ckpt_tag(base_tag, args.exclude_context)
 
     cfg.dataset.data_points_for_stats = 0
