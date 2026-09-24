@@ -53,8 +53,14 @@ for dataset, models in (registry or {}).items():
         if path is not None:
             print(f"{dataset}\t{model}")
     # Weightless interpolator baseline: one job per dataset (needs a sibling
-    # checkpoint to borrow the data config from).
-    if has_ckpt and (not "$FILTER_MODEL" or "$FILTER_MODEL" == "interpolator"):
+    # checkpoint to borrow the data config from). Skip when the registry
+    # already declares its own "interpolator" entry -- the loop above
+    # already emitted it, so adding it again would submit a duplicate job.
+    if (
+        "interpolator" not in models
+        and has_ckpt
+        and (not "$FILTER_MODEL" or "$FILTER_MODEL" == "interpolator")
+    ):
         print(f"{dataset}\tinterpolator")
 PYEOF
 )

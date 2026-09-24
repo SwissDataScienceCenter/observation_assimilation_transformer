@@ -87,10 +87,35 @@ MODEL_LABELS = {
     "oat": "OAT (observation assim.)",
     "oat_vanilla": "OAT (vanilla attn.)",
     "oat_tetnp": "OAT (TETNP attn.)",
+    "oat_spatial_holdout": "OAT (observation assim.)",
+    "uninformed_spatial_holdout": "Uninformed baseline",
 }
 DATASET_LABELS = {
     "cosmo_peakweather": "Switzerland",
     "era5_meteostat": "Europe",
+    "era5_meteostat_spatial_holdout": "Europe (Spatial Holdout)",
+}
+
+# era5_meteostat's spatial-holdout checkpoints and the COSMO interpolator
+# (eval-only on that split, see docs/superpowers/specs/2026-09-23-cosmo-
+# meteostat-interpolator-design.md) render as their own subtable, split out
+# from era5_meteostat's regular Europe numbers by _views() below.
+SPATIAL_HOLDOUT_VIEW = "era5_meteostat_spatial_holdout"
+SPATIAL_HOLDOUT_SPLIT_CONFIG = "spatial_region_holdout"
+SPATIAL_HOLDOUT_CHECKPOINT_KEYS = {
+    "oat_spatial_holdout_temp_precip",
+    "uninformed_spatial_holdout_temp_precip",
+}
+SPATIAL_HOLDOUT_ONLY_SENTINELS = {"cosmo_interpolator"}
+
+# Label overrides for rows only in the spatial-holdout view: it shows the ERA5
+# and COSMO interpolators side by side, so plain MODEL_LABELS ("NWP Interp.")
+# would not tell them apart.
+VIEW_MODEL_LABELS: dict[str, dict[str, str]] = {
+    SPATIAL_HOLDOUT_VIEW: {
+        "interpolator": "NWP Interp. (ERA5)",
+        "cosmo_interpolator": "NWP Interp. (COSMO)",
+    },
 }
 
 
@@ -257,6 +282,49 @@ def _boot_skill(
     return float(point), (float(lo), float(hi))
 
 
+def _views(registry: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
+    """(view, source_dataset, models) triples, one per rendered subtable.
+
+    Every dataset renders as one view, except era5_meteostat: its
+    spatial-holdout checkpoints and the COSMO interpolator are pulled into a
+    separate SPATIAL_HOLDOUT_VIEW so they don't mix with the regular Europe
+    numbers. The plain ``interpolator`` sentinel (ERA5 NWP baseline) is
+    shared by both views -- regular split in Europe, forced onto
+    SPATIAL_HOLDOUT_SPLIT_CONFIG in the holdout view (see ``_collect``).
+    """
+    out: list[tuple[str, str, dict[str, Any]]] = []
+    for dataset, models in registry.items():
+        if models is None:
+            continue
+        if dataset != "era5_meteostat":
+            out.append((dataset, dataset, models))
+            continue
+        holdout_only = {
+            *SPATIAL_HOLDOUT_ONLY_SENTINELS,
+            *SPATIAL_HOLDOUT_CHECKPOINT_KEYS,
+        }
+        regular = {k: v for k, v in models.items() if k not in holdout_only}
+        holdout = {
+            k: v for k, v in models.items() if k in holdout_only or k == "interpolator"
+        }
+        out.append((dataset, dataset, regular))
+        out.append((SPATIAL_HOLDOUT_VIEW, dataset, holdout))
+    return out
+
+
+def _forced_tag(dataset: str, key: str, value: Any, split_config: str) -> str | None:
+    """Suffixed tag for a run forced onto ``split_config``, no fallback.
+
+    Unlike ``_tag_for_run``, this never falls back to the unsuffixed tag: the
+    unsuffixed file here is a *different* split (era5_meteostat's regular
+    test split, not the spatial holdout), so silently substituting it would
+    mislabel those numbers as holdout results. A missing suffixed file
+    renders NA instead.
+    """
+    base = _resolve_tag(dataset, key, value)
+    return f"{base}_{split_config}" if base else None
+
+
 def _collect(
     registry: dict[str, Any],
     split: str,
@@ -265,21 +333,26 @@ def _collect(
     pct: tuple[float, float],
     split_config: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Build {dataset: [row, ...]} of aggregated per-method metrics."""
+    """Build {view: [row, ...]} of aggregated per-method metrics."""
     rng = np.random.default_rng(seed)
     out: dict[str, list[dict[str, Any]]] = {}
-    for dataset, models in registry.items():
-        if models is None:
-            continue
+    for view, source_dataset, models in _views(registry):
         rows: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for key, value in models.items():
             base, key_vars = _base_and_vars(key)
-            tag = _tag_for_run(dataset, key, value, split, split_config)
+            if view == SPATIAL_HOLDOUT_VIEW and key == "interpolator":
+                tag = _forced_tag(
+                    source_dataset, key, value, SPATIAL_HOLDOUT_SPLIT_CONFIG
+                )
+            else:
+                tag = _tag_for_run(source_dataset, key, value, split, split_config)
             if base not in rows:
                 rows[base] = {
                     "base": base,
-                    "label": MODEL_LABELS.get(base, base),
+                    "label": VIEW_MODEL_LABELS.get(view, {}).get(
+                        base, MODEL_LABELS.get(base, base)
+                    ),
                     "vars": {},
                 }
                 order.append(base)
@@ -310,9 +383,9 @@ def _collect(
                             stations[crps_col].to_numpy(), n_boot, rng, pct
                         )
                 rows[base]["vars"][var] = v
-        out[dataset] = [rows[b] for b in order]
+        out[view] = [rows[b] for b in order]
 
-    # Second pass: paired CRPS skill vs the dataset's uninformed baseline.
+    # Second pass: paired CRPS skill vs each view's own uninformed baseline.
     for method_rows in out.values():
         ref = next((r for r in method_rows if "uninformed" in r["base"]), None)
         for row in method_rows:
