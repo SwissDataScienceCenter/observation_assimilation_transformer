@@ -253,10 +253,10 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         metavar="YYYY-MM-DD",
         help="Override cfg.dataset.end_date (default: whatever the "
-        "checkpoint/model config carries). Needed to align the trailing "
-        "test_days=365 window across NWP sources with different native "
-        "date ranges — see docs/superpowers/specs/2026-09-23-cosmo-"
-        "meteostat-interpolator-design.md's time-alignment risk note.",
+        "checkpoint/model config carries). Do not use it to align test "
+        "windows across NWP sources: with test_days it also moves the "
+        "train/val cutoff. Set test_start_date/test_end_date in the split "
+        "config instead (see configs/split/spatial_region_holdout.yaml).",
     )
     return p.parse_args()
 

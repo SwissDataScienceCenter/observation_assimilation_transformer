@@ -34,6 +34,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+TEST_START_DATE = "2024-01-02T00:00:00"
+TEST_END_DATE = "2024-09-04T23:00:00"
+
 
 def load_station_coords(station_meta_path: str, obs_path: str) -> pd.DataFrame:
     """Load the station coordinates used by the live dataset.
@@ -229,6 +232,12 @@ def render_config(
         "#",
         "defaults:",
         "  - default",
+        "",
+        "# Fixed test window, shared by the ERA5 and COSMO-E1 runs. COSMO-E1",
+        "# ends at 2024-09-04T23. The start keeps the train/val times of the",
+        "# old test_days=365 cutoff on ERA5 (2024-01-01T23).",
+        f'test_start_date: "{TEST_START_DATE}"',
+        f'test_end_date: "{TEST_END_DATE}"',
         "",
         "train_station_indices:",
     ]

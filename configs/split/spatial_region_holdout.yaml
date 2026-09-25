@@ -9,6 +9,12 @@
 defaults:
   - default
 
+# Fixed test window, shared by the ERA5 and COSMO-E1 runs. COSMO-E1
+# ends at 2024-09-04T23. The start keeps the train/val times of the
+# old test_days=365 cutoff on ERA5 (2024-01-01T23).
+test_start_date: "2024-01-02T00:00:00"
+test_end_date: "2024-09-04T23:00:00"
+
 train_station_indices:
   - "02926"
   - "02929"

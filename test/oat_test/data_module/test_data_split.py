@@ -256,3 +256,61 @@ def test_create_splits_random_observed_includes_train_and_val():
     observed_set = set(test_dataset.observed_indices.tolist())
     expected_set = set(train_ids) | set(val_ids)
     assert observed_set == expected_set
+
+
+def test_create_splits_fixed_test_window_from_dates():
+    """test_start_date/test_end_date pin the test window and override test_days."""
+    base = _Base()
+    base.times = pd.date_range("2020-01-01", periods=6, freq="1h", tz="UTC")
+    out = create_splits(
+        base,
+        val_station_fraction=0.25,
+        test_station_fraction=0.25,
+        train_split_fraction=0.5,
+        test_days=365,
+        test_start_date="2020-01-01T02:00:00",
+        test_end_date="2020-01-01T04:00:00",
+        seed=1,
+    )
+    tr, va, te = out["datasets"]
+    assert out["test_time_indices"] == [2, 3, 4]
+    # Train/val keep only times before test_start_date, not after test_end_date.
+    assert len(tr) == 2 and len(va) == 2
+    assert len(te) == 3
+
+
+def test_create_splits_end_date_without_start_date_raises():
+    with pytest.raises(ValueError, match="test_start_date"):
+        create_splits(
+            _Base(),
+            val_station_fraction=0.25,
+            test_station_fraction=0.25,
+            test_end_date="2020-01-01T01:00:00",
+            seed=1,
+        )
+
+
+@pytest.mark.parametrize(
+    "times",
+    [
+        # The source ends before test_end_date.
+        pd.date_range("2020-01-01", periods=4, freq="1h", tz="UTC"),
+        # The source has a gap inside the test window.
+        pd.DatetimeIndex(
+            ["2020-01-01T00", "2020-01-01T01", "2020-01-01T02", "2020-01-01T04"],
+            tz="UTC",
+        ),
+    ],
+)
+def test_create_splits_raises_when_source_misses_test_window(times):
+    base = _Base()
+    base.times = times
+    with pytest.raises(ValueError, match="does not cover the test window"):
+        create_splits(
+            base,
+            val_station_fraction=0.25,
+            test_station_fraction=0.25,
+            test_start_date="2020-01-01T02:00:00",
+            test_end_date="2020-01-01T04:00:00",
+            seed=1,
+        )

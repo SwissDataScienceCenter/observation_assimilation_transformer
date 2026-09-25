@@ -85,3 +85,6 @@ def test_render_config_quotes_numeric_station_ids():
     assert isinstance(loaded["val_station_indices"][0], str)
     assert loaded["test_context_station_indices"] == ["1010"]
     assert loaded["test_station_indices"] == ["1015"]
+    # The fixed test window must round-trip as str, not as a YAML datetime.
+    assert loaded["test_start_date"] == "2024-01-02T00:00:00"
+    assert loaded["test_end_date"] == "2024-09-04T23:00:00"
