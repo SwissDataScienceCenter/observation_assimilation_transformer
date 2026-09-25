@@ -102,9 +102,19 @@ def _compose_cosmo_cfg(split_config: str) -> Any:
 
 
 def _resolve_time_idx(dataset, time_str: str) -> int:
+    """Return the index of ``time_str`` in ``dataset.times``.
+
+    Raise if the time is not in the dataset (e.g. after the COSMO-E1 end
+    or on one of its missing dates). A nearest-time fallback would plot
+    a different hour than the title shows.
+    """
     ts = pd.Timestamp(time_str.replace(":", " "), tz="UTC")
-    idx = int(dataset.times.searchsorted(ts))
-    return min(idx, len(dataset) - 1)
+    if ts not in dataset.times:
+        raise ValueError(
+            f"{ts} is not in the dataset times "
+            f"[{dataset.times[0]}, {dataset.times[-1]}] (or is a missing date)."
+        )
+    return int(dataset.times.get_loc(ts))
 
 
 def _parse_args() -> argparse.Namespace:
