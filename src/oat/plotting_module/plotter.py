@@ -936,6 +936,7 @@ class OATPlotter:
         crps_sum = torch.zeros(S, V, device=self.device)
         mae_sum = torch.zeros(S, V, device=self.device)
         mask_count = torch.zeros(S, V, device=self.device)
+        nonfinite_count = torch.zeros(S, V, device=self.device)
         ref_crps_sum = (
             torch.zeros(S, V, device=self.device) if reference is not None else None
         )
@@ -973,6 +974,33 @@ class OATPlotter:
                 .to(self.device)
             )  # [B, S, V]
 
+            y_hat_ref_b = None
+            if reference is not None:
+                y_hat_ref_b = torch.stack(
+                    [
+                        self._run_inference(t, eval_coords, predictor=reference)
+                        for t in chunk_list
+                    ]
+                )
+
+            # Guard against rare non-finite predictive samples (e.g. a
+            # distribution's sampler overflowing to inf for a single draw):
+            # exclude just that (timestep, station, feature) from this
+            # chunk's mask instead of letting one bad draw turn CRPS/MAE for
+            # the whole per-station aggregate into NaN. Sanitizing the raw
+            # samples too is required, not just the mask: a masked-out entry
+            # is later multiplied by its mask weight, and 0 * inf is NaN, not 0.
+            finite = torch.isfinite(y_hat_b).all(dim=-2)  # [B, S, V]
+            if y_hat_ref_b is not None:
+                finite = finite & torch.isfinite(y_hat_ref_b).all(dim=-2)
+            nonfinite_count += (~finite).sum(dim=0)  # [S, V]
+            y_hat_b = torch.nan_to_num(y_hat_b, nan=0.0, posinf=0.0, neginf=0.0)
+            if y_hat_ref_b is not None:
+                y_hat_ref_b = torch.nan_to_num(
+                    y_hat_ref_b, nan=0.0, posinf=0.0, neginf=0.0
+                )
+            mask_b = mask_b * finite.float()
+
             count_b = mask_b.sum(dim=0)  # [S, V]
             crps_sum += (
                 mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
@@ -982,17 +1010,26 @@ class OATPlotter:
             )
             mask_count += count_b
 
-            if reference is not None:
-                y_hat_ref_b = torch.stack(
-                    [
-                        self._run_inference(t, eval_coords, predictor=reference)
-                        for t in chunk_list
-                    ]
-                )
+            if y_hat_ref_b is not None:
                 ref_crps_sum += mc_crps(y_obs_b, y_hat_ref_b, mask_b, aggregation="station") * count_b  # type: ignore[operator]
 
             processed += len(chunk_list)
             logger.info("processed %d/%d timesteps", processed, total)
+
+        n_bad_total = int(nonfinite_count.sum())
+        if n_bad_total:
+            n_stations_hit = int((nonfinite_count > 0).any(dim=-1).sum())
+            logger.warning(
+                "compute_station_metrics: %d non-finite prediction entries "
+                "excluded from metrics across %d/%d eval stations (see "
+                "'n_nonfinite' in the returned dict for the per-station "
+                "breakdown) — this points to a model/sampling problem, not "
+                "missing data, and is NOT the same as a station with no "
+                "observations.",
+                n_bad_total,
+                n_stations_hit,
+                S,
+            )
 
         denom = mask_count.clamp(min=1e-8)
         no_obs = mask_count == 0  # [S, V] — station has no valid obs for this variable
@@ -1008,6 +1045,12 @@ class OATPlotter:
             "mae": mae_per_station,
             "crps_global": crps_global,
             "mae_global": mae_global,
+            # Per-(station, variable) count of prediction samples excluded
+            # for being non-finite (e.g. a distribution sampler overflowing)
+            # — NOT missing-observation gaps, which show up as NaN in
+            # crps/mae above instead. Non-zero here means the model produced
+            # bad output, silently averaged out of the metrics above.
+            "n_nonfinite": nonfinite_count,
         }
 
         if reference is not None:

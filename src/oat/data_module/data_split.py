@@ -21,10 +21,64 @@ def _slice_field(field: Field, idx: Tensor) -> Field:
     return Field(field.coords[idx], field.values[idx], list(field.var_names), mask)
 
 
-def _as_index_array(x: Any) -> np.ndarray:  # type: ignore[type-arg]
+def _as_timestamp(value: str, times: pd.DatetimeIndex) -> pd.Timestamp:
+    """Parse ``value`` into the timezone of ``times`` (naive means that zone)."""
+    ts = pd.Timestamp(value)
+    if ts.tz is None and times.tz is not None:
+        ts = ts.tz_localize(times.tz)
+    return ts
+
+
+def _check_covers_test_window(
+    test_times: pd.DatetimeIndex,
+    times: pd.DatetimeIndex,
+    test_start_date: str,
+    test_end_date: str | None,
+) -> None:
+    """Raise if ``times`` misses a step of the fixed test window.
+
+    A source that ends early or drops dates (e.g. COSMO-E1 missing hours)
+    would otherwise score a shorter window than the other models, and
+    the paired comparison would mix different periods without a warning.
+    """
+    start = _as_timestamp(test_start_date, times)
+    end = times[-1] if test_end_date is None else _as_timestamp(test_end_date, times)
+    step = times.to_series().diff().min()
+    expected = pd.date_range(start, end, freq=step)
+    missing = expected.difference(test_times)
+    if len(missing) > 0:
+        raise ValueError(
+            f"Data source does not cover the test window [{start}, {end}]: "
+            f"{len(missing)} of {len(expected)} steps are missing "
+            f"(first {missing[0]}, last {missing[-1]}). The source covers "
+            f"[{times[0]}, {times[-1]}]."
+        )
+
+
+def _as_index_array(
+    x: Any, all_station_ids: np.ndarray | None = None  # type: ignore[type-arg]
+) -> np.ndarray:  # type: ignore[type-arg]
     if isinstance(x, (list, ListConfig)):
-        return np.array(x)
-    return x  # type: ignore[no-any-return]
+        x = np.array(x)
+    if x.dtype.kind in "iu":
+        # Check the bounds only when we have a station list to check against.
+        # The random-split branch calls this with all_station_ids=None, so
+        # there is nothing to bound against there.
+        if all_station_ids is not None and x.size:
+            if x.min() < 0 or x.max() >= len(all_station_ids):
+                raise ValueError(
+                    f"station index out of range: values must be in "
+                    f"[0, {len(all_station_ids)}), got min={x.min()}, "
+                    f"max={x.max()}"
+                )
+        return x
+    if all_station_ids is None:
+        raise ValueError("all_station_ids is required to resolve station-ID overrides")
+    id_to_pos = {sid: i for i, sid in enumerate(all_station_ids)}
+    missing = [sid for sid in x if sid not in id_to_pos]
+    if missing:
+        raise ValueError(f"station IDs not found in dataset.stations: {missing}")
+    return np.array([id_to_pos[sid] for sid in x])
 
 
 class TrainDataset(Dataset[dict[str, Any]]):
@@ -162,16 +216,40 @@ def create_splits(
     train_station_indices: Any = None,
     val_station_indices: Any = None,
     test_station_indices: Any = None,
+    test_context_station_indices: Any = None,
     test_days: int = 0,
+    test_start_date: str | None = None,
+    test_end_date: str | None = None,
     seed: int | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
-    """Field-native mirror of legacy.data_split.create_splits (same semantics)."""
+    """Field-native mirror of legacy.data_split.create_splits (same semantics).
+
+    ``test_start_date``/``test_end_date`` (inclusive) pin the test window to
+    fixed dates and override ``test_days``. Train/val use only the times
+    before ``test_start_date``. Use them to compare NWP sources with
+    different archive end dates on the same test window: ``test_days``
+    counts back from the last time of each archive.
+    """
     all_positions = np.arange(len(dataset))
-    if test_days > 0:
+    if test_end_date is not None and test_start_date is None:
+        raise ValueError("test_end_date needs test_start_date")
+    temporal_split = test_start_date is not None or test_days > 0
+    if test_start_date is not None:
+        times = dataset.times
+        train_val_mask = times < _as_timestamp(test_start_date, times)
+        test_mask = ~train_val_mask
+        if test_end_date is not None:
+            test_mask &= times <= _as_timestamp(test_end_date, times)
+        train_val_time_indices: np.ndarray | None = all_positions[train_val_mask]  # type: ignore[type-arg]
+        test_time_indices = all_positions[test_mask]
+        _check_covers_test_window(
+            times[test_mask], times, test_start_date, test_end_date
+        )
+    elif test_days > 0:
         cutoff = dataset.times[-1] - pd.Timedelta(days=test_days)
         train_val_mask = dataset.times <= cutoff
-        train_val_time_indices: np.ndarray | None = all_positions[train_val_mask]  # type: ignore[type-arg]
+        train_val_time_indices = all_positions[train_val_mask]
         test_time_indices = all_positions[~train_val_mask]
     else:
         train_val_time_indices = None
@@ -181,10 +259,11 @@ def create_splits(
     test_size = int(num_stations * test_station_fraction)
     val_size = int(num_stations * val_station_fraction)
 
-    if all(
+    resolved_from_override = not all(
         x is None
         for x in (train_station_indices, val_station_indices, test_station_indices)
-    ):
+    )
+    if not resolved_from_override:
         assert val_station_fraction + test_station_fraction < 1.0
         indices = np.arange(num_stations, dtype=int)
         rng = torch.Generator().manual_seed(seed) if seed is not None else None
@@ -195,9 +274,31 @@ def create_splits(
         ]
         test_station_indices = indices[num_stations - test_size :]
     else:
-        train_station_indices = _as_index_array(train_station_indices)
-        val_station_indices = _as_index_array(val_station_indices)
-        test_station_indices = _as_index_array(test_station_indices)
+        train_station_indices = _as_index_array(train_station_indices, dataset.stations)
+        val_station_indices = _as_index_array(val_station_indices, dataset.stations)
+        test_station_indices = _as_index_array(test_station_indices, dataset.stations)
+    test_context_station_indices = (
+        np.array([], dtype=int)
+        if test_context_station_indices is None
+        else _as_index_array(test_context_station_indices, dataset.stations)
+    )
+
+    if resolved_from_override:
+        # Check that the four explicit station groups do not share a
+        # station. The random-split branch is disjoint by construction and
+        # does not need this check.
+        groups = (
+            train_station_indices,
+            val_station_indices,
+            test_station_indices,
+            test_context_station_indices,
+        )
+        all_indices = np.concatenate(groups)
+        if len(all_indices) != len(set(all_indices.tolist())):
+            raise ValueError(
+                "station index groups (train/val/test/test_context) must "
+                "be disjoint; found overlapping station indices"
+            )
 
     assert (
         len(train_station_indices) > 0
@@ -226,9 +327,11 @@ def create_splits(
     observed_for_test = (
         np.array([], dtype=int)
         if train_split_fraction == 0.0
-        else np.concatenate((train_station_indices, val_station_indices))
+        else np.concatenate(
+            (train_station_indices, val_station_indices, test_context_station_indices)
+        )
     )
-    test_time_indices_arg = test_time_indices if test_days > 0 else None
+    test_time_indices_arg = test_time_indices if temporal_split else None
     test_dataset = EvalDataset(
         dataset,
         eval_indices=test_station_indices,

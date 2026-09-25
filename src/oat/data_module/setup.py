@@ -31,6 +31,10 @@ def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
         from oat.data_module.era5_meteostat_dataset import ERA5MeteostatDataset
 
         return ERA5MeteostatDataset(cfg.dataset)
+    if dataset_type == "cosmo_meteostat":
+        from oat.data_module.cosmo_meteostat_dataset import CosmoMeteostatDataset
+
+        return CosmoMeteostatDataset(cfg.dataset)
     if dataset_type == "legacy_cosmo_peakweather":
         return CosmoPeakWeatherDataset(cfg.dataset)
     if dataset_type == "legacy_era5_meteostat":
@@ -39,7 +43,7 @@ def _instantiate_dataset(cfg: DictConfig) -> Dataset[Any]:
         return ERA5MeteostatDataset(cfg.dataset)
     raise ValueError(
         f"Unknown dataset_type: {dataset_type!r}. "
-        "Supported: 'cosmo_peakweather', 'era5_meteostat', "
+        "Supported: 'cosmo_peakweather', 'era5_meteostat', 'cosmo_meteostat', "
         "'legacy_cosmo_peakweather', 'legacy_era5_meteostat'."
     )
 
@@ -218,7 +222,7 @@ def setup_data_and_transform(cfg: DictConfig, logger: logging.Logger) -> tuple[
     NestedTransform,
     Transform,
 ]:
-    field_types = {"cosmo_peakweather", "era5_meteostat"}
+    field_types = {"cosmo_peakweather", "era5_meteostat", "cosmo_meteostat"}
     if cfg.dataset.get("dataset_type", "cosmo_peakweather") in field_types:
         return _setup_field_data_and_transform(cfg, logger)
 

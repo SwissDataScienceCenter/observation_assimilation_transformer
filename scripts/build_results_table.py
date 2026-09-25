@@ -39,6 +39,7 @@ python -m scripts.build_results_table [--split test] [--n-boot 1000] [--ci-level
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -50,7 +51,6 @@ from omegaconf import OmegaConf
 # resolved directly to avoid importing the heavy oat/torch stack for one Path.
 _DEFAULT_REGISTRY = Path(__file__).parents[1] / "configs" / "checkpoints.yaml"
 RESULTS_DIR = Path(__file__).parents[1] / "data/results"
-INTERPOLATOR_SENTINEL = "interpolator"
 
 # Canonical variables (order = table column order) and their dataset-specific
 # aliases: cosmo uses temperature/precipitation, era5 uses temp/prcp.
@@ -79,6 +79,7 @@ def _col(df: pd.DataFrame, metric: str, var: str) -> str | None:
 # Pretty labels; fall back to the raw base key when absent.
 MODEL_LABELS = {
     "interpolator": "NWP Interp.",
+    "cosmo_interpolator": "COSMO NWP Interp.",
     "uninformed": "Uninformed baseline",
     "gp": "Gaussian Process",
     "deep_gp": "Deep Gaussian Process",
@@ -86,10 +87,35 @@ MODEL_LABELS = {
     "oat": "OAT (observation assim.)",
     "oat_vanilla": "OAT (vanilla attn.)",
     "oat_tetnp": "OAT (TETNP attn.)",
+    "oat_spatial_holdout": "OAT (observation assim.)",
+    "uninformed_spatial_holdout": "Uninformed baseline",
 }
 DATASET_LABELS = {
     "cosmo_peakweather": "Switzerland",
     "era5_meteostat": "Europe",
+    "era5_meteostat_spatial_holdout": "Europe (Spatial Holdout)",
+}
+
+# era5_meteostat's spatial-holdout checkpoints and the COSMO interpolator
+# (eval-only on that split, see docs/superpowers/specs/2026-09-23-cosmo-
+# meteostat-interpolator-design.md) render as their own subtable, split out
+# from era5_meteostat's regular Europe numbers by _views() below.
+SPATIAL_HOLDOUT_VIEW = "era5_meteostat_spatial_holdout"
+SPATIAL_HOLDOUT_SPLIT_CONFIG = "spatial_region_holdout"
+SPATIAL_HOLDOUT_CHECKPOINT_KEYS = {
+    "oat_spatial_holdout_temp_precip",
+    "uninformed_spatial_holdout_temp_precip",
+}
+SPATIAL_HOLDOUT_ONLY_SENTINELS = {"cosmo_interpolator"}
+
+# Label overrides for rows only in the spatial-holdout view: it shows the ERA5
+# and COSMO interpolators side by side, so plain MODEL_LABELS ("NWP Interp.")
+# would not tell them apart.
+VIEW_MODEL_LABELS: dict[str, dict[str, str]] = {
+    SPATIAL_HOLDOUT_VIEW: {
+        "interpolator": "NWP Interp. (ERA5)",
+        "cosmo_interpolator": "NWP Interp. (COSMO)",
+    },
 }
 
 
@@ -105,12 +131,58 @@ def _base_and_vars(key: str) -> tuple[str, list[str]]:
 
 
 def _resolve_tag(dataset: str, key: str, value: Any) -> str | None:
-    """Result-file tag for a registry entry (dir name, mirroring evaluate_test_set)."""
-    if key == INTERPOLATOR_SENTINEL or value == INTERPOLATOR_SENTINEL:
-        return f"interpolator_{dataset}"
+    """Base result-file tag for a registry entry (dir name for a checkpoint
+    path; ``<key>_<dataset>`` for a sentinel, i.e. an entry where the
+    registry key stands in for its own value instead of a checkpoint path).
+    """
+    if key == value:
+        return f"{key}_{dataset}"
     if value is None:
         return None
     return Path(str(value)).parent.name
+
+
+def _summary_exists(tag: str, split: str) -> bool:
+    return (RESULTS_DIR / f"{tag}_metrics_{split}.summary.json").exists()
+
+
+def _tag_for_run(
+    dataset: str, key: str, value: Any, split: str, split_config: str | None
+) -> str | None:
+    """Which result-file tag to actually read for this registry entry.
+
+    ``split_config`` mirrors evaluate_test_set.py's ``--split-config`` flag,
+    which tags a run's result file ``<base>_<split_config>`` (see
+    ``_base_tag`` there) instead of plain ``<base>``. This tries that
+    suffixed tag first and prefers it when its summary file exists --
+    regardless of whether the entry is a sentinel or a real checkpoint
+    path, since either can be evaluated with ``--split-config``.
+
+    Falls back to the base (unsuffixed) tag, with a warning, when no
+    suffixed file exists: e.g. ``split_config`` doesn't apply to this
+    dataset (cosmo_peakweather has no ``spatial_region_holdout`` split),
+    or this entry was evaluated without the flag (cosmo_interpolator
+    pins its own split internally, so it is normally run without one).
+    Without this fallback, a --split-config that only applies to some
+    registry entries would blank the rest out to NA instead of showing
+    their real, unrelated results.
+    """
+    base = _resolve_tag(dataset, key, value)
+    if base is None or not split_config:
+        return base
+    suffixed = f"{base}_{split_config}"
+    if _summary_exists(suffixed, split):
+        return suffixed
+    if _summary_exists(base, split):
+        print(
+            f"WARNING: no {suffixed}_metrics_{split}.summary.json for "
+            f"{dataset}/{key}; falling back to {base} (split_config="
+            f"{split_config!r} may not apply to this entry, or it was "
+            f"evaluated without --split-config)",
+            file=sys.stderr,
+        )
+        return base
+    return suffixed  # neither exists; _load_summary/_load_stations return {}/None
 
 
 def _load_summary(tag: str, split: str) -> dict[str, dict[str, float]]:
@@ -210,28 +282,77 @@ def _boot_skill(
     return float(point), (float(lo), float(hi))
 
 
+def _views(registry: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
+    """(view, source_dataset, models) triples, one per rendered subtable.
+
+    Every dataset renders as one view, except era5_meteostat: its
+    spatial-holdout checkpoints and the COSMO interpolator are pulled into a
+    separate SPATIAL_HOLDOUT_VIEW so they don't mix with the regular Europe
+    numbers. The plain ``interpolator`` sentinel (ERA5 NWP baseline) is
+    shared by both views -- regular split in Europe, forced onto
+    SPATIAL_HOLDOUT_SPLIT_CONFIG in the holdout view (see ``_collect``).
+    """
+    out: list[tuple[str, str, dict[str, Any]]] = []
+    for dataset, models in registry.items():
+        if models is None:
+            continue
+        if dataset != "era5_meteostat":
+            out.append((dataset, dataset, models))
+            continue
+        holdout_only = {
+            *SPATIAL_HOLDOUT_ONLY_SENTINELS,
+            *SPATIAL_HOLDOUT_CHECKPOINT_KEYS,
+        }
+        regular = {k: v for k, v in models.items() if k not in holdout_only}
+        holdout = {
+            k: v for k, v in models.items() if k in holdout_only or k == "interpolator"
+        }
+        out.append((dataset, dataset, regular))
+        out.append((SPATIAL_HOLDOUT_VIEW, dataset, holdout))
+    return out
+
+
+def _forced_tag(dataset: str, key: str, value: Any, split_config: str) -> str | None:
+    """Suffixed tag for a run forced onto ``split_config``, no fallback.
+
+    Unlike ``_tag_for_run``, this never falls back to the unsuffixed tag: the
+    unsuffixed file here is a *different* split (era5_meteostat's regular
+    test split, not the spatial holdout), so silently substituting it would
+    mislabel those numbers as holdout results. A missing suffixed file
+    renders NA instead.
+    """
+    base = _resolve_tag(dataset, key, value)
+    return f"{base}_{split_config}" if base else None
+
+
 def _collect(
     registry: dict[str, Any],
     split: str,
     n_boot: int,
     seed: int,
     pct: tuple[float, float],
+    split_config: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Build {dataset: [row, ...]} of aggregated per-method metrics."""
+    """Build {view: [row, ...]} of aggregated per-method metrics."""
     rng = np.random.default_rng(seed)
     out: dict[str, list[dict[str, Any]]] = {}
-    for dataset, models in registry.items():
-        if models is None:
-            continue
+    for view, source_dataset, models in _views(registry):
         rows: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for key, value in models.items():
             base, key_vars = _base_and_vars(key)
-            tag = _resolve_tag(dataset, key, value)
+            if view == SPATIAL_HOLDOUT_VIEW and key == "interpolator":
+                tag = _forced_tag(
+                    source_dataset, key, value, SPATIAL_HOLDOUT_SPLIT_CONFIG
+                )
+            else:
+                tag = _tag_for_run(source_dataset, key, value, split, split_config)
             if base not in rows:
                 rows[base] = {
                     "base": base,
-                    "label": MODEL_LABELS.get(base, base),
+                    "label": VIEW_MODEL_LABELS.get(view, {}).get(
+                        base, MODEL_LABELS.get(base, base)
+                    ),
                     "vars": {},
                 }
                 order.append(base)
@@ -262,9 +383,9 @@ def _collect(
                             stations[crps_col].to_numpy(), n_boot, rng, pct
                         )
                 rows[base]["vars"][var] = v
-        out[dataset] = [rows[b] for b in order]
+        out[view] = [rows[b] for b in order]
 
-    # Second pass: paired CRPS skill vs the dataset's uninformed baseline.
+    # Second pass: paired CRPS skill vs each view's own uninformed baseline.
     for method_rows in out.values():
         ref = next((r for r in method_rows if "uninformed" in r["base"]), None)
         for row in method_rows:
@@ -401,6 +522,16 @@ def main() -> None:
         default=None,
         help="Output prefix; writes <prefix>_means.* and <prefix>_ci.* (.tex, .txt).",
     )
+    p.add_argument(
+        "--split-config",
+        default=None,
+        metavar="NAME",
+        help="Prefer the _<NAME>-suffixed result file evaluate_test_set.py's "
+        "--split-config produces, e.g. spatial_region_holdout, for any "
+        "registry entry where one exists. Falls back to the unsuffixed "
+        "file (with a warning) where NAME doesn't apply, e.g. a dataset "
+        "without that split, or an entry evaluated without the flag.",
+    )
     args = p.parse_args()
 
     if args.results_dir:
@@ -415,7 +546,9 @@ def main() -> None:
         dict[str, Any],
         OmegaConf.to_container(OmegaConf.load(args.registry), resolve=True),
     )
-    data = _collect(registry, args.split, args.n_boot, args.seed, pct)
+    data = _collect(
+        registry, args.split, args.n_boot, args.seed, pct, args.split_config
+    )
 
     outputs = {
         "means": "point estimates (main text)",

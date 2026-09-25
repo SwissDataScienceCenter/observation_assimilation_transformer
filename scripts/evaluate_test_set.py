@@ -15,13 +15,16 @@ Options
 --max-timesteps M     Evaluate only the first M timesteps (quick smoke-test)
 --device cpu|cuda     Torch device (default: cpu)
 --out PATH            Output CSV (default: data/results/<tag>_metrics_<split>.csv)
+--split-config NAME   Override cfg.split with configs/split/<NAME>.yaml
 """
 
 import argparse
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 from omegaconf import OmegaConf
@@ -44,13 +47,21 @@ OUT_DIR = Path(__file__).parents[1] / "data/results"
 # the data config from any sibling checkpoint of the same dataset.
 INTERPOLATOR_MODEL = "interpolator"
 
+# Same idea, but reads COSMO-E1 instead of ERA5: no dataset key of its own
+# in checkpoints.yaml (no trained checkpoint exists for cosmo_meteostat —
+# it's eval-only), so its config is composed fresh via Hydra instead of
+# borrowed from a sibling checkpoint. See
+# docs/superpowers/specs/2026-09-23-cosmo-meteostat-interpolator-design.md
+COSMO_INTERPOLATOR_MODEL = "cosmo_interpolator"
+
 
 def _sibling_checkpoint(dataset: str) -> str:
     """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
     registry = OmegaConf.load(_DEFAULT_REGISTRY)
     models = registry.get(dataset) or {}
+    sentinels = (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
     for model, path in models.items():
-        if model != INTERPOLATOR_MODEL and path is not None:
+        if model not in sentinels and path is not None:
             return str(path)
     raise ValueError(
         f"No sibling checkpoint to borrow a data config from for the "
@@ -58,13 +69,116 @@ def _sibling_checkpoint(dataset: str) -> str:
     )
 
 
+def _compose_cosmo_interpolator_cfg() -> Any:
+    """Compose a fresh Hydra config for the cosmo_interpolator model.
+
+    Unlike INTERPOLATOR_MODEL, no trained checkpoint exists for the
+    cosmo_meteostat dataset to borrow a saved config from, so this
+    composes directly from configs/ instead.
+    """
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).parents[1] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        return compose(
+            config_name="config",
+            overrides=[
+                "dataset=cosmo_meteostat/temp_precip",
+                "split=spatial_region_holdout",
+            ],
+        )
+
+
+def _override_split(cfg: Any, split_config: str) -> Any:
+    """Override ``cfg.split`` by composing ``configs/split/<split_config>.yaml``.
+
+    Any model's split can be pinned this way. ``--model interpolator``
+    borrows a sibling checkpoint's saved config, but ``checkpoints.yaml``
+    may list several siblings on different splits — the sibling picked is
+    whichever comes first in the file, not necessarily the split the
+    caller wants. This makes the split explicit instead.
+    """
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).parents[1] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        split_cfg = compose(config_name="config", overrides=[f"split={split_config}"])
+    cfg.split = split_cfg.split
+    return cfg
+
+
+def _cosmo_interpolator_dataset_is_valid(dataset: str | None) -> bool:
+    """cosmo_interpolator only makes sense under --dataset era5_meteostat.
+
+    It always evaluates the era5_meteostat (Meteostat station) universe
+    with COSMO-E1 NWP, regardless of what --dataset is passed. Any other
+    value would silently resolve to the same data while writing results
+    under a misleading tag.
+    """
+    return dataset == "era5_meteostat"
+
+
+def _base_tag(
+    is_interpolator: bool,
+    model: str,
+    dataset: str | None,
+    checkpoint: str | None,
+    split_config: str | None = None,
+) -> str:
+    """Result-filename stem, before the _nocontext/_metrics_<split> suffixes.
+
+    Interpolator sentinels (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
+    have no checkpoint path to derive a name from, so they tag by
+    model+dataset instead. When --split-config overrides the split, its
+    name is appended, so a run on a non-default split does not collide
+    with one on the checkpoint's own split.
+    """
+    if is_interpolator:
+        base = f"{model}_{dataset}"
+    else:
+        assert checkpoint is not None
+        base = Path(checkpoint).parent.name
+    return f"{base}_{split_config}" if split_config else base
+
+
+def _ckpt_tag(base_tag: str, exclude_context: bool) -> str:
+    """Add a suffix to the tag when the run excludes test-context stations.
+
+    This keeps the output files of the two eval arms apart. Without this
+    suffix, a run with --exclude-context writes to the same file as a run
+    without it, and the second run overwrites the first.
+    """
+    return base_tag + ("_nocontext" if exclude_context else "")
+
+
+def _exclude_context(
+    obs_indices: list[int], cfg_split: Any, dataset_stations: np.ndarray
+) -> list[int]:
+    """Remove test context stations from observed indices.
+
+    Resolves test_context_station_indices from cfg_split against dataset_stations.
+    Returns obs_indices unchanged if cfg_split has no test_context_station_indices.
+    """
+    ctx = cfg_split.get("test_context_station_indices")
+    if not ctx:
+        return obs_indices
+    from oat.data_module.data_split import _as_index_array
+
+    ctx_positions = set(_as_index_array(list(ctx), dataset_stations).tolist())
+    return [i for i in obs_indices if i not in ctx_positions]
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Aggregate test-set metrics for an OAT checkpoint."
     )
     p.add_argument("checkpoint", nargs="?", default=None, help="Path to .ckpt file")
-    p.add_argument("--dataset", default=None, help="Dataset key in configs/checkpoints.yaml")
-    p.add_argument("--model", default=None, help="Model key in configs/checkpoints.yaml")
+    p.add_argument(
+        "--dataset", default=None, help="Dataset key in configs/checkpoints.yaml"
+    )
+    p.add_argument(
+        "--model", default=None, help="Model key in configs/checkpoints.yaml"
+    )
     p.add_argument(
         "--split",
         choices=["val", "test"],
@@ -113,6 +227,37 @@ def _parse_args() -> argparse.Namespace:
         help="Write a per-(station, timestep) Parquet dump for stratification "
         "plots instead of the aggregate CSV.",
     )
+    p.add_argument(
+        "--exclude-context",
+        action="store_true",
+        help="Drop test_context_station_indices from the observed set "
+        "(zero-context spatial-holdout eval arm)",
+    )
+    p.add_argument(
+        "--split-config",
+        default=None,
+        metavar="NAME",
+        help="Override cfg.split with configs/split/<NAME>.yaml, e.g. "
+        "spatial_region_holdout (default: whatever the checkpoint/model "
+        "would otherwise carry)",
+    )
+    p.add_argument(
+        "--start-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Override cfg.dataset.start_date (default: whatever the "
+        "checkpoint/model config carries)",
+    )
+    p.add_argument(
+        "--end-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Override cfg.dataset.end_date (default: whatever the "
+        "checkpoint/model config carries). Do not use it to align test "
+        "windows across NWP sources: with test_days it also moves the "
+        "train/val cutoff. Set test_start_date/test_end_date in the split "
+        "config instead (see configs/split/spatial_region_holdout.yaml).",
+    )
     return p.parse_args()
 
 
@@ -126,9 +271,27 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         global_key = f"{key}_global"
         if global_key not in metrics:
             continue
-        per_var = torch.nanmean(metrics[key], dim=0)  # average over stations, ignoring NaN → [V]
-        vals = "".join(f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names)))
+        per_var = torch.nanmean(
+            metrics[key], dim=0
+        )  # average over stations, ignoring NaN → [V]
+        vals = "".join(
+            f"{per_var[i].item():>{col_w}.4f}" for i in range(len(var_names))
+        )
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
+
+    if "n_nonfinite" in metrics:
+        n_bad = int(metrics["n_nonfinite"].sum().item())
+        n_stations_hit = int((metrics["n_nonfinite"] > 0).any(dim=-1).sum().item())
+        if n_bad:
+            logger.warning(
+                "%d non-finite prediction entries were excluded from the "
+                "metrics above, across %d station(s) — see n_nonfinite in "
+                "the CSV/summary for the breakdown. This means the model "
+                "produced bad output (e.g. sampler overflow), not that "
+                "observations were missing.",
+                n_bad,
+                n_stations_hit,
+            )
 
 
 def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -149,16 +312,32 @@ def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tens
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
 
-    is_interpolator = args.model == INTERPOLATOR_MODEL
+    is_interpolator = args.model in (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
 
     if is_interpolator:
-        # Borrow the data config from a sibling checkpoint; build predictor below.
-        cfg = OmegaConf.load(Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml")
+        if args.model == COSMO_INTERPOLATOR_MODEL:
+            if not _cosmo_interpolator_dataset_is_valid(args.dataset):
+                logger.error(
+                    "cosmo_interpolator always evaluates the era5_meteostat "
+                    "(Meteostat station) universe with COSMO-E1 NWP; "
+                    "--dataset %r is not supported. Use "
+                    "--dataset era5_meteostat.",
+                    args.dataset,
+                )
+                raise SystemExit(2)
+            cfg = _compose_cosmo_interpolator_cfg()
+        else:
+            # Borrow the data config from a sibling checkpoint; build predictor below.
+            cfg = OmegaConf.load(
+                Path(_sibling_checkpoint(args.dataset)).parent / "config.yaml"
+            )
         predictor = None
     else:
         if args.checkpoint is None:
@@ -170,6 +349,19 @@ def main() -> None:
             args.checkpoint = resolve_checkpoint(args.dataset, args.model)
         predictor, cfg = load_checkpoint(None, args.checkpoint, map_location="cpu")
         predictor = predictor.eval()
+
+    if args.split_config is not None:
+        cfg = _override_split(cfg, args.split_config)
+
+    if args.start_date is not None:
+        cfg.dataset.start_date = args.start_date
+    if args.end_date is not None:
+        cfg.dataset.end_date = args.end_date
+
+    base_tag = _base_tag(
+        is_interpolator, args.model, args.dataset, args.checkpoint, args.split_config
+    )
+    ckpt_tag = _ckpt_tag(base_tag, args.exclude_context)
 
     cfg.dataset.data_points_for_stats = 0
 
@@ -187,6 +379,8 @@ def main() -> None:
     split_ds = split_loader.dataset  # EvalDataset
 
     obs_indices = list(map(int, split_ds.observed_indices))
+    if args.exclude_context:
+        obs_indices = _exclude_context(obs_indices, cfg.split, dataset.stations)
     eval_indices = list(map(int, split_ds.eval_indices))
 
     if split_ds._time_indices is not None:
@@ -198,8 +392,14 @@ def main() -> None:
         time_indices = time_indices[: args.max_timesteps]
 
     logger.info(
-        "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d",
-        args.split, len(time_indices), len(obs_indices), len(eval_indices),
+        "split=%s  timesteps=%d  obs_stations=%d  eval_stations=%d  "
+        "time_range=%s..%s",
+        args.split,
+        len(time_indices),
+        len(obs_indices),
+        len(eval_indices),
+        dataset.times[time_indices[0]],
+        dataset.times[time_indices[-1]],
     )
 
     PlotterCls = select_plotter_cls(dataset)
@@ -245,11 +445,6 @@ def main() -> None:
             var_names=var_names,
         )
         OUT_DIR.mkdir(parents=True, exist_ok=True)
-        ckpt_tag = (
-            f"{INTERPOLATOR_MODEL}_{args.dataset}"
-            if is_interpolator
-            else Path(args.checkpoint).parent.name
-        )
         long_path = (
             Path(args.out)
             if args.out
@@ -274,8 +469,11 @@ def main() -> None:
 
     # Build per-station CSV
     coords = dataset.station_coords[eval_indices].numpy()  # [S, 2]
-    rows: dict = {"station_x": coords[:, 0].tolist(), "station_y": coords[:, 1].tolist()}
-    for key in ("crps", "mae", "crpss"):
+    rows: dict = {
+        "station_x": coords[:, 0].tolist(),
+        "station_y": coords[:, 1].tolist(),
+    }
+    for key in ("crps", "mae", "crpss", "n_nonfinite"):
         if key not in metrics:
             continue
         tensor = metrics[key]  # [S, V]
@@ -283,11 +481,6 @@ def main() -> None:
             rows[f"{key}_{var}"] = tensor[:, vi].tolist()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_tag = (
-        f"{INTERPOLATOR_MODEL}_{args.dataset}"
-        if is_interpolator
-        else Path(args.checkpoint).parent.name
-    )
     # In --long mode, args.out names the Parquet dump; auto-name the CSV to avoid a clash.
     out_path = (
         Path(args.out)
@@ -303,8 +496,19 @@ def main() -> None:
         if global_key not in metrics:
             continue
         summary[global_key] = metrics[global_key].item()
-        per_var = {var: torch.nanmean(metrics[key][:, vi]).item() for vi, var in enumerate(var_names)}
+        per_var = {
+            var: torch.nanmean(metrics[key][:, vi]).item()
+            for vi, var in enumerate(var_names)
+        }
         summary[key] = per_var
+    if "n_nonfinite" in metrics:
+        # Count, not an error metric: sum (not nanmean) per variable, plus
+        # the grand total, so a non-zero value can't get lost/averaged away.
+        summary["n_nonfinite_total"] = int(metrics["n_nonfinite"].sum().item())
+        summary["n_nonfinite"] = {
+            var: int(metrics["n_nonfinite"][:, vi].sum().item())
+            for vi, var in enumerate(var_names)
+        }
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Saved summary → %s", summary_path)

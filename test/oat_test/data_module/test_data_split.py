@@ -1,21 +1,62 @@
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from oat.data_module.data_split import (
     EvalDataset,
     TrainDataset,
+    _as_index_array,
     _slice_field,
     create_splits,
 )
 from oat.data_module.field import Field
 
 
+def test_as_index_array_integer_list_passthrough():
+    result = _as_index_array([1, 3, 2])
+    assert np.array_equal(result, np.array([1, 3, 2]))
+
+
+def test_as_index_array_resolves_station_ids():
+    all_ids = np.array(["a", "b", "c", "d"])
+    result = _as_index_array(["b", "d"], all_ids)
+    assert np.array_equal(result, np.array([1, 3]))
+
+
+def test_as_index_array_missing_id_raises():
+    all_ids = np.array(["a", "b", "c", "d"])
+    with pytest.raises(ValueError, match="z"):
+        _as_index_array(["b", "z"], all_ids)
+
+
+def test_as_index_array_string_without_station_ids_raises():
+    with pytest.raises(ValueError, match="all_station_ids"):
+        _as_index_array(["a", "b"])
+
+
+def test_as_index_array_integer_in_range_passes_with_station_ids():
+    all_ids = np.array(["a", "b", "c"])
+    result = _as_index_array([0, 2], all_ids)
+    assert np.array_equal(result, np.array([0, 2]))
+
+
+def test_as_index_array_integer_out_of_range_raises():
+    all_ids = np.array(["a", "b", "c"])
+    with pytest.raises(ValueError, match="out of range"):
+        _as_index_array([2, 99], all_ids)
+
+
 class _Base:
     """Minimal base field dataset: 4 stations, 3 times, one 'obs' field."""
 
-    def __init__(self):
-        self.stations = np.array(["a", "b", "c", "d"])
+    def __init__(self, num_stations=4):
+        if num_stations == 4:
+            self.stations = np.array(["a", "b", "c", "d"])
+        elif num_stations == 6:
+            self.stations = np.array(["a", "b", "c", "d", "e", "f"])
+        else:
+            self.stations = np.array([chr(ord("a") + i) for i in range(num_stations)])
         self.times = pd.date_range("2020-01-01", periods=3, freq="1h", tz="UTC")
 
     def __len__(self):
@@ -151,3 +192,125 @@ def test_train_dataset_no_global_data_when_no_grid_fields():
     train = TrainDataset(base, np.array([0, 1, 2, 3]), split_fraction=0.5, seed=0)
     sample = train[0]
     assert "global_data" not in sample
+
+
+def test_create_splits_with_test_context_stations():
+    base = _Base(num_stations=6)
+    out = create_splits(
+        base,
+        train_station_indices=["a", "b"],
+        val_station_indices=["c"],
+        test_station_indices=["d"],
+        test_context_station_indices=["e", "f"],
+        test_days=0,
+        seed=0,
+    )
+    tr, va, te = out["datasets"]
+    assert set(te.observed_indices.tolist()) == {0, 1, 2, 4, 5}  # a,b,c,e,f
+    assert te.eval_indices.tolist() == [3]  # d only
+    assert tr.num_stations == 2
+    assert va.observed_indices.tolist() == [0, 1]  # unchanged: just train
+
+
+def test_create_splits_without_test_context_is_unchanged():
+    base = _Base()
+    out = create_splits(
+        base,
+        train_station_indices=["a", "b"],
+        val_station_indices=["c"],
+        test_station_indices=["d"],
+        test_days=0,
+        seed=0,
+    )
+    tr, va, te = out["datasets"]
+    assert te.observed_indices.tolist() == [0, 1, 2]  # train+val only, as today
+
+
+def test_create_splits_overlapping_station_groups_raises():
+    """An explicit override that puts one station in two groups must fail."""
+    base = _Base(num_stations=6)
+    with pytest.raises(ValueError, match="disjoint"):
+        create_splits(
+            base,
+            train_station_indices=["a", "b"],
+            val_station_indices=["c"],
+            test_station_indices=["b", "d"],  # "b" also in train
+            test_context_station_indices=["e", "f"],
+            test_days=0,
+            seed=0,
+        )
+
+
+def test_create_splits_random_observed_includes_train_and_val():
+    """Regression: random-split branch must keep observed = train + val."""
+    base = _Base()
+    out = create_splits(
+        base,
+        val_station_fraction=0.25,
+        test_station_fraction=0.25,
+        train_split_fraction=0.5,
+        seed=1,
+    )
+    train_ids, val_ids, test_ids = out["station_indices"]
+    _, _, test_dataset = out["datasets"]
+    observed_set = set(test_dataset.observed_indices.tolist())
+    expected_set = set(train_ids) | set(val_ids)
+    assert observed_set == expected_set
+
+
+def test_create_splits_fixed_test_window_from_dates():
+    """test_start_date/test_end_date pin the test window and override test_days."""
+    base = _Base()
+    base.times = pd.date_range("2020-01-01", periods=6, freq="1h", tz="UTC")
+    out = create_splits(
+        base,
+        val_station_fraction=0.25,
+        test_station_fraction=0.25,
+        train_split_fraction=0.5,
+        test_days=365,
+        test_start_date="2020-01-01T02:00:00",
+        test_end_date="2020-01-01T04:00:00",
+        seed=1,
+    )
+    tr, va, te = out["datasets"]
+    assert out["test_time_indices"] == [2, 3, 4]
+    # Train/val keep only times before test_start_date, not after test_end_date.
+    assert len(tr) == 2 and len(va) == 2
+    assert len(te) == 3
+
+
+def test_create_splits_end_date_without_start_date_raises():
+    with pytest.raises(ValueError, match="test_start_date"):
+        create_splits(
+            _Base(),
+            val_station_fraction=0.25,
+            test_station_fraction=0.25,
+            test_end_date="2020-01-01T01:00:00",
+            seed=1,
+        )
+
+
+@pytest.mark.parametrize(
+    "times",
+    [
+        # The source ends before test_end_date.
+        pd.date_range("2020-01-01", periods=4, freq="1h", tz="UTC"),
+        # The source has a gap inside the test window.
+        pd.DatetimeIndex(
+            ["2020-01-01T00", "2020-01-01T01", "2020-01-01T02", "2020-01-01T04"],
+            tz="UTC",
+        ),
+    ],
+)
+def test_create_splits_raises_when_source_misses_test_window(times):
+    base = _Base()
+    base.times = times
+    with pytest.raises(ValueError, match="does not cover the test window"):
+        create_splits(
+            base,
+            val_station_fraction=0.25,
+            test_station_fraction=0.25,
+            test_start_date="2020-01-01T02:00:00",
+            test_end_date="2020-01-01T04:00:00",
+            seed=1,
+        )

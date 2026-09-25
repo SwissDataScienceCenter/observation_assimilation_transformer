@@ -17,7 +17,7 @@ python -m scripts.plot_pit \
     --model oat_temp_precip \
     --dataset era5_meteostat \
     --split test \
-    --n-samples 200 \
+    --n-samples 500 \
     --baseline uninformed_temp_precip
 
 end=$(date +%s)

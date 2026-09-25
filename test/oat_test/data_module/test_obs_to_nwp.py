@@ -4,6 +4,10 @@ Built with object.__new__ (bypassing __init__, which needs real data files):
 the property only reads a module-level constant, not any instance state.
 """
 
+from oat.data_module.cosmo_meteostat_dataset import (
+    COSMO_METEOSTAT_OBS_TO_NWP,
+    CosmoMeteostatDataset,
+)
 from oat.data_module.cosmo_peakweather_dataset import (
     COSMO_OBS_TO_NWP,
     CosmoPeakWeatherDataset,
@@ -22,3 +26,9 @@ def test_cosmo_obs_to_nwp_returns_module_constant() -> None:
 def test_era5_obs_to_nwp_returns_module_constant() -> None:
     ds = object.__new__(ERA5MeteostatDataset)
     assert ds.obs_to_nwp is ERA5_OBS_TO_NWP
+
+
+def test_cosmo_meteostat_obs_to_nwp_returns_own_map() -> None:
+    ds = object.__new__(CosmoMeteostatDataset)
+    assert ds.obs_to_nwp is COSMO_METEOSTAT_OBS_TO_NWP
+    assert ds.obs_to_nwp is not ERA5_OBS_TO_NWP
