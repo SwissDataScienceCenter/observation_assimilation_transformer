@@ -16,17 +16,94 @@ Make the figure:
     python -m scripts.plot_extreme_events --n-samples 200 --map-n-samples 50
 """
 
+import argparse
+import gc
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 from matplotlib.collections import PathCollection
+from matplotlib.lines import Line2D
+
+from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module.geo_overlays import _add_borders, build_domain_grid
+from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
+
+# The import of plot_timeseries also applies its rcParams block, so the fonts
+# and line widths are the same as in the time-series figure.
+from scripts.plot_timeseries import (
+    _NWP_COLOR,
+    _OAT_COLOR,
+    FIG_WIDTH_IN,
+    _load_units,
+)
+from scripts.plotter_utils import (
+    load_plot_config,
+    maybe_build_nwp_baseline,
+    select_plotter_cls,
+)
 
 _MODEL = "oat_temp_precip"
+_PROJECT_ROOT = Path(__file__).parents[1]
+OUT_DIR = _PROJECT_ROOT / "data/figures"
+
+_ROW_HEIGHT_IN = 4.8  # inches for one event row (maps, time series, titles)
+_LEGEND_HEIGHT_IN = 0.6
+_GRID_CELLS = 250  # map cells across the width, as in plot_assimilation_panel
+_CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
+_VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
+
+# Same proxy handles as plot_assimilation_panel.py, plus the plotted stations.
+_STATION_HANDLES = [
+    Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="none",
+        markerfacecolor="none",
+        markeredgecolor="black",
+        markersize=8,
+        label="Training/evaluation station (assimilated)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="s",
+        linestyle="none",
+        markerfacecolor="none",
+        markeredgecolor="black",
+        markersize=8,
+        label="Test station (held out)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="none",
+        markerfacecolor="white",
+        markeredgecolor="grey",
+        markersize=8,
+        label="Missing observation",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="s",
+        linestyle="none",
+        markerfacecolor="none",
+        markeredgecolor="black",
+        markeredgewidth=1.8,
+        markersize=10,
+        label="Test station in time series",
+    ),
+]
 
 
 @dataclass(frozen=True)
@@ -299,3 +376,312 @@ def _ts_slots(n_stations: int) -> list[slice]:
     if n_stations == 2:
         return [slice(0, 1), slice(1, 2)]
     raise ValueError(f"An event needs 1 or 2 stations, not {n_stations}.")
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--list-candidates",
+        action="store_true",
+        help="Print the candidate held-out stations for each event and stop.",
+    )
+    p.add_argument("--n-samples", type=int, default=200, help="Time-series samples.")
+    p.add_argument(
+        "--map-n-samples",
+        type=int,
+        default=50,
+        help="Samples for the map fields (the maps show only the mean).",
+    )
+    p.add_argument("--out", default=None, help="Output path (.pdf; a .png is added).")
+    return p.parse_args(argv)
+
+
+def _load_event(event: ExtremeEvent, logger: logging.Logger) -> tuple[Any, Any, Any]:
+    """Load the checkpoint, the dataset and the test split for *event*."""
+    checkpoint_path = resolve_checkpoint(event.dataset, _MODEL)
+    predictor, cfg = load_checkpoint(None, checkpoint_path, map_location="cpu")
+    predictor = predictor.eval()
+    cfg.dataset.data_points_for_stats = 0
+    dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
+    # load_from_checkpoint does not restore the dataset-derived projection.
+    # Without it, ERA5 checkpoints crash with a geo-width shape mismatch.
+    if hasattr(predictor, "set_index_projection"):
+        predictor.set_index_projection(dataset)
+    return predictor, dataset, test_loader.dataset
+
+
+def _station_name(dataset: Any, s: int) -> str:
+    names = getattr(dataset, "station_names", None)
+    return str(names[s]) if names is not None else f"station {s}"
+
+
+def _print_candidates(
+    event: ExtremeEvent, predictor: Any, dataset: Any, test_ds: Any
+) -> None:
+    """Print the ranked candidate stations (and, for heat, the daily means)."""
+    eval_indices = [int(i) for i in test_ds.eval_indices]
+    map_indices = _window_time_indices(dataset.times, event.map_start, event.map_hours)
+    ts_indices = _window_time_indices(dataset.times, event.ts_start, event.ts_hours)
+    var_idx = predictor.var_to_indx[event.variable]
+    use_sum = event.map_hours > 1
+    ranked = _rank_stations(
+        dataset.obs_tensor,
+        dataset.obs_mask_tensor,
+        dataset.station_coords,
+        eval_indices,
+        map_indices,
+        ts_indices,
+        var_idx,
+        event.center,
+        event.extent,
+        use_sum,
+    )
+    what = f"obs {event.map_hours} h sum" if use_sum else "obs maximum"
+    print(
+        f"\n{event.title} [{event.dataset}]: {len(ranked)} held-out stations in "
+        f"the map box with all obs in the time-series window, ranked by {what}:"
+    )
+    xy = np.asarray(dataset.station_coords, dtype=float)
+    for s, value in ranked[:15]:
+        print(
+            f"  [{s:>5d}] {_station_name(dataset, s):<24s} "
+            f"x={xy[s, 0]:<11.6g} y={xy[s, 1]:<11.6g} {value:8.2f}"
+        )
+    if use_sum or not ranked:
+        return
+    pad = pd.Timedelta(days=_CANDIDATE_PAD_DAYS)
+    wide_start = (_parse_time(event.ts_start) - pad).strftime("%Y-%m-%d:%H")
+    wide_hours = event.ts_hours + 2 * _CANDIDATE_PAD_DAYS * 24
+    wide = _window_time_indices(dataset.times, wide_start, wide_hours)
+    print(f"  Daily mean of these stations' obs at 14 UTC (window ± {pad.days} d):")
+    means = _daily_peak_means(
+        dataset.obs_tensor,
+        dataset.obs_mask_tensor,
+        dataset.times,
+        wide,
+        var_idx,
+        [s for s, _ in ranked],
+    )
+    for ts, value in means:
+        print(f"    {ts:%Y-%m-%d}  {value:6.2f}")
+
+
+def _draw_event_row(
+    subfig: Any,
+    event: ExtremeEvent,
+    predictor: Any,
+    dataset: Any,
+    test_ds: Any,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> tuple[list[Any], list[str]]:
+    """Draw the NWP map, the OAT map and the time series of *event*."""
+    obs_indices = [int(i) for i in test_ds.observed_indices]
+    eval_indices = [int(i) for i in test_ds.eval_indices]
+    map_indices = _window_time_indices(dataset.times, event.map_start, event.map_hours)
+    ts_indices = _window_time_indices(dataset.times, event.ts_start, event.ts_hours)
+    _validate_event(
+        event,
+        eval_indices,
+        [int(t) for t in test_ds._time_indices],
+        map_indices,
+        ts_indices,
+    )
+
+    var_idx = predictor.var_to_indx[event.variable]
+    plot_config = load_plot_config(dataset)
+    var_cfg = (
+        plot_config[event.variable]
+        if (plot_config is not None and event.variable in plot_config)
+        else {}
+    )
+    cmap = var_cfg.get("cmap", "viridis")
+    unit = _load_units(event.dataset).get(event.variable, "")
+    var_label = _VAR_LABELS.get(event.variable, event.variable.capitalize())
+    map_label = (
+        f"{event.map_hours} h {var_label.lower()}" if event.map_hours > 1 else var_label
+    )
+
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    plotter_cls = select_plotter_cls(dataset)
+
+    def _plotter(n_samples: int) -> Any:
+        return plotter_cls(
+            predictor=predictor,
+            dataset=dataset,
+            obs_station_indices=obs_indices,
+            eval_indices=eval_indices,
+            n_samples=n_samples,
+            device="cpu",
+            plot_config=plot_config,
+        )
+
+    map_plotter = _plotter(args.map_n_samples)
+    ts_plotter = _plotter(args.n_samples)
+
+    # ---- Maps ----
+    xs, ys = build_domain_grid(dataset, center=event.center, extent=event.extent)
+    xs, ys = build_domain_grid(
+        dataset,
+        resolution=(xs[-1] - xs[0]) / _GRID_CELLS,
+        center=event.center,
+        extent=event.extent,
+    )
+    x_grid, y_grid = np.meshgrid(xs, ys)
+    grid_coords = torch.tensor(
+        np.stack([x_grid.ravel(), y_grid.ravel()], axis=1), dtype=torch.float32
+    )
+    logger.info(
+        "%s: grid %dx%d, %d map hours", event.title, len(xs), len(ys), len(map_indices)
+    )
+    fields = {
+        name: _window_sum_field(
+            map_plotter, p, grid_coords, map_indices, var_idx, y_grid.shape
+        )
+        for name, p in (("NWP interpolation", nwp_predictor), ("OAT", None))
+    }
+    vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
+    vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
+
+    coords = np.asarray(dataset.station_coords, dtype=float)
+    color_by: dict[int, float] | None = None
+    drop_xy = np.zeros((0, 2))
+    context_xy = np.zeros((0, 2))
+    if event.map_hours > 1:
+        sums = _station_window_obs(
+            dataset.obs_tensor, dataset.obs_mask_tensor, map_indices, var_idx
+        )
+        color_by = {s: float(v) for s, v in enumerate(sums) if np.isfinite(v)}
+        obs_set = set(obs_indices)
+        no_sum = [s for s in obs_indices + eval_indices if not np.isfinite(sums[s])]
+        drop_xy = coords[no_sum].reshape(-1, 2)
+        context_xy = coords[[s for s in no_sum if s in obs_set]].reshape(-1, 2)
+
+    labels = [str(i + 1) for i in range(len(event.stations))]
+    gs = subfig.add_gridspec(2, 3, width_ratios=[1.0, 1.0, 1.5])
+    ax_maps = [subfig.add_subplot(gs[:, 0]), subfig.add_subplot(gs[:, 1])]
+    mesh = None
+    for ax, (name, field) in zip(ax_maps, fields.items(), strict=True):
+        mesh = map_plotter.draw_field(
+            ax, field, xs, ys, cmap=cmap, vmin=vmin, vmax=vmax
+        )
+        # Rasterize the dense field so the PDF stays small.
+        mesh.set_rasterized(True)
+        map_plotter.overlay_stations(
+            ax, map_indices[0], var_idx, mesh=mesh, color_by=color_by
+        )
+        _restyle_window_missing(ax, drop_xy, context_xy)
+        for coll in list(ax.collections):
+            if coll.get_label() == "eval missing":
+                coll.remove()
+        _mark_stations(ax, coords[list(event.stations)], labels)
+        ax.set_title(name, fontsize=13)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    subfig.colorbar(
+        mesh,
+        ax=ax_maps,
+        label=f"{map_label} [{unit}]" if unit else map_label,
+        shrink=0.85,
+    )
+    try:
+        _add_borders(ax_maps, xs, ys)
+    except Exception as exc:
+        logger.warning("Could not draw borders: %s", exc)
+
+    # ---- Time series ----
+    ax_ts = [subfig.add_subplot(gs[sl, 2]) for sl in _ts_slots(len(event.stations))]
+    for ax in ax_ts[1:]:
+        ax.sharex(ax_ts[0])
+    for ax, s, label in zip(ax_ts, event.stations, labels, strict=True):
+        ts_plotter.plot_timeseries_at_station(
+            ax=ax,
+            station_idx=s,
+            var=event.variable,
+            time_indices=ts_indices,
+            quantile_lo=0.05,
+            quantile_hi=0.95,
+            predictors={"NWP interpolation": nwp_predictor},
+            stage="oat",
+            label="OAT",
+            color=_OAT_COLOR,
+        )
+        # plot_timeseries draws the NWP line without a colour; recolour it
+        # the same as plot_timeseries.py.
+        for line in ax.get_lines():
+            if line.get_label() == "NWP interpolation":
+                line.set_color(_NWP_COLOR)
+                line.set_linestyle("--")
+        if event.map_hours > 1:
+            ax.axvspan(
+                dataset.times[map_indices[0]],
+                dataset.times[map_indices[-1]] + pd.Timedelta(hours=1),
+                color="0.85",
+                zorder=0,
+                label="Map window",
+            )
+        ax.set_title(f"{label}: {_station_name(dataset, s)}", loc="left", fontsize=13)
+        ax.set_ylabel(f"{var_label} [{unit}]" if unit else var_label)
+        ax.grid(alpha=0.3)
+    for ax in ax_ts[:-1]:
+        ax.tick_params(axis="x", labelbottom=False)
+    ax_ts[-1].set_xlabel("Time (UTC)")
+    ax_ts[-1].tick_params(axis="x", rotation=30)
+
+    subfig.suptitle(event.title, x=0.0, ha="left")
+    handles, names = ax_ts[0].get_legend_handles_labels()
+    return handles, names
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
+    logger = logging.getLogger(__name__)
+    args = _parse_args()
+
+    if args.list_candidates:
+        for event in EVENTS:
+            predictor, dataset, test_ds = _load_event(event, logger)
+            _print_candidates(event, predictor, dataset, test_ds)
+            del predictor, dataset, test_ds
+            gc.collect()
+        return
+
+    n_rows = len(EVENTS)
+    fig = plt.figure(
+        figsize=(FIG_WIDTH_IN, n_rows * _ROW_HEIGHT_IN + _LEGEND_HEIGHT_IN),
+        layout="constrained",
+    )
+    # One subfigure per event, plus a short one for the shared legend.
+    subfigs = fig.subfigures(
+        n_rows + 1, 1, height_ratios=[_ROW_HEIGHT_IN] * n_rows + [_LEGEND_HEIGHT_IN]
+    )
+    legend_items: dict[str, Any] = {}
+    for subfig, event in zip(subfigs[:-1], EVENTS, strict=True):
+        predictor, dataset, test_ds = _load_event(event, logger)
+        handles, names = _draw_event_row(
+            subfig, event, predictor, dataset, test_ds, args, logger
+        )
+        for handle, name in zip(handles, names, strict=True):
+            legend_items.setdefault(name, handle)
+        # Free the dataset before the next one loads.
+        del predictor, dataset, test_ds
+        gc.collect()
+
+    handles = list(legend_items.values()) + _STATION_HANDLES
+    labels = list(legend_items) + [h.get_label() for h in _STATION_HANDLES]
+    subfigs[-1].legend(handles, labels, loc="center", ncol=4, frameon=False)
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = (
+        Path(args.out) if args.out is not None else OUT_DIR / "extreme_events.pdf"
+    )
+    fig.savefig(str(out_path.with_suffix(".pdf")), dpi=150, bbox_inches="tight")
+    fig.savefig(str(out_path.with_suffix(".png")), dpi=150, bbox_inches="tight")
+    logger.info("Saved %s (.pdf and .png)", out_path.with_suffix(""))
+
+
+if __name__ == "__main__":
+    main()

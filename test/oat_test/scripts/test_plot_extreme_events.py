@@ -10,6 +10,7 @@ from scripts.plot_extreme_events import (
     EVENTS,
     _daily_peak_means,
     _mark_stations,
+    _parse_args,
     _parse_time,
     _rank_stations,
     _restyle_window_missing,
@@ -224,3 +225,15 @@ def test_ts_slots_two_stations_are_stacked():
 def test_ts_slots_raises_for_other_counts(n):
     with pytest.raises(ValueError, match="1 or 2 stations"):
         _ts_slots(n)
+
+
+def test_parse_args_defaults():
+    args = _parse_args([])
+    assert args.list_candidates is False
+    assert args.n_samples == 200
+    assert args.map_n_samples == 50
+    assert args.out is None
+
+
+def test_parse_args_list_candidates():
+    assert _parse_args(["--list-candidates"]).list_candidates is True
