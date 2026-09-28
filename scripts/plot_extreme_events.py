@@ -122,8 +122,8 @@ class ExtremeEvent:
     extent: float  # map half-width, dataset units (see build_domain_grid)
 
 
-# The Europe stations and the peak hour are provisional. Task 5 of the plan
-# replaces them with the result of --list-candidates.
+# The stations and times come from --list-candidates on the test split
+# (2026-09-28). See the design spec for the selection rule.
 EVENTS: list[ExtremeEvent] = [
     ExtremeEvent(
         dataset="cosmo_peakweather",
@@ -141,11 +141,11 @@ EVENTS: list[ExtremeEvent] = [
         dataset="era5_meteostat",
         variable="temp",
         title="(b) Heat wave, July 2024",
-        map_start="2024-07-16:14",
+        map_start="2024-07-15:14",
         map_hours=1,
         ts_start="2024-07-12:00",
         ts_hours=168,
-        stations=(1572, 1563),
+        stations=(1564, 1626),
         center=(18.0, 42.0),  # lon, lat: Italy and the Balkans
         extent=12.0,
     ),
@@ -411,8 +411,9 @@ def _load_event(event: ExtremeEvent, logger: logging.Logger) -> tuple[Any, Any, 
 
 
 def _station_name(dataset: Any, s: int) -> str:
-    names = getattr(dataset, "station_names", None)
-    return str(names[s]) if names is not None else f"station {s}"
+    """Return the station ID of index *s* (``dataset.stations``), if it exists."""
+    ids = getattr(dataset, "stations", None)
+    return str(ids[s]) if ids is not None else f"station {s}"
 
 
 def _print_candidates(

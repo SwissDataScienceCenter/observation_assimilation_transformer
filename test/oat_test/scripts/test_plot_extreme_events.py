@@ -14,6 +14,7 @@ from scripts.plot_extreme_events import (
     _parse_time,
     _rank_stations,
     _restyle_window_missing,
+    _station_name,
     _station_window_obs,
     _ts_slots,
     _validate_event,
@@ -237,3 +238,12 @@ def test_parse_args_defaults():
 
 def test_parse_args_list_candidates():
     assert _parse_args(["--list-candidates"]).list_candidates is True
+
+
+def test_station_name_uses_the_station_id():
+    ds = type("DS", (), {"stations": np.array(["LUG", "OTL"])})()
+    assert _station_name(ds, 1) == "OTL"
+
+
+def test_station_name_falls_back_to_the_index():
+    assert _station_name(object(), 7) == "station 7"
