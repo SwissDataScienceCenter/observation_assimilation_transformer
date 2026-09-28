@@ -18,8 +18,11 @@ Make the figure:
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
 import pandas as pd
+import torch
 
 _MODEL = "oat_temp_precip"
 
@@ -113,3 +116,107 @@ def _validate_event(
             f"{event.title}: {len(outside)} time steps are outside the test "
             f"period (first dataset index: {outside[0]})."
         )
+
+
+def _station_window_obs(
+    obs: torch.Tensor, mask: torch.Tensor, time_indices: list[int], var_idx: int
+) -> np.ndarray:
+    """Return the sum of the obs over *time_indices* for each station.
+
+    Args:
+        obs: [T, S, V] observations. A masked entry can hold any value (NaN too).
+        mask: [T, S, V] observation mask (True = observed).
+
+    Returns:
+        [S] float64 sums. NaN for a station that misses one or more hours.
+    """
+    o = obs[time_indices][:, :, var_idx].double()
+    m = mask[time_indices][:, :, var_idx].bool()
+    total = torch.where(m, o, torch.zeros_like(o)).sum(dim=0)
+    total[~m.all(dim=0)] = float("nan")
+    return total.numpy()
+
+
+def _window_sum_field(
+    plotter: Any,
+    predictor: Any,
+    grid_coords: torch.Tensor,
+    time_indices: list[int],
+    var_idx: int,
+    shape: tuple[int, int],
+) -> np.ndarray:
+    """Return the sum over *time_indices* of the per-hour sample-mean field.
+
+    The sum of the hourly means equals the mean of the window sums. For one
+    hour, the result is the mean field of that hour. ``predictor=None`` uses
+    the main model of *plotter*.
+    """
+    total = np.zeros(shape)
+    for t in time_indices:
+        samples = plotter.predict_samples(
+            grid_coords, t, predictor=predictor, stage="oat"
+        )  # [N_q, n_samples, n_vars]
+        total += (
+            samples[:, :, var_idx].mean(dim=1).detach().cpu().numpy().reshape(shape)
+        )
+    return total
+
+
+def _rank_stations(
+    obs: torch.Tensor,
+    mask: torch.Tensor,
+    station_coords: Any,
+    eval_indices: Iterable[int],
+    map_indices: list[int],
+    ts_indices: list[int],
+    var_idx: int,
+    center: tuple[float, float],
+    extent: float,
+    use_sum: bool,
+) -> list[tuple[int, float]]:
+    """Rank the held-out stations in the map box by their extreme obs value.
+
+    A station is a candidate if it is inside ``center ± extent`` and has all
+    obs of the time-series window. The value is the obs sum over the map
+    window (*use_sum*) or the obs maximum over the time-series window.
+
+    Returns:
+        ``(station, value)`` pairs, largest value first.
+    """
+    full = mask[ts_indices][:, :, var_idx].bool().all(dim=0).numpy()
+    if use_sum:
+        values = _station_window_obs(obs, mask, map_indices, var_idx)
+    else:
+        values = obs[ts_indices][:, :, var_idx].double().amax(dim=0).numpy()
+    xy = np.asarray(station_coords, dtype=float)
+    ranked = []
+    for s in (int(i) for i in eval_indices):
+        in_box = (
+            abs(xy[s, 0] - center[0]) <= extent and abs(xy[s, 1] - center[1]) <= extent
+        )
+        if in_box and full[s] and np.isfinite(values[s]):
+            ranked.append((s, float(values[s])))
+    return sorted(ranked, key=lambda r: r[1], reverse=True)
+
+
+def _daily_peak_means(
+    obs: torch.Tensor,
+    mask: torch.Tensor,
+    times: pd.DatetimeIndex,
+    time_indices: list[int],
+    var_idx: int,
+    stations: list[int],
+    hour: int = 14,
+) -> list[tuple[pd.Timestamp, float]]:
+    """Return the mean obs of *stations* at *hour* UTC for each day.
+
+    The mean uses only observed entries. A day with no obs is left out.
+    """
+    out = []
+    for t in time_indices:
+        if times[t].hour != hour:
+            continue
+        m = mask[t, stations, var_idx].bool()
+        if m.any():
+            out.append((times[t], float(obs[t, stations, var_idx][m].double().mean())))
+    return out
