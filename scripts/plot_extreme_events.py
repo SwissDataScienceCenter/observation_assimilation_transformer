@@ -61,6 +61,7 @@ _MAP_MARKER_EDGE = 0.4  # edge width (points) of those markers
 # Diverging colormap for differences, the same as plot_assimilation_panel.py.
 # It is not RdBu_r, so it does not look like a temperature map.
 _DIFF_CMAP = "PuOr"
+_DIFF_PERCENTILE = 99.0  # colour limit of the Δ map, as in plot_ERA5_to_COSMO_grid
 _OBS_DOT_SIZE = 8.0  # marker area (points^2) of the time-series obs dots
 _CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
 _VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
@@ -599,15 +600,16 @@ def _draw_event_row(
     color_by_diff = {
         s: float(innovation[s]) for s in drawn if np.isfinite(innovation[s])
     }
-    # Same rule as plot_assimilation_panel.py: the scale must cover the field
-    # and the markers, or the markers saturate. Use only markers on the map.
+    # The scale covers the field and the markers on the map, or the markers
+    # saturate. As in plot_ERA5_to_COSMO_grid.py, the limit is a percentile of
+    # |Δ|, so a small number of outliers cannot make the map white.
     on_map = [
         s
         for s in color_by_diff
         if xs[0] <= coords[s, 0] <= xs[-1] and ys[0] <= coords[s, 1] <= ys[-1]
     ]
-    marker_max = max((abs(color_by_diff[s]) for s in on_map), default=0.0)
-    diff_max = max(float(np.nanmax(np.abs(diff))), marker_max) or 1.0
+    all_diff = np.concatenate([diff.ravel(), [color_by_diff[s] for s in on_map]])
+    diff_max = float(np.nanpercentile(np.abs(all_diff), _DIFF_PERCENTILE)) or 1.0
 
     # MAE only at the held-out stations that are in the map box.
     in_box = [
@@ -640,7 +642,7 @@ def _draw_event_row(
         (titles["NWP interpolation"], fields["NWP interpolation"], cmap, vmin, vmax),
         (titles["OAT"], fields["OAT"], cmap, vmin, vmax),
         (
-            "OAT \u2212 NWP\nmarkers: obs \u2212 NWP",
+            "\u0394 = OAT \u2212 NWP\nmarkers: obs \u2212 NWP",
             diff,
             _DIFF_CMAP,
             -diff_max,
@@ -683,12 +685,13 @@ def _draw_event_row(
         label=f"{map_label} [{map_unit}]" if map_unit else map_label,
         shrink=0.85,
     )
-    diff_label = "Difference"
+    # extend="both": the limits are percentiles, and some data is outside them.
     map_fig.colorbar(
         meshes[2],
         ax=ax_maps[2],
-        label=f"{diff_label} [{map_unit}]" if map_unit else diff_label,
+        label=f"Δ [{map_unit}]" if map_unit else "Δ",
         shrink=0.85,
+        extend="both",
     )
     try:
         _add_borders(ax_maps, xs, ys)
