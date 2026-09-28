@@ -34,7 +34,15 @@ OUT_DIR = Path(__file__).parents[1] / "data/figures"
 MODEL_VAR_TO_FULL_VAR_NAME = {
     "temperature": "Temperature",
     "precipitation": "Precipitation",
+    "temp": "Temperature",
+    "prcp": "Precipitation",
 }
+
+MODEL_LABEL = "OAT"
+BASELINE_LABELS = {
+    "uninformed_temp_precip": "Uninformed",
+}
+BASELINE_COLOR = "#C0392B"
 
 N_BINS = 20
 
@@ -81,13 +89,6 @@ def _parse_args():
         help="Subsample this many timesteps for speed (default: all)",
     )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument(
-        "--no-title",
-        action="store_true",
-        default=False,
-        help="Suppress the figure title (for paper figures). The metadata "
-        "(split, timesteps, samples) is encoded in the output filename instead.",
-    )
     p.add_argument(
         "--out",
         default=None,
@@ -147,6 +148,40 @@ def _plot_baseline_outline(
     if counts is None or n == 0:
         return
     plotter.plot_pit(ax, counts, n_bins=N_BINS, total=n, histtype="step", label=label)
+
+
+def _plot_baseline_reliability(ax, baseline_data: dict | None, var: str, label: str):
+    """Draw the baseline zero-gate reliability curve on ax, if it has data."""
+    if baseline_data is None or var not in baseline_data:
+        return
+    b = baseline_data[var]
+    counts = b.get("gate_counts")
+    if counts is None:
+        return
+    ok = counts > 5
+    if not ok.any():
+        return
+    ax.plot(
+        b["gate_pred_sums"][ok] / counts[ok],
+        b["gate_zero_sums"][ok] / counts[ok],
+        "o-",
+        color=BASELINE_COLOR,
+        ms=4,
+        lw=1.2,
+        label=label,
+    )
+
+
+def _set_legend(ax, order: list[tuple[str, str]], fontsize: int = 8) -> None:
+    """Show one legend entry per (source label, shown label) pair, in order."""
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles, strict=True))
+    kept = [(src, shown) for src, shown in order if src in by_label]
+    ax.legend(
+        [by_label[src] for src, _ in kept],
+        [shown for _, shown in kept],
+        fontsize=fontsize,
+    )
 
 
 def main() -> None:
@@ -260,15 +295,12 @@ def main() -> None:
     axes = np.atleast_1d(axes)
 
     ckpt_tag = Path(checkpoint_path).parent.name
-    if not args.no_title:
-        title = (
-            f"PIT calibration — {ckpt_tag}\n"
-            f"{args.split} split  |  {len(time_indices)} timesteps"
-            f"  |  {args.n_samples} samples"
-        )
-        if baseline_tag is not None:
-            title += f"  |  vs {baseline_tag}"
-        fig.suptitle(title, y=1.03)
+    baseline_label = BASELINE_LABELS.get(baseline_tag or "", baseline_tag or "")
+    pit_legend = [
+        (MODEL_LABEL, MODEL_LABEL),
+        (baseline_label, baseline_label),
+        ("Uniform", "Uniform"),
+    ]
 
     col = 0
     for var in vars_list:
@@ -282,6 +314,16 @@ def main() -> None:
                 data["gate_zero_sums"],
                 data["gate_pred_sums"],
             )
+            if baseline_tag is not None:
+                _plot_baseline_reliability(ax_rel, baseline_data, var, baseline_label)
+            _set_legend(
+                ax_rel,
+                [
+                    ("Model", MODEL_LABEL),
+                    (baseline_label, baseline_label),
+                    ("Perfect", "Perfect"),
+                ],
+            )
             ax_rel.set_title(
                 f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\nzero probability",
                 fontsize=9,
@@ -289,7 +331,11 @@ def main() -> None:
             # Use pit_nonzero (conditional on non-zero obs).
             n_nz = data["pit_nonzero_n"]
             plotter.plot_pit(
-                ax_pit, data["pit_nonzero_counts"], n_bins=N_BINS, total=n_nz
+                ax_pit,
+                data["pit_nonzero_counts"],
+                n_bins=N_BINS,
+                total=n_nz,
+                label=MODEL_LABEL,
             )
             if baseline_tag is not None:
                 _plot_baseline_outline(
@@ -298,8 +344,9 @@ def main() -> None:
                     baseline_data,
                     var,
                     conditional=True,
-                    label=baseline_tag,
+                    label=baseline_label,
                 )
+            _set_legend(ax_pit, pit_legend)
             ax_pit.set_title(
                 f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n"
                 f"PIT | non-zero  (n={n_nz:,})",
@@ -309,7 +356,13 @@ def main() -> None:
             col += 2
         else:
             ax = axes[col]
-            plotter.plot_pit(ax, data["pit_counts"], n_bins=N_BINS, total=data["pit_n"])
+            plotter.plot_pit(
+                ax,
+                data["pit_counts"],
+                n_bins=N_BINS,
+                total=data["pit_n"],
+                label=MODEL_LABEL,
+            )
             if baseline_tag is not None:
                 _plot_baseline_outline(
                     plotter,
@@ -317,8 +370,9 @@ def main() -> None:
                     baseline_data,
                     var,
                     conditional=False,
-                    label=baseline_tag,
+                    label=baseline_label,
                 )
+            _set_legend(ax, pit_legend)
             ax.set_title(
                 f"{MODEL_VAR_TO_FULL_VAR_NAME.get(var, var)}\n{ax.get_title()}",
                 fontsize=9,
