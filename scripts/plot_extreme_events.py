@@ -20,9 +20,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import matplotlib.patheffects as pe
 import numpy as np
 import pandas as pd
 import torch
+from matplotlib.collections import PathCollection
 
 _MODEL = "oat_temp_precip"
 
@@ -220,3 +222,80 @@ def _daily_peak_means(
         if m.any():
             out.append((times[t], float(obs[t, stations, var_idx][m].double().mean())))
     return out
+
+
+def _restyle_window_missing(
+    ax: Any, drop_xy: np.ndarray, context_xy: np.ndarray
+) -> None:
+    """Remove the markers at *drop_xy*, then show *context_xy* as missing.
+
+    ``overlay_stations`` takes the missing state from one hour. For a window
+    sum, a station that misses one hour of the window has no valid value. This
+    removes its marker from each station scatter on *ax*. Context stations get
+    the grey "missing" circle of ``overlay_stations`` again. Held-out stations
+    get no marker, because the figure removes the "eval missing" squares.
+    """
+    if len(drop_xy):
+        for coll in ax.collections:
+            if not isinstance(coll, PathCollection):
+                continue
+            off = np.asarray(coll.get_offsets())
+            if not len(off):
+                continue
+            hit = (
+                np.isclose(off[:, None, :], drop_xy[None, :, :], rtol=0.0, atol=1e-6)
+                .all(axis=2)
+                .any(axis=1)
+            )
+            if not hit.any():
+                continue
+            face = coll.get_facecolors()
+            coll.set_offsets(off[~hit])
+            if len(face) == len(off):
+                coll.set_facecolors(face[~hit])
+    if len(context_xy):
+        # Same style as the "missing" markers of OATPlotter._overlay_stations.
+        ax.scatter(
+            context_xy[:, 0],
+            context_xy[:, 1],
+            marker="o",
+            facecolors="white",
+            edgecolors="grey",
+            s=10,
+            zorder=5,
+            label="missing",
+        )
+
+
+def _mark_stations(ax: Any, xy: np.ndarray, labels: list[str]) -> None:
+    """Draw a thick square and a number label on each plotted test station."""
+    ax.scatter(
+        xy[:, 0],
+        xy[:, 1],
+        marker="s",
+        s=60,
+        facecolors="none",
+        edgecolors="black",
+        linewidths=1.8,
+        zorder=6,
+    )
+    for (x, y), label in zip(xy, labels, strict=True):
+        ax.annotate(
+            label,
+            (x, y),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=13,
+            fontweight="bold",
+            zorder=7,
+            path_effects=[pe.withStroke(linewidth=3, foreground="white")],
+        )
+
+
+def _ts_slots(n_stations: int) -> list[slice]:
+    """Return the gridspec row slices for the time-series axes of one row."""
+    if n_stations == 1:
+        return [slice(0, 2)]
+    if n_stations == 2:
+        return [slice(0, 1), slice(1, 2)]
+    raise ValueError(f"An event needs 1 or 2 stations, not {n_stations}.")

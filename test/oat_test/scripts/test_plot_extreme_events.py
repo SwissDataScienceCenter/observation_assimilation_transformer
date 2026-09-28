@@ -1,5 +1,6 @@
 import dataclasses
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,9 +9,12 @@ import torch
 from scripts.plot_extreme_events import (
     EVENTS,
     _daily_peak_means,
+    _mark_stations,
     _parse_time,
     _rank_stations,
+    _restyle_window_missing,
     _station_window_obs,
+    _ts_slots,
     _validate_event,
     _window_sum_field,
     _window_time_indices,
@@ -171,3 +175,52 @@ def test_daily_peak_means_uses_the_peak_hour_and_the_mask():
     mask[38, 1, 0] = False
     out = _daily_peak_means(obs, mask, times, list(range(48)), 0, [0, 1])
     assert [(t.day, v) for t, v in out] == [(12, 32.0), (13, 36.0)]
+
+
+def test_restyle_window_missing_drops_points_and_redraws_context():
+    fig, ax = plt.subplots()
+    ax.scatter([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], c=["r", "g", "b"], label="observed")
+    ax.scatter([5.0, 6.0], [5.0, 6.0], c=["r", "g"], label="eval observed")
+    drop = np.array([[1.0, 1.0], [6.0, 6.0]])
+    context = np.array([[1.0, 1.0]])
+
+    _restyle_window_missing(ax, drop, context)
+
+    by_label = {c.get_label(): c for c in ax.collections}
+    np.testing.assert_allclose(
+        by_label["observed"].get_offsets(), [[0.0, 0.0], [2.0, 2.0]]
+    )
+    assert len(by_label["observed"].get_facecolors()) == 2
+    np.testing.assert_allclose(by_label["eval observed"].get_offsets(), [[5.0, 5.0]])
+    np.testing.assert_allclose(by_label["missing"].get_offsets(), [[1.0, 1.0]])
+    plt.close(fig)
+
+
+def test_restyle_window_missing_with_nothing_to_drop_keeps_axes():
+    fig, ax = plt.subplots()
+    ax.scatter([0.0], [0.0], label="observed")
+    _restyle_window_missing(ax, np.zeros((0, 2)), np.zeros((0, 2)))
+    assert [c.get_label() for c in ax.collections] == ["observed"]
+    plt.close(fig)
+
+
+def test_mark_stations_adds_one_label_for_each_station():
+    fig, ax = plt.subplots()
+    _mark_stations(ax, np.array([[0.0, 0.0], [1.0, 2.0]]), ["1", "2"])
+    assert [t.get_text() for t in ax.texts] == ["1", "2"]
+    np.testing.assert_allclose(ax.collections[-1].get_offsets(), [[0, 0], [1, 2]])
+    plt.close(fig)
+
+
+def test_ts_slots_one_station_uses_the_full_height():
+    assert _ts_slots(1) == [slice(0, 2)]
+
+
+def test_ts_slots_two_stations_are_stacked():
+    assert _ts_slots(2) == [slice(0, 1), slice(1, 2)]
+
+
+@pytest.mark.parametrize("n", [0, 3])
+def test_ts_slots_raises_for_other_counts(n):
+    with pytest.raises(ValueError, match="1 or 2 stations"):
+        _ts_slots(n)
