@@ -33,7 +33,11 @@ from matplotlib.collections import PathCollection
 from matplotlib.lines import Line2D
 
 from oat.data_module.setup import setup_data_and_transform
-from oat.plotting_module.geo_overlays import _add_borders, build_domain_grid
+from oat.plotting_module.geo_overlays import (
+    _add_borders,
+    build_domain_grid,
+    build_land_mask,
+)
 from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 
 # The import of plot_timeseries also applies its rcParams block, so the fonts
@@ -128,6 +132,7 @@ class ExtremeEvent:
     extent: float  # map half-width, dataset units (see build_domain_grid)
     # Colour limit of the Δ map. None: the percentile of |Δ| sets it.
     diff_cap: float | None = None
+    mask_ocean: bool = False  # hide the map fields over the sea and large lakes
 
 
 # The stations and times come from --list-candidates on the test split
@@ -158,7 +163,8 @@ EVENTS: list[ExtremeEvent] = [
         extent=12.0,
         # Mountain corrections (ERA5 orography) are much larger than the heat-wave
         # signal. A fixed cap keeps the lowland corrections visible.
-        diff_cap=4.0,
+        diff_cap=10.0,
+        mask_ocean=True,
     ),
 ]
 
@@ -593,6 +599,10 @@ def _draw_event_row(
         )
         for name, p in (("NWP interpolation", nwp_predictor), ("OAT", None))
     }
+    if event.mask_ocean:
+        # NaN cells are not drawn. The colour limits then use only land values.
+        land = build_land_mask(xs, ys)
+        fields = {name: np.where(land, f, np.nan) for name, f in fields.items()}
     vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
     vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
     # Reference minus model, as in plot_ERA5_to_COSMO_grid.py: Δ = NWP - OAT.
