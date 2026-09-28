@@ -58,6 +58,9 @@ _ROW_HEIGHT_IN = 4.8  # inches for one event row (maps, time series, titles)
 _GRID_CELLS = 250  # map cells across the width, as in plot_assimilation_panel
 _MAP_MARKER_SCALE = 0.5  # area factor for the station markers of overlay_stations
 _MAP_MARKER_EDGE = 0.4  # edge width (points) of those markers
+# Diverging colormap for differences, the same as plot_assimilation_panel.py.
+# It is not RdBu_r, so it does not look like a temperature map.
+_DIFF_CMAP = "PuOr"
 _OBS_DOT_SIZE = 8.0  # marker area (points^2) of the time-series obs dots
 _CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
 _VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
@@ -576,7 +579,6 @@ def _draw_event_row(
     vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
     vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
     diff = fields["OAT"] - fields["NWP interpolation"]
-    diff_max = float(np.nanmax(np.abs(diff))) or 1.0
 
     # Window values at the drawn stations: obs (NaN without a full window),
     # NWP and OAT. They give the obs - NWP markers and the test-station MAE.
@@ -597,6 +599,15 @@ def _draw_event_row(
     color_by_diff = {
         s: float(innovation[s]) for s in drawn if np.isfinite(innovation[s])
     }
+    # Same rule as plot_assimilation_panel.py: the scale must cover the field
+    # and the markers, or the markers saturate. Use only markers on the map.
+    on_map = [
+        s
+        for s in color_by_diff
+        if xs[0] <= coords[s, 0] <= xs[-1] and ys[0] <= coords[s, 1] <= ys[-1]
+    ]
+    marker_max = max((abs(color_by_diff[s]) for s in on_map), default=0.0)
+    diff_max = max(float(np.nanmax(np.abs(diff))), marker_max) or 1.0
 
     # MAE only at the held-out stations that are in the map box.
     in_box = [
@@ -628,7 +639,7 @@ def _draw_event_row(
     panels = [
         (titles["NWP interpolation"], fields["NWP interpolation"], cmap, vmin, vmax),
         (titles["OAT"], fields["OAT"], cmap, vmin, vmax),
-        ("OAT \u2212 NWP", diff, "RdBu_r", -diff_max, diff_max),
+        ("OAT \u2212 NWP", diff, _DIFF_CMAP, -diff_max, diff_max),
     ]
     meshes = []
     for ax, (title, field, p_cmap, p_vmin, p_vmax) in zip(ax_maps, panels, strict=True):
