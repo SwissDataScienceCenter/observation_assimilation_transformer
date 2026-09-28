@@ -57,6 +57,7 @@ OUT_DIR = _PROJECT_ROOT / "data/figures"
 _ROW_HEIGHT_IN = 4.8  # inches for one event row (maps, time series, titles)
 _LEGEND_HEIGHT_IN = 0.6
 _GRID_CELLS = 250  # map cells across the width, as in plot_assimilation_panel
+_OBS_DOT_SIZE = 8.0  # marker area (points^2) of the time-series obs dots
 _CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
 _VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
 
@@ -131,8 +132,8 @@ EVENTS: list[ExtremeEvent] = [
         title="(a) Maggia flood, 2024-06-29/30",
         map_start="2024-06-29:12",
         map_hours=24,
-        ts_start="2024-06-28:12",
-        ts_hours=72,
+        ts_start="2024-06-29:06",
+        ts_hours=36,
         stations=(185, 164),
         center=(2700000.0, 1135000.0),  # LV95, Ticino
         extent=75000.0,
@@ -608,6 +609,10 @@ def _draw_event_row(
             label="OAT",
             color=_OAT_COLOR,
         )
+        # The plotter draws the obs dots at the default size. Make them smaller.
+        for coll in ax.collections:
+            if coll.get_label() == "observation":
+                coll.set_sizes([_OBS_DOT_SIZE])
         # plot_timeseries draws the NWP line without a colour; recolour it
         # the same as plot_timeseries.py.
         for line in ax.get_lines():
