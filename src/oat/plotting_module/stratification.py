@@ -281,6 +281,7 @@ _MODEL_DISPLAY = {
     "uninformed": "Uninformed",
     "uninformed_oat": "Uninformed",
     "gp": "GP",
+    "gp_oat": "GP",
     "deep_gp": "Deep GP",
     "ootg": "OOTG",
     "interpolator": "NWP interp.",
