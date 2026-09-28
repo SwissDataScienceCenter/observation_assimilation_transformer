@@ -126,6 +126,8 @@ class ExtremeEvent:
     stations: tuple[int, ...]  # held-out test station indices
     center: tuple[float, float]  # map centre, in the dataset frame
     extent: float  # map half-width, dataset units (see build_domain_grid)
+    # Colour limit of the Δ map. None: the percentile of |Δ| sets it.
+    diff_cap: float | None = None
 
 
 # The stations and times come from --list-candidates on the test split
@@ -154,6 +156,9 @@ EVENTS: list[ExtremeEvent] = [
         stations=(1564, 1626),
         center=(18.0, 42.0),  # lon, lat: Italy and the Balkans
         extent=12.0,
+        # Mountain corrections (ERA5 orography) are much larger than the heat-wave
+        # signal. A fixed cap keeps the lowland corrections visible.
+        diff_cap=4.0,
     ),
 ]
 
@@ -393,6 +398,17 @@ def _station_mae(
     return float(np.mean(np.abs(pred[idx] - obs[idx]))), len(idx)
 
 
+def _diff_limit(values: np.ndarray, cap: float | None) -> float:
+    """Return the symmetric colour limit of the Δ map.
+
+    Use *cap* if it is set. If not, use the percentile of |values| (NaN is not
+    used). Return 1.0 if the limit is 0, so that the colour scale is valid.
+    """
+    if cap is not None:
+        return float(cap)
+    return float(np.nanpercentile(np.abs(values), _DIFF_PERCENTILE)) or 1.0
+
+
 def _sum_unit(unit: str) -> str:
     """Return the unit of a sum over hours of a quantity with *unit*."""
     return unit.removesuffix("/h") if unit.endswith("/h") else f"{unit} h"
@@ -610,7 +626,7 @@ def _draw_event_row(
         if xs[0] <= coords[s, 0] <= xs[-1] and ys[0] <= coords[s, 1] <= ys[-1]
     ]
     all_diff = np.concatenate([diff.ravel(), [color_by_diff[s] for s in on_map]])
-    diff_max = float(np.nanpercentile(np.abs(all_diff), _DIFF_PERCENTILE)) or 1.0
+    diff_max = _diff_limit(all_diff, event.diff_cap)
 
     # MAE only at the held-out stations that are in the map box.
     in_box = [

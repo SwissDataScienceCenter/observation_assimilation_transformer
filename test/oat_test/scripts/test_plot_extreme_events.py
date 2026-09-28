@@ -9,6 +9,7 @@ import torch
 from scripts.plot_extreme_events import (
     EVENTS,
     _daily_peak_means,
+    _diff_limit,
     _mark_stations,
     _parse_args,
     _parse_time,
@@ -72,6 +73,7 @@ def test_events_are_well_formed(event):
     assert 1 <= len(event.stations) <= 2
     assert event.map_hours >= 1
     assert event.extent > 0
+    assert event.diff_cap is None or event.diff_cap > 0
     ts0 = _parse_time(event.ts_start)
     ts1 = ts0 + pd.Timedelta(hours=event.ts_hours)
     m0 = _parse_time(event.map_start)
@@ -269,3 +271,16 @@ def test_station_mae_skips_stations_without_a_window_value():
 def test_station_mae_is_nan_without_stations():
     mae, n = _station_mae(np.array([1.0]), np.array([np.nan]), [0])
     assert np.isnan(mae) and n == 0
+
+
+def test_diff_limit_uses_the_cap():
+    assert _diff_limit(np.array([-30.0, 1.0, 2.0]), cap=4.0) == 4.0
+
+
+def test_diff_limit_without_cap_is_the_percentile_and_skips_nan():
+    values = np.concatenate([np.arange(-100.0, 101.0), [np.nan]])
+    assert _diff_limit(values, cap=None) == pytest.approx(99.0)
+
+
+def test_diff_limit_is_one_for_zero_values():
+    assert _diff_limit(np.zeros(5), cap=None) == 1.0
