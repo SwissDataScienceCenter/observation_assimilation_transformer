@@ -508,7 +508,7 @@ def _draw_event_row(
     """Draw the NWP map, the OAT map and the time series of *event*.
 
     If *with_legend* is True, add the station legend below the maps and the
-    time-series legend in the top time-series axis.
+    time-series legend below the time series.
     """
     obs_indices = [int(i) for i in test_ds.observed_indices]
     eval_indices = [int(i) for i in test_ds.eval_indices]
@@ -639,7 +639,13 @@ def _draw_event_row(
     panels = [
         (titles["NWP interpolation"], fields["NWP interpolation"], cmap, vmin, vmax),
         (titles["OAT"], fields["OAT"], cmap, vmin, vmax),
-        ("OAT \u2212 NWP", diff, _DIFF_CMAP, -diff_max, diff_max),
+        (
+            "OAT \u2212 NWP\nmarkers: obs \u2212 NWP",
+            diff,
+            _DIFF_CMAP,
+            -diff_max,
+            diff_max,
+        ),
     ]
     meshes = []
     for ax, (title, field, p_cmap, p_vmin, p_vmax) in zip(ax_maps, panels, strict=True):
@@ -677,7 +683,7 @@ def _draw_event_row(
         label=f"{map_label} [{map_unit}]" if map_unit else map_label,
         shrink=0.85,
     )
-    diff_label = "OAT \u2212 NWP; markers: obs \u2212 NWP"
+    diff_label = "Difference"
     map_fig.colorbar(
         meshes[2],
         ax=ax_maps[2],
@@ -745,7 +751,14 @@ def _draw_event_row(
             frameon=False,
             fontsize=11,
         )
-        ax_ts[0].legend(loc="upper right", ncol=2, fontsize=10)
+        # Below the time series, so the legend cannot cover the data.
+        ts_fig.legend(
+            *ax_ts[0].get_legend_handles_labels(),
+            loc="outside lower center",
+            ncol=3,
+            frameon=False,
+            fontsize=11,
+        )
 
 
 def main() -> None:
