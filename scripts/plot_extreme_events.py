@@ -55,7 +55,6 @@ _PROJECT_ROOT = Path(__file__).parents[1]
 OUT_DIR = _PROJECT_ROOT / "data/figures"
 
 _ROW_HEIGHT_IN = 4.8  # inches for one event row (maps, time series, titles)
-_LEGEND_HEIGHT_IN = 0.6
 _GRID_CELLS = 250  # map cells across the width, as in plot_assimilation_panel
 _MAP_MARKER_SCALE = 0.5  # area factor for the station markers of overlay_stations
 _MAP_MARKER_EDGE = 0.4  # edge width (points) of those markers
@@ -483,8 +482,13 @@ def _draw_event_row(
     test_ds: Any,
     args: argparse.Namespace,
     logger: logging.Logger,
-) -> tuple[list[Any], list[str]]:
-    """Draw the NWP map, the OAT map and the time series of *event*."""
+    with_legend: bool,
+) -> None:
+    """Draw the NWP map, the OAT map and the time series of *event*.
+
+    If *with_legend* is True, add the station legend below the maps and the
+    time-series legend in the top time-series axis.
+    """
     obs_indices = [int(i) for i in test_ds.observed_indices]
     eval_indices = [int(i) for i in test_ds.eval_indices]
     map_indices = _window_time_indices(dataset.times, event.map_start, event.map_hours)
@@ -655,8 +659,15 @@ def _draw_event_row(
     )
 
     subfig.suptitle(event.title, x=0.0, ha="left")
-    handles, names = ax_ts[0].get_legend_handles_labels()
-    return handles, names
+    if with_legend:
+        map_fig.legend(
+            handles=_STATION_HANDLES,
+            loc="outside lower center",
+            ncol=2,
+            frameon=False,
+            fontsize=11,
+        )
+        ax_ts[0].legend(loc="upper right", ncol=2, fontsize=10)
 
 
 def main() -> None:
@@ -676,28 +687,25 @@ def main() -> None:
 
     n_rows = len(EVENTS)
     fig = plt.figure(
-        figsize=(FIG_WIDTH_IN, n_rows * _ROW_HEIGHT_IN + _LEGEND_HEIGHT_IN),
-        layout="constrained",
+        figsize=(FIG_WIDTH_IN, n_rows * _ROW_HEIGHT_IN), layout="constrained"
     )
-    # One subfigure per event, plus a short one for the shared legend.
-    subfigs = fig.subfigures(
-        n_rows + 1, 1, height_ratios=[_ROW_HEIGHT_IN] * n_rows + [_LEGEND_HEIGHT_IN]
-    )
-    legend_items: dict[str, Any] = {}
-    for subfig, event in zip(subfigs[:-1], EVENTS, strict=True):
+    # One subfigure per event. Only the top row has legends.
+    subfigs = fig.subfigures(n_rows, 1, squeeze=False)[:, 0]
+    for row, (subfig, event) in enumerate(zip(subfigs, EVENTS, strict=True)):
         predictor, dataset, test_ds = _load_event(event, logger)
-        handles, names = _draw_event_row(
-            subfig, event, predictor, dataset, test_ds, args, logger
+        _draw_event_row(
+            subfig,
+            event,
+            predictor,
+            dataset,
+            test_ds,
+            args,
+            logger,
+            with_legend=row == 0,
         )
-        for handle, name in zip(handles, names, strict=True):
-            legend_items.setdefault(name, handle)
         # Free the dataset before the next one loads.
         del predictor, dataset, test_ds
         gc.collect()
-
-    handles = list(legend_items.values()) + _STATION_HANDLES
-    labels = list(legend_items) + [h.get_label() for h in _STATION_HANDLES]
-    subfigs[-1].legend(handles, labels, loc="center", ncol=4, frameon=False)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = (
