@@ -16,6 +16,7 @@ from scripts.plot_extreme_events import (
     _restyle_window_missing,
     _station_name,
     _station_window_obs,
+    _sum_unit,
     _ts_slots,
     _validate_event,
     _window_sum_field,
@@ -247,3 +248,10 @@ def test_station_name_uses_the_station_id():
 
 def test_station_name_falls_back_to_the_index():
     assert _station_name(object(), 7) == "station 7"
+
+
+@pytest.mark.parametrize(
+    ("unit", "expected"), [("mm/h", "mm"), ("W m-2", "W m-2 h"), ("°C", "°C h")]
+)
+def test_sum_unit(unit, expected):
+    assert _sum_unit(unit) == expected

@@ -57,6 +57,8 @@ OUT_DIR = _PROJECT_ROOT / "data/figures"
 _ROW_HEIGHT_IN = 4.8  # inches for one event row (maps, time series, titles)
 _LEGEND_HEIGHT_IN = 0.6
 _GRID_CELLS = 250  # map cells across the width, as in plot_assimilation_panel
+_MAP_MARKER_SCALE = 0.5  # area factor for the station markers of overlay_stations
+_MAP_MARKER_EDGE = 0.4  # edge width (points) of those markers
 _OBS_DOT_SIZE = 8.0  # marker area (points^2) of the time-series obs dots
 _CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
 _VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
@@ -370,6 +372,11 @@ def _mark_stations(ax: Any, xy: np.ndarray, labels: list[str]) -> None:
         )
 
 
+def _sum_unit(unit: str) -> str:
+    """Return the unit of a sum over hours of a quantity with *unit*."""
+    return unit.removesuffix("/h") if unit.endswith("/h") else f"{unit} h"
+
+
 def _ts_slots(n_stations: int) -> list[slice]:
     """Return the gridspec row slices for the time-series axes of one row."""
     if n_stations == 1:
@@ -500,9 +507,11 @@ def _draw_event_row(
     cmap = var_cfg.get("cmap", "viridis")
     unit = _load_units(event.dataset).get(event.variable, "")
     var_label = _VAR_LABELS.get(event.variable, event.variable.capitalize())
-    map_label = (
-        f"{event.map_hours} h {var_label.lower()}" if event.map_hours > 1 else var_label
-    )
+    if event.map_hours > 1:
+        map_label = f"{event.map_hours} h {var_label.lower()}"
+        map_unit = _sum_unit(unit) if unit else ""
+    else:
+        map_label, map_unit = var_label, unit
 
     nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
     plotter_cls = select_plotter_cls(dataset)
@@ -560,8 +569,10 @@ def _draw_event_row(
         context_xy = coords[[s for s in no_sum if s in obs_set]].reshape(-1, 2)
 
     labels = [str(i + 1) for i in range(len(event.stations))]
-    gs = subfig.add_gridspec(2, 3, width_ratios=[1.0, 1.0, 1.5])
-    ax_maps = [subfig.add_subplot(gs[:, 0]), subfig.add_subplot(gs[:, 1])]
+    # Nested subfigures give the time series one shared y-label that does not
+    # overlap the colorbar of the maps.
+    map_fig, ts_fig = subfig.subfigures(1, 2, width_ratios=[2.0, 1.5])
+    ax_maps = list(map_fig.subplots(1, 2))
     mesh = None
     for ax, (name, field) in zip(ax_maps, fields.items(), strict=True):
         mesh = map_plotter.draw_field(
@@ -576,15 +587,19 @@ def _draw_event_row(
         for coll in list(ax.collections):
             if coll.get_label() == "eval missing":
                 coll.remove()
+            elif isinstance(coll, PathCollection):
+                # Smaller markers with thin edges keep dense networks legible.
+                coll.set_sizes(coll.get_sizes() * _MAP_MARKER_SCALE)
+                coll.set_linewidths(_MAP_MARKER_EDGE)
         _mark_stations(ax, coords[list(event.stations)], labels)
         ax.set_title(name, fontsize=13)
         ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
-    subfig.colorbar(
+    map_fig.colorbar(
         mesh,
         ax=ax_maps,
-        label=f"{map_label} [{unit}]" if unit else map_label,
+        label=f"{map_label} [{map_unit}]" if map_unit else map_label,
         shrink=0.85,
     )
     try:
@@ -593,7 +608,8 @@ def _draw_event_row(
         logger.warning("Could not draw borders: %s", exc)
 
     # ---- Time series ----
-    ax_ts = [subfig.add_subplot(gs[sl, 2]) for sl in _ts_slots(len(event.stations))]
+    gs_ts = ts_fig.add_gridspec(2, 1)
+    ax_ts = [ts_fig.add_subplot(gs_ts[sl, 0]) for sl in _ts_slots(len(event.stations))]
     for ax in ax_ts[1:]:
         ax.sharex(ax_ts[0])
     for ax, s, label in zip(ax_ts, event.stations, labels, strict=True):
@@ -619,21 +635,24 @@ def _draw_event_row(
             if line.get_label() == "NWP interpolation":
                 line.set_color(_NWP_COLOR)
                 line.set_linestyle("--")
-        if event.map_hours > 1:
-            ax.axvspan(
-                dataset.times[map_indices[0]],
-                dataset.times[map_indices[-1]] + pd.Timedelta(hours=1),
-                color="0.85",
-                zorder=0,
-                label="Map window",
-            )
+        # Show the map time. For a single map hour, the band is 1 h wide.
+        ax.axvspan(
+            dataset.times[map_indices[0]],
+            dataset.times[map_indices[-1]] + pd.Timedelta(hours=1),
+            color="0.85",
+            zorder=0,
+            label="Map window",
+        )
         ax.set_title(f"{label}: {_station_name(dataset, s)}", loc="left", fontsize=13)
-        ax.set_ylabel(f"{var_label} [{unit}]" if unit else var_label)
         ax.grid(alpha=0.3)
     for ax in ax_ts[:-1]:
         ax.tick_params(axis="x", labelbottom=False)
     ax_ts[-1].set_xlabel("Time (UTC)")
     ax_ts[-1].tick_params(axis="x", rotation=30)
+    ts_fig.supylabel(
+        f"{var_label} [{unit}]" if unit else var_label,
+        fontsize=plt.rcParams["axes.labelsize"],
+    )
 
     subfig.suptitle(event.title, x=0.0, ha="left")
     handles, names = ax_ts[0].get_legend_handles_labels()
