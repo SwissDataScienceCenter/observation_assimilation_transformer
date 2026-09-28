@@ -15,7 +15,7 @@ start=$(date +%s)
 
 python -m scripts.plot_pit \
     --model oat_temp_precip \
-    --dataset era5_meteostat \
+    --dataset cosmo_peakweather \
     --split test \
     --n-samples 500 \
     --baseline uninformed_temp_precip
