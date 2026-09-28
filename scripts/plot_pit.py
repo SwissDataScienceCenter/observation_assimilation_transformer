@@ -177,6 +177,8 @@ def _set_legend(ax, order: list[tuple[str, str]], fontsize: int = 8) -> None:
     handles, labels = ax.get_legend_handles_labels()
     by_label = dict(zip(labels, handles, strict=True))
     kept = [(src, shown) for src, shown in order if src in by_label]
+    if not kept:
+        return
     ax.legend(
         [by_label[src] for src, _ in kept],
         [shown for _, shown in kept],
@@ -381,8 +383,8 @@ def main() -> None:
             col += 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    # Metadata (split, #timesteps used, #samples) goes in the filename so it's not lost
-    # when the on-figure title is suppressed for the paper.
+    # The figure has no title. Put the metadata (split, #timesteps, #samples)
+    # in the filename.
     if args.out is not None:
         stem = Path(args.out).with_suffix("")
     else:
