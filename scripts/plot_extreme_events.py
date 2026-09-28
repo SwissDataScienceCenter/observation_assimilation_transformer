@@ -579,10 +579,11 @@ def _draw_event_row(
     }
     vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
     vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
-    diff = fields["OAT"] - fields["NWP interpolation"]
+    # Reference minus model, as in plot_ERA5_to_COSMO_grid.py: Δ = NWP - OAT.
+    diff = fields["NWP interpolation"] - fields["OAT"]
 
     # Window values at the drawn stations: obs (NaN without a full window),
-    # NWP and OAT. They give the obs - NWP markers and the test-station MAE.
+    # NWP and OAT. They give the NWP - obs markers and the test-station MAE.
     coords = np.asarray(dataset.station_coords, dtype=float)
     drawn = obs_indices + eval_indices
     obs_win = _station_window_obs(
@@ -596,9 +597,9 @@ def _draw_event_row(
             map_plotter, p, drawn_coords, map_indices, var_idx, (len(drawn),)
         )
         pred_win[name] = full
-    innovation = obs_win - pred_win["NWP interpolation"]
+    nwp_minus_obs = pred_win["NWP interpolation"] - obs_win
     color_by_diff = {
-        s: float(innovation[s]) for s in drawn if np.isfinite(innovation[s])
+        s: float(nwp_minus_obs[s]) for s in drawn if np.isfinite(nwp_minus_obs[s])
     }
     # The scale covers the field and the markers on the map, or the markers
     # saturate. As in plot_ERA5_to_COSMO_grid.py, the limit is a percentile of
@@ -642,7 +643,7 @@ def _draw_event_row(
         (titles["NWP interpolation"], fields["NWP interpolation"], cmap, vmin, vmax),
         (titles["OAT"], fields["OAT"], cmap, vmin, vmax),
         (
-            "\u0394 = OAT \u2212 NWP\nmarkers: obs \u2212 NWP",
+            "\u0394 = NWP \u2212 OAT\nmarkers: NWP \u2212 obs",
             diff,
             _DIFF_CMAP,
             -diff_max,
@@ -657,7 +658,7 @@ def _draw_event_row(
         # Rasterize the dense field so the PDF stays small.
         mesh.set_rasterized(True)
         meshes.append(mesh)
-        # The difference panel colours the markers by obs - NWP.
+        # The difference panel colours the markers by NWP - obs.
         is_diff = ax is ax_maps[2]
         map_plotter.overlay_stations(
             ax,
