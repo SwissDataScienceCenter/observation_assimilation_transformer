@@ -14,6 +14,7 @@ from scripts.plot_extreme_events import (
     _parse_time,
     _rank_stations,
     _restyle_window_missing,
+    _station_mae,
     _station_name,
     _station_window_obs,
     _sum_unit,
@@ -255,3 +256,16 @@ def test_station_name_falls_back_to_the_index():
 )
 def test_sum_unit(unit, expected):
     assert _sum_unit(unit) == expected
+
+
+def test_station_mae_skips_stations_without_a_window_value():
+    pred = np.array([1.0, 5.0, 3.0, 9.0])
+    obs = np.array([2.0, np.nan, 1.0, 0.0])
+    mae, n = _station_mae(pred, obs, [0, 1, 2])
+    # station 1 has no obs; station 3 is not in the list
+    assert (mae, n) == (1.5, 2)
+
+
+def test_station_mae_is_nan_without_stations():
+    mae, n = _station_mae(np.array([1.0]), np.array([np.nan]), [0])
+    assert np.isnan(mae) and n == 0

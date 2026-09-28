@@ -371,6 +371,24 @@ def _mark_stations(ax: Any, xy: np.ndarray, labels: list[str]) -> None:
         )
 
 
+def _station_mae(
+    pred: np.ndarray, obs: np.ndarray, stations: Iterable[int]
+) -> tuple[float, int]:
+    """Return the MAE of *pred* against *obs* over *stations* and the count.
+
+    Args:
+        pred: [S] model window value for each station.
+        obs: [S] obs window value. NaN for a station without a full window.
+
+    Returns:
+        ``(mae, n)``. A station with NaN is not used. The MAE is NaN if n is 0.
+    """
+    idx = [s for s in stations if np.isfinite(obs[s]) and np.isfinite(pred[s])]
+    if not idx:
+        return float("nan"), 0
+    return float(np.mean(np.abs(pred[idx] - obs[idx]))), len(idx)
+
+
 def _sum_unit(unit: str) -> str:
     """Return the unit of a sum over hours of a quantity with *unit*."""
     return unit.removesuffix("/h") if unit.endswith("/h") else f"{unit} h"
@@ -557,35 +575,77 @@ def _draw_event_row(
     }
     vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
     vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
+    diff = fields["OAT"] - fields["NWP interpolation"]
+    diff_max = float(np.nanmax(np.abs(diff))) or 1.0
 
+    # Window values at the drawn stations: obs (NaN without a full window),
+    # NWP and OAT. They give the obs - NWP markers and the test-station MAE.
     coords = np.asarray(dataset.station_coords, dtype=float)
+    drawn = obs_indices + eval_indices
+    obs_win = _station_window_obs(
+        dataset.obs_tensor, dataset.obs_mask_tensor, map_indices, var_idx
+    )
+    drawn_coords = torch.tensor(coords[drawn], dtype=torch.float32)
+    pred_win: dict[str, np.ndarray] = {}
+    for name, p in (("NWP interpolation", nwp_predictor), ("OAT", None)):
+        full = np.full(len(coords), np.nan)
+        full[drawn] = _window_sum_field(
+            map_plotter, p, drawn_coords, map_indices, var_idx, (len(drawn),)
+        )
+        pred_win[name] = full
+    innovation = obs_win - pred_win["NWP interpolation"]
+    color_by_diff = {
+        s: float(innovation[s]) for s in drawn if np.isfinite(innovation[s])
+    }
+
+    # MAE only at the held-out stations that are in the map box.
+    in_box = [
+        s
+        for s in eval_indices
+        if xs[0] <= coords[s, 0] <= xs[-1] and ys[0] <= coords[s, 1] <= ys[-1]
+    ]
+    titles = {}
+    for name in fields:
+        mae, n = _station_mae(pred_win[name], obs_win, in_box)
+        logger.info("%s: %s MAE %.3f at %d test stations", event.title, name, mae, n)
+        titles[name] = f"{name}\nMAE {mae:.1f} {map_unit}".rstrip()
+
     color_by: dict[int, float] | None = None
     drop_xy = np.zeros((0, 2))
     context_xy = np.zeros((0, 2))
     if event.map_hours > 1:
-        sums = _station_window_obs(
-            dataset.obs_tensor, dataset.obs_mask_tensor, map_indices, var_idx
-        )
-        color_by = {s: float(v) for s, v in enumerate(sums) if np.isfinite(v)}
+        color_by = {s: float(v) for s, v in enumerate(obs_win) if np.isfinite(v)}
         obs_set = set(obs_indices)
-        no_sum = [s for s in obs_indices + eval_indices if not np.isfinite(sums[s])]
+        no_sum = [s for s in drawn if not np.isfinite(obs_win[s])]
         drop_xy = coords[no_sum].reshape(-1, 2)
         context_xy = coords[[s for s in no_sum if s in obs_set]].reshape(-1, 2)
 
     labels = [str(i + 1) for i in range(len(event.stations))]
     # Nested subfigures give the time series one shared y-label that does not
     # overlap the colorbar of the maps.
-    map_fig, ts_fig = subfig.subfigures(1, 2, width_ratios=[2.0, 1.5])
-    ax_maps = list(map_fig.subplots(1, 2))
-    mesh = None
-    for ax, (name, field) in zip(ax_maps, fields.items(), strict=True):
+    map_fig, ts_fig = subfig.subfigures(1, 2, width_ratios=[3.0, 1.5])
+    ax_maps = list(map_fig.subplots(1, 3))
+    panels = [
+        (titles["NWP interpolation"], fields["NWP interpolation"], cmap, vmin, vmax),
+        (titles["OAT"], fields["OAT"], cmap, vmin, vmax),
+        ("OAT \u2212 NWP", diff, "RdBu_r", -diff_max, diff_max),
+    ]
+    meshes = []
+    for ax, (title, field, p_cmap, p_vmin, p_vmax) in zip(ax_maps, panels, strict=True):
         mesh = map_plotter.draw_field(
-            ax, field, xs, ys, cmap=cmap, vmin=vmin, vmax=vmax
+            ax, field, xs, ys, cmap=p_cmap, vmin=p_vmin, vmax=p_vmax
         )
         # Rasterize the dense field so the PDF stays small.
         mesh.set_rasterized(True)
+        meshes.append(mesh)
+        # The difference panel colours the markers by obs - NWP.
+        is_diff = ax is ax_maps[2]
         map_plotter.overlay_stations(
-            ax, map_indices[0], var_idx, mesh=mesh, color_by=color_by
+            ax,
+            map_indices[0],
+            var_idx,
+            mesh=mesh,
+            color_by=color_by_diff if is_diff else color_by,
         )
         _restyle_window_missing(ax, drop_xy, context_xy)
         for coll in list(ax.collections):
@@ -596,14 +656,21 @@ def _draw_event_row(
                 coll.set_sizes(coll.get_sizes() * _MAP_MARKER_SCALE)
                 coll.set_linewidths(_MAP_MARKER_EDGE)
         _mark_stations(ax, coords[list(event.stations)], labels)
-        ax.set_title(name, fontsize=13)
+        ax.set_title(title, fontsize=13)
         ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
     map_fig.colorbar(
-        mesh,
-        ax=ax_maps,
+        meshes[0],
+        ax=ax_maps[:2],
         label=f"{map_label} [{map_unit}]" if map_unit else map_label,
+        shrink=0.85,
+    )
+    diff_label = "OAT \u2212 NWP; markers: obs \u2212 NWP"
+    map_fig.colorbar(
+        meshes[2],
+        ax=ax_maps[2],
+        label=f"{diff_label} [{map_unit}]" if map_unit else diff_label,
         shrink=0.85,
     )
     try:
