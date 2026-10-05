@@ -1000,6 +1000,9 @@ class OATPlotter:
                     y_hat_ref_b, nan=0.0, posinf=0.0, neginf=0.0
                 )
             mask_b = mask_b * finite.float()
+            # Missing observations are NaN in obs_tensor (mask 0). The metrics
+            # multiply by the mask, and NaN * 0 is NaN, so set them to 0.
+            y_obs_b = torch.nan_to_num(y_obs_b, nan=0.0)
 
             count_b = mask_b.sum(dim=0)  # [S, V]
             crps_sum += (
