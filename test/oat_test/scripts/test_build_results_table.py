@@ -1,5 +1,10 @@
+import json
+import math
+
+import pytest
+
 import scripts.build_results_table as build_results_table_module
-from scripts.build_results_table import _resolve_tag, _tag_for_run
+from scripts.build_results_table import _collect, _resolve_tag, _tag_for_run
 
 
 def test_resolve_tag_sentinel():
@@ -83,3 +88,48 @@ def test_tag_for_run_checkpoint_path_also_prefers_suffixed_file(tmp_path, monkey
         "spatial_region_holdout",
     )
     assert tag == "oat_era5_meteostat-temp_precip_run_spatial_region_holdout"
+
+
+def _write_summary(results_dir, tag, crps, split="test"):
+    path = results_dir / f"{tag}_metrics_{split}.summary.json"
+    path.write_text(json.dumps({"crps": {"temp": crps}, "mae": {"temp": crps}}))
+
+
+def _holdout_row(data, base):
+    rows = data[build_results_table_module.SPATIAL_HOLDOUT_VIEW]
+    return next(r for r in rows if r["base"] == base)
+
+
+def test_collect_holdout_view_reads_only_suffixed_files(tmp_path, monkeypatch):
+    """The holdout view must read the _spatial_region_holdout file of every
+    model. A file without the suffix has a different test window, so it must
+    not be used, also not as a fallback: a missing file gives NA."""
+    monkeypatch.setattr(build_results_table_module, "RESULTS_DIR", tmp_path)
+    registry = {
+        "era5_meteostat": {
+            "interpolator": "interpolator",
+            "cosmo_interpolator": "cosmo_interpolator",
+            "oat_spatial_holdout_temp_precip": "/c/oat_holdout_run/best.ckpt",
+            "uninformed_spatial_holdout_temp_precip": "/c/uninf_holdout_run/b.ckpt",
+        }
+    }
+    suffix = "_spatial_region_holdout"
+    _write_summary(tmp_path, "oat_holdout_run" + suffix, 0.8)
+    _write_summary(tmp_path, "oat_holdout_run", 9.9)
+    _write_summary(tmp_path, "cosmo_interpolator_era5_meteostat" + suffix, 1.2)
+    _write_summary(tmp_path, "cosmo_interpolator_era5_meteostat", 9.9)
+    _write_summary(tmp_path, "uninf_holdout_run", 9.9)  # unsuffixed only
+
+    data = _collect(registry, "test", 10, 0, (2.5, 97.5))
+
+    assert _holdout_row(data, "oat_spatial_holdout")["vars"]["temperature"][
+        "crps"
+    ] == pytest.approx(0.8)
+    assert _holdout_row(data, "cosmo_interpolator")["vars"]["temperature"][
+        "crps"
+    ] == pytest.approx(1.2)
+    assert math.isnan(
+        _holdout_row(data, "uninformed_spatial_holdout")["vars"]["temperature"][
+            "crps"
+        ]
+    )

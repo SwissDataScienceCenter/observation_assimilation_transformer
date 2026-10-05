@@ -289,8 +289,8 @@ def _views(registry: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     spatial-holdout checkpoints and the COSMO interpolator are pulled into a
     separate SPATIAL_HOLDOUT_VIEW so they don't mix with the regular Europe
     numbers. The plain ``interpolator`` sentinel (ERA5 NWP baseline) is
-    shared by both views -- regular split in Europe, forced onto
-    SPATIAL_HOLDOUT_SPLIT_CONFIG in the holdout view (see ``_collect``).
+    shared by both views. In the holdout view, every entry is forced onto
+    SPATIAL_HOLDOUT_SPLIT_CONFIG (see ``_collect``).
     """
     out: list[tuple[str, str, dict[str, Any]]] = []
     for dataset, models in registry.items():
@@ -316,8 +316,9 @@ def _forced_tag(dataset: str, key: str, value: Any, split_config: str) -> str | 
     """Suffixed tag for a run forced onto ``split_config``, no fallback.
 
     Unlike ``_tag_for_run``, this never falls back to the unsuffixed tag: the
-    unsuffixed file here is a *different* split (era5_meteostat's regular
-    test split, not the spatial holdout), so silently substituting it would
+    unsuffixed file here is a *different* setup (era5_meteostat's regular
+    test split, or a holdout checkpoint evaluated on its own split with
+    another test window), so silently substituting it would
     mislabel those numbers as holdout results. A missing suffixed file
     renders NA instead.
     """
@@ -341,7 +342,9 @@ def _collect(
         order: list[str] = []
         for key, value in models.items():
             base, key_vars = _base_and_vars(key)
-            if view == SPATIAL_HOLDOUT_VIEW and key == "interpolator":
+            if view == SPATIAL_HOLDOUT_VIEW:
+                # Every holdout entry reads its _spatial_region_holdout file.
+                # A file without the suffix has another test window.
                 tag = _forced_tag(
                     source_dataset, key, value, SPATIAL_HOLDOUT_SPLIT_CONFIG
                 )

@@ -13,6 +13,7 @@ from scripts.evaluate_test_set import (
     _compose_cosmo_interpolator_cfg,
     _cosmo_interpolator_dataset_is_valid,
     _exclude_context,
+    _holdout_split_error,
     _override_split,
     _print_summary,
     _sibling_checkpoint,
@@ -166,3 +167,23 @@ def test_sibling_checkpoint_skips_both_interpolator_sentinels(tmp_path, monkeypa
     monkeypatch.setattr(evaluate_test_set_module, "_DEFAULT_REGISTRY", registry_path)
     result = _sibling_checkpoint("era5_meteostat")
     assert result == "/checkpoints/oat_field/oat_era5_meteostat_run1/best.ckpt"
+
+
+def test_holdout_split_error_requires_holdout_split_for_holdout_models():
+    """A holdout model run without the holdout split writes a result file
+    without the suffix and with another test window. The script must refuse
+    this run."""
+    for model in (
+        "oat_spatial_holdout_temp_precip",
+        "uninformed_spatial_holdout_temp_precip",
+        COSMO_INTERPOLATOR_MODEL,
+    ):
+        assert _holdout_split_error(model, None) is not None
+        assert _holdout_split_error(model, "other_split") is not None
+        assert _holdout_split_error(model, "spatial_region_holdout") is None
+
+
+def test_holdout_split_error_allows_other_models():
+    assert _holdout_split_error("oat_temp_precip", None) is None
+    assert _holdout_split_error(INTERPOLATOR_MODEL, None) is None
+    assert _holdout_split_error(None, None) is None

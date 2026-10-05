@@ -55,6 +55,28 @@ INTERPOLATOR_MODEL = "interpolator"
 COSMO_INTERPOLATOR_MODEL = "cosmo_interpolator"
 
 
+def _holdout_split_error(model: str | None, split_config: str | None) -> str | None:
+    """Error text if a spatial-holdout model runs without the holdout split.
+
+    Without --split-config, a holdout checkpoint uses its own split (another
+    test window) and writes a result file without the split suffix, which
+    looks like a regular era5_meteostat result.
+    """
+    from scripts.build_results_table import (
+        SPATIAL_HOLDOUT_CHECKPOINT_KEYS,
+        SPATIAL_HOLDOUT_ONLY_SENTINELS,
+        SPATIAL_HOLDOUT_SPLIT_CONFIG,
+    )
+
+    holdout_models = SPATIAL_HOLDOUT_CHECKPOINT_KEYS | SPATIAL_HOLDOUT_ONLY_SENTINELS
+    if model in holdout_models and split_config != SPATIAL_HOLDOUT_SPLIT_CONFIG:
+        return (
+            f"--model {model} is a spatial-holdout model. Run it with "
+            f"--split-config {SPATIAL_HOLDOUT_SPLIT_CONFIG}."
+        )
+    return None
+
+
 def _sibling_checkpoint(dataset: str) -> str:
     """Return any non-null checkpoint path for ``dataset`` (to borrow its cfg)."""
     registry = OmegaConf.load(_DEFAULT_REGISTRY)
@@ -318,6 +340,11 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
+
+    holdout_error = _holdout_split_error(args.model, args.split_config)
+    if holdout_error is not None:
+        logger.error(holdout_error)
+        raise SystemExit(2)
 
     is_interpolator = args.model in (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
 
