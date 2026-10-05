@@ -828,7 +828,12 @@ class OAT(UninformedOAT):
 
         # Step 5: Create spatial masks (Eq. 14)
         edges_src = self.mask_generator(coords_1=_search_coords(observation_data))
-        edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
+        # Query-query edges are only read by decoder self-attention, so skip the
+        # neighbour search when it is disabled.
+        if self.config.transformer.decoder_self_attention:
+            edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
+        else:
+            edges_tgt = None
         edges_memory = self.mask_generator(
             coords_1=_search_coords(observation_data),
             coords_2=_search_coords(query_data),
