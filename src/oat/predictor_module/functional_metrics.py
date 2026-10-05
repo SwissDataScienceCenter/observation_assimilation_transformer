@@ -81,8 +81,9 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
     if mask is None:
         mask = torch.ones_like(y_target)
 
-    # Take median over samples
-    median = torch.median(y_hat, dim=-2).values
+    # Take median over samples. contiguous(): torch.median gives wrong values
+    # for an expanded (stride 0) tensor, e.g. the NWP interpolator samples.
+    median = torch.median(y_hat.contiguous(), dim=-2).values
 
     abs_errors = torch.abs(y_target - median) * mask.float()
 

@@ -41,3 +41,18 @@ def test_sample_mae(metric_fn: callable, aggregation: str) -> None:
         assert metrics.item() == 1.0
     else:
         assert (metrics == 1.0).all()
+
+def test_point_mae_with_expanded_samples_matches_contiguous():
+    """The NWP interpolator expands one value into its samples (stride 0).
+    torch.median gives wrong values for such a tensor, so point_mae must
+    give the same result as for a contiguous copy."""
+    from oat.predictor_module.functional_metrics import point_mae
+
+    torch.manual_seed(0)
+    y_target = torch.randn(1, 50, 2) * 10 + 280
+    y_pred = y_target + torch.randn(1, 50, 2)
+    y_hat = y_pred.unsqueeze(-2).expand(-1, -1, 100, -1)
+    expected = point_mae(y_target, y_hat.contiguous(), aggregation="station")
+    torch.testing.assert_close(
+        point_mae(y_target, y_hat, aggregation="station"), expected
+    )
