@@ -1375,53 +1375,53 @@ def test_compute_station_metrics_guards_non_finite_predictions():
     torch.testing.assert_close(guarded["mae"][0], excl["mae"][0], atol=1e-5, rtol=0)
 
 
-def test_compute_station_metrics_ignores_masked_nan_observations():
+@pytest.mark.parametrize("batch_size", [3, 2])
+def test_compute_station_metrics_ignores_masked_nan_observations(batch_size):
     """A missing observation is NaN in obs_tensor and 0 in the mask. It must
     be excluded like any masked entry, not NaN out the station (NaN * 0 is
-    NaN). The score must equal the score over the observed timesteps only."""
+    NaN). Every output, CRPSS included, must equal the output for the same
+    data with a finite value at that masked entry. batch_size=2 splits the
+    timesteps into two chunks."""
     T, S_eval, n_samples, V = 3, 2, 4, 1
     torch.manual_seed(0)
     predictor = _make_predictor(N_q=S_eval, n_samples=n_samples, n_vars=V)
-    dataset = _make_dataset(n_stations=5, n_times=T, n_vars=V)
-    dataset.obs_tensor = torch.randn(T, 5, V)
-    dataset.obs_mask_tensor = torch.ones(T, 5, V)
+    baseline = _make_baseline_predictor(N_q=S_eval, n_samples=n_samples, n_vars=V)
     eval_station_indices = [2, 3]
+    obs = torch.randn(T, 5, V)
+    mask = torch.ones(T, 5, V)
     # Eval station 0 (dataset station 2) has no observation at time 1.
-    dataset.obs_tensor[1, 2, 0] = float("nan")
-    dataset.obs_mask_tensor[1, 2, 0] = 0.0
+    mask[1, 2, 0] = 0.0
 
     samples_by_t = [torch.randn(S_eval, n_samples, V) for _ in range(T)]
+    ref_samples_by_t = [torch.randn(S_eval, n_samples, V) for _ in range(T)]
 
     def _mock_inference(time_idx, query_coords, predictor=None):
+        if predictor is baseline:
+            return ref_samples_by_t[time_idx]
         return samples_by_t[time_idx]
 
-    plotter = OATPlotter(
-        predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
-    )
-
-    with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
-        result = plotter.compute_station_metrics(
-            time_indices=list(range(T)),
-            eval_station_indices=eval_station_indices,
-            batch_size=T,
+    def _metrics(missing_value: float) -> dict:
+        dataset = _make_dataset(n_stations=5, n_times=T, n_vars=V)
+        dataset.obs_tensor = obs.clone()
+        dataset.obs_tensor[1, 2, 0] = missing_value
+        dataset.obs_mask_tensor = mask.clone()
+        plotter = OATPlotter(
+            predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
         )
-    assert torch.isfinite(result["crps"]).all()
-    assert torch.isfinite(result["mae"]).all()
-    assert torch.isfinite(result["crps_global"])
-    assert torch.isfinite(result["mae_global"])
+        with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
+            return plotter.compute_station_metrics(
+                time_indices=list(range(T)),
+                eval_station_indices=eval_station_indices,
+                reference=baseline,
+                batch_size=batch_size,
+            )
 
-    with patch.object(plotter, "_run_inference", side_effect=_mock_inference):
-        observed_only = plotter.compute_station_metrics(
-            time_indices=[0, 2],
-            eval_station_indices=eval_station_indices,
-            batch_size=2,
-        )
-    torch.testing.assert_close(
-        result["crps"][0], observed_only["crps"][0], atol=1e-5, rtol=0
-    )
-    torch.testing.assert_close(
-        result["mae"][0], observed_only["mae"][0], atol=1e-5, rtol=0
-    )
+    result = _metrics(float("nan"))
+    expected = _metrics(0.5)
+
+    for key in ("crps", "mae", "crpss", "crps_global", "mae_global", "crpss_global"):
+        assert torch.isfinite(result[key]).all(), key
+        torch.testing.assert_close(result[key], expected[key], atol=1e-5, rtol=0)
 
 
 def test_plot_domain_overview_first_panel_applies_configured_vmin():
