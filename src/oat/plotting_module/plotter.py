@@ -1000,6 +1000,10 @@ class OATPlotter:
                     y_hat_ref_b, nan=0.0, posinf=0.0, neginf=0.0
                 )
             mask_b = mask_b * finite.float()
+            # Missing observations are NaN in obs_tensor (mask 0). The metrics
+            # multiply by the mask, and NaN * 0 is NaN, so set them to 0.
+            # Only masked entries change: bad data with mask 1 stays visible.
+            y_obs_b = y_obs_b.masked_fill(mask_b == 0, 0.0)
 
             count_b = mask_b.sum(dim=0)  # [S, V]
             crps_sum += (
@@ -1047,8 +1051,9 @@ class OATPlotter:
             "mae_global": mae_global,
             # Per-(station, variable) count of prediction samples excluded
             # for being non-finite (e.g. a distribution sampler overflowing)
-            # — NOT missing-observation gaps, which show up as NaN in
-            # crps/mae above instead. Non-zero here means the model produced
+            # — NOT missing-observation gaps, which the mask excludes. A
+            # station is NaN in crps/mae above only if it has no valid
+            # observation at all. Non-zero here means the model produced
             # bad output, silently averaged out of the metrics above.
             "n_nonfinite": nonfinite_count,
         }
