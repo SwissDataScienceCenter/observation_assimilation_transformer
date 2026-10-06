@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 import copy
+import warnings
 from torch.nn.init import xavier_uniform_
 
 from oat.model_module.activations import get_activation
@@ -533,6 +534,13 @@ class GeometryAwareDecoderLayer(nn.Module):
         Returns:
             The output tensor after applying self-attention, cross-attention, and feedforward blocks
         """
+        if tgt_mask_edges is not None and not self.perform_self_attention:
+            warnings.warn(
+                "tgt_mask_edges was passed, but this decoder layer has no "
+                "self-attention (decoder_self_attention=False), so the edges are "
+                "ignored. Pass None to skip the neighbour search that built them."
+            )
+
         x = tgt
         if self.norm_first:
 
