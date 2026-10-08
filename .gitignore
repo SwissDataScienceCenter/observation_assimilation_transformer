@@ -43,7 +43,11 @@ poetry.lock
 .cache_constant_inputs
 CLAUDE.md
 checkpoints/
-benchmarking/
+benchmarking/*
+!benchmarking/run_scaling_benchmark.sh
+!benchmarking/scaling_benchmark/
+benchmarking/scaling_benchmark/*
+!benchmarking/scaling_benchmark/plot_scaling.ipynb
 profiler_outputs/
 docs/
 .claude/
