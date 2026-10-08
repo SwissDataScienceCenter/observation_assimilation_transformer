@@ -56,7 +56,9 @@ COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tenso
         ["U_10M", "V_10M"],
         lambda n: torch.sqrt(n["U_10M"] ** 2 + n["V_10M"] ** 2),
     ),
-    "precipitation": (["TOT_PREC_1H"], lambda n: 600.0 * n["TOT_PREC_1H"]),
+    # The archive recipe rescales TOT_PREC by 0.001 (kg/m^2 -> m), so
+    # TOT_PREC_1H is in m/h. Multiply by 1000 to get mm/h.
+    "precipitation": (["TOT_PREC_1H"], lambda n: 1000.0 * n["TOT_PREC_1H"]),
 }
 
 
