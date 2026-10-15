@@ -11,9 +11,9 @@
 
 cosmo_peakweather:
   interpolator: interpolator
-  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20260820_job5151598/best-model-epoch=79-val_loss=0.1942.ckpt
-  oat_vanilla_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20260904_job5235260/best-model-epoch=18-val_loss=0.1960.ckpt
-  oat_tetnp_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20260904_job5235261/best-model-epoch=32-val_loss=0.1881.ckpt
+  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_bn_20261006/best-model-epoch=105-val_loss=0.1946.ckpt
+  oat_vanilla_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20261007_job168391/best-model-epoch=124-val_loss=0.1944.ckpt
+  oat_tetnp_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_cosmo_peakweather-temp_precip_20261007_job168392/best-model-epoch=134-val_loss=0.1916.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat_field/uninformed_oat_field_cosmo_peakweather-temp_precip_20260821_job5160674/best-model-epoch=81-val_loss=0.2279.ckpt
   ootg_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/ootg/ootg_cosmo_peakweather-temp_precip_ootg_20260909_job114747/epoch=47-val_loss=0.1213.ckpt
   gp_oat_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp_oat_field/gp_oat_field_cosmo_peakweather-temp_20260821_job5160231/best-model-epoch=86-val_crps_temperature=0.9044.ckpt
@@ -24,7 +24,7 @@ cosmo_peakweather:
 era5_meteostat:
   interpolator: interpolator
   cosmo_interpolator: cosmo_interpolator
-  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_era5_meteostat-temp_precip_20260821_job5157594/best-model-epoch=238-val_loss=0.1906.ckpt
+  oat_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/oat_field/oat_field_era5_meteostat-temp_precip_bn_20261006/best-model-epoch=479-val_loss=0.1908.ckpt
   uninformed_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/uninformed_oat_field/uninformed_oat_field_era5_meteostat-temp_precip_20260821_job5160673/best-model-epoch=154-val_loss=0.2315.ckpt
   ootg_temp_precip: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/ootg/ootg_era5_meteostat-temp_precip_ootg_20260909_job114744/epoch=13-val_loss=0.1091.ckpt
   gp_oat_temp: /scratch/mch/cdonner/observation_assimilation_transformer/checkpoints/gp_oat_field/gp_oat_field_era5_meteostat-temp_20260824_job5173800/best-model-epoch=21-val_crps_temp=0.9712.ckpt

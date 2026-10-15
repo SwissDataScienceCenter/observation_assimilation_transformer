@@ -15,10 +15,10 @@ start=$(date +%s)
 
 python -m scripts.plot_pit \
     --model oat_temp_precip \
-    --dataset cosmo_peakweather \
     --split test \
     --n-samples 500 \
-    --baseline uninformed_temp_precip
+    --baseline uninformed_temp_precip \
+    "$@"
 
 end=$(date +%s)
 elapsed=$((end - start))
