@@ -4,7 +4,7 @@
 # Every run writes its own folder to benchmarking/scaling_benchmark/.
 #
 # Usage (from the repository root):
-#   sbatch benchmarking/run_scaling_benchmark.sh
+#   sbatch scripts/submit_station_scaling_benchmark.sh
 
 #SBATCH --job-name="oat_scaling_benchmark"
 
