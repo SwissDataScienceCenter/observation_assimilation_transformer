@@ -44,9 +44,6 @@ poetry.lock
 CLAUDE.md
 checkpoints/
 benchmarking/*
-!benchmarking/scaling_benchmark/
-benchmarking/scaling_benchmark/*
-!benchmarking/scaling_benchmark/plot_scaling.ipynb
 profiler_outputs/
 docs/
 .claude/
