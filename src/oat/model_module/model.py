@@ -827,23 +827,17 @@ class OAT(UninformedOAT):
         )
 
         # Step 5: Create spatial masks (Eq. 14)
-        if self.config.masking.mode == "full":
-            # Full attention: every point attends to every other one, so there
-            # is no neighbour search and no mask. Without edges, the attention
-            # runs dense and unmasked.
-            edges_src, edges_tgt, edges_memory = None, None, None
+        edges_src = self.mask_generator(coords_1=_search_coords(observation_data))
+        # Query-query edges are only read by decoder self-attention, so skip the
+        # neighbour search when it is disabled.
+        if self.config.transformer.decoder_self_attention:
+            edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
         else:
-            edges_src = self.mask_generator(coords_1=_search_coords(observation_data))
-            # Query-query edges are only read by decoder self-attention, so skip
-            # the neighbour search when it is disabled.
-            if self.config.transformer.decoder_self_attention:
-                edges_tgt = self.mask_generator(coords_1=_search_coords(query_data))
-            else:
-                edges_tgt = None
-            edges_memory = self.mask_generator(
-                coords_1=_search_coords(observation_data),
-                coords_2=_search_coords(query_data),
-            )
+            edges_tgt = None
+        edges_memory = self.mask_generator(
+            coords_1=_search_coords(observation_data),
+            coords_2=_search_coords(query_data),
+        )
 
         # Step 6: Apply transformer (Eq. 16-25)
         # - Encoder: Self-attention across stations refines station tokens (Eq. 16)

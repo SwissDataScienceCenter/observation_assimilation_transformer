@@ -56,18 +56,21 @@ class SpatialNeighborSearch(nn.Module):
         coords_1: torch.Tensor,
         coords_2: Optional[torch.Tensor] = None,
         return_full_mask: bool = False,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute edges of flattened batch point clouds and return edges
-        
+
         Args:
             coords_1: [B, N_1, D] first set of coordinates
             coords_2: [B, N_2, D] second set of coordinates (if None, use coords_1 for both)
             return_full_mask: If True, return a dense boolean mask of shape [B, N_1, N_2] instead of edge indices.
         Returns:
-            If return_full_mask is False:
+            In mode 'full': None, whatever return_full_mask. Every point is a
+            neighbor of every other one, which the attention treats as dense
+            and unmasked.
+            Otherwise, if return_full_mask is False:
                 edge_index: [2, E] edge indices in flattened batch space
-            If return_full_mask is True:
+            Otherwise, if return_full_mask is True:
                 mask: [B, N_1, N_2] boolean mask where True indicates a neighbor relationship between points in coords_1 and coords_2.
         """
         if coords_2 is None:
@@ -75,6 +78,12 @@ class SpatialNeighborSearch(nn.Module):
 
         B, N1, _ = coords_1.shape
         _, N2, _ = coords_2.shape
+
+        if self.mode == 'full':
+            # Every point is a neighbor of every other one, so no edges are
+            # built: the attention treats None as "attend to all" (dense,
+            # unmasked).
+            return None
 
         # Flatten coordinates across batch dimension for batched neighbor search
         coords_1_flat = coords_1.reshape(B * N1, -1)
@@ -102,20 +111,6 @@ class SpatialNeighborSearch(nn.Module):
                 batch_x=batch_x,
                 batch_y=batch_y,
             )
-        elif self.mode == 'full':
-            edge_index_per_point = torch.stack(torch.meshgrid(
-                torch.arange(N2, device=coords_1.device),
-                torch.arange(N1, device=coords_1.device),
-                indexing='ij'
-            ), dim=0).reshape(2, -1)  # [2, N1*N2]
-            edge_index = []
-            for b in range(B):
-                batch_offset_1 = b * N1
-                batch_offset_2 = b * N2
-                edge_index.append(edge_index_per_point.clone())
-                edge_index[-1][0] += batch_offset_2  # coords_2 indices
-                edge_index[-1][1] += batch_offset_1  # coords_1 indices
-            edge_index = torch.cat(edge_index, dim=1)  # [2, B*N1*N2]
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
         if return_full_mask:

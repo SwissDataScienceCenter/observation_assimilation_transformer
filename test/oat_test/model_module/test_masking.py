@@ -94,9 +94,8 @@ class TestSpatialNeighborSearchInit:
         coords_a = torch.randn((1, 50, 3))
         coords_b = torch.randn((1, 60, 3))
         
+        # Full mode builds no edges and no mask: None means "attend to all".
         mask_full = search_full(coords_a, coords_b, return_full_mask=True)
         edges_full = search_full(coords_a, coords_b)
-        assert mask_full.shape == (1, 50, 60)
-        assert torch.all(mask_full)
-        assert edges_full.shape[1] == 50 * 60
-        assert edges_full.shape[0] == 2
+        assert mask_full is None
+        assert edges_full is None
