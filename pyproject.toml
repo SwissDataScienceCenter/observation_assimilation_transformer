@@ -37,7 +37,6 @@ peakweather = {git = "https://github.com/MeteoSwiss/PeakWeather.git", tag = "v0.
 wandb = "*"
 obsweatherscale = {git = "https://github.com/MeteoSwiss/obsweatherscale.git", rev = "852c19e", python = ">=3.10,<3.13"}
 gpytorch = ">=1.13,<2.0"
-tqdm = "^4.67.3"
 pyarrow = ">=23.0.0,<24.0.0"  # parquet engine for pandas (Meteostat observations)
 numpy = ">=1.26.4"
 pandas = ">=3.0.0"
@@ -48,6 +47,10 @@ pyproj = ">=3.7.2"
 shapely = ">=2.1.2"
 omegaconf = ">=2.3.0"
 pyyaml = ">=6.0.3"
+check-shapes = ">=1.1.1,<2.0.0"  # imported by deps/gridded-tnp (OOTG baseline)
+hiyapyco = ">=0.7.0,<0.8.0"  # imported by deps/gridded-tnp (OOTG baseline)
+lightning = ">=2.4.0,<3.0.0"  # imported by deps/gridded-tnp (OOTG baseline)
+linear-operator = ">=0.6.1,<0.7.0"  # imported by oat.model_module.gp_baseline
 
 [tool.poetry.group.dev.dependencies]
 black = ">=24.0"

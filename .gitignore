@@ -43,7 +43,6 @@ build/
 release/stage/
 setup_env.sh
 .DS_Store
-poetry.lock
 .cache_constant_inputs
 CLAUDE.md
 checkpoints/
