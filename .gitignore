@@ -39,6 +39,7 @@ build/
 .superpowers/
 
 # Misc
+release/stage/
 .DS_Store
 poetry.lock
 .cache_constant_inputs
