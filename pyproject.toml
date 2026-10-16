@@ -90,3 +90,8 @@ check_untyped_defs = true
 name = "torch-wheels"
 url = "https://data.pyg.org/whl/torch-2.4.0+cu121.html"
 priority = "supplemental"
+
+[tool.pytest.ini_options]
+markers = [
+    "requires_data: needs the real datasets below the data root (skips when they are missing)",
+]
