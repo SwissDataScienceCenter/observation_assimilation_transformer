@@ -27,9 +27,6 @@ def _cfg(d_model: int, ge_extra: dict | None = None, te_extra: dict | None = Non
     )
 
 
-_FIELD_EXTENT = {"min": [0.0, 0.0], "max": [1.0, 1.0]}
-
-
 def test_width_defaults_to_half_d_model_when_unspecified():
     d_model = 32
     cfg = _cfg(
@@ -37,7 +34,7 @@ def test_width_defaults_to_half_d_model_when_unspecified():
         ge_extra={"num_hidden_layers": 2, "hidden_width": None},
         te_extra={"num_hidden_layers": 2, "hidden_width": None},
     )
-    ge, te, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
+    ge, te, _ = setup_backbone_cfgs(cfg)
     assert list(ge.hidden_dims) == [d_model // 2, d_model // 2]
     assert list(te.hidden_dims) == [d_model // 2, d_model // 2]
 
@@ -45,7 +42,7 @@ def test_width_defaults_to_half_d_model_when_unspecified():
 def test_default_when_knobs_omitted():
     # No num_hidden_layers / hidden_width keys at all -> 0 hidden layers
     # (single output linear), matching the current num_hidden_layers default.
-    ge, te, _ = setup_backbone_cfgs(_cfg(32), _FIELD_EXTENT)
+    ge, te, _ = setup_backbone_cfgs(_cfg(32))
     assert list(ge.hidden_dims) == []
     assert list(te.hidden_dims) == []
 
@@ -58,7 +55,7 @@ def test_configurable_width_overrides_default():
         ge_extra={"num_hidden_layers": 2, "hidden_width": 64},
         te_extra={"num_hidden_layers": 2, "hidden_width": 8},
     )
-    ge, te, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
+    ge, te, _ = setup_backbone_cfgs(cfg)
     assert list(ge.hidden_dims) == [64, 64]
     assert list(te.hidden_dims) == [8, 8]
 
@@ -71,13 +68,13 @@ def test_point_in_channels_from_global_field_inputs():
     cfg.dataset.fields = {
         "nwp": {"inputs": ["nwp.a", "nwp.b", "topo.t1", "topo.t2", "topo.t3"]}
     }
-    ge, _, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
+    ge, _, _ = setup_backbone_cfgs(cfg)
     assert ge.in_channels == 5
 
 
 def test_point_in_channels_falls_back_to_nwp_vars_without_fields():
     # No roles/fields (e.g. non-field configs): fall back to len(nwp_vars).
-    ge, _, _ = setup_backbone_cfgs(_cfg(32), _FIELD_EXTENT)
+    ge, _, _ = setup_backbone_cfgs(_cfg(32))
     assert ge.in_channels == 2
 
 
@@ -87,6 +84,6 @@ def test_configurable_num_layers():
         ge_extra={"num_hidden_layers": 3},
         te_extra={"num_hidden_layers": 0},
     )
-    ge, te, _ = setup_backbone_cfgs(cfg, _FIELD_EXTENT)
+    ge, te, _ = setup_backbone_cfgs(cfg)
     assert list(ge.hidden_dims) == [16, 16, 16]  # 3 layers of default width
     assert list(te.hidden_dims) == []  # 0 hidden layers -> single output linear

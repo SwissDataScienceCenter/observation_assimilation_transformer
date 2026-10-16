@@ -7,7 +7,6 @@ from oat.model_module.model import get_model_cls
 from oat.data_module.setup import setup_data_and_transform
 from oat.predictor_module.oat_predictor import setup_oat_cfg, setup_oat_predictor
 from oat.predictor_module.gp_predictor import setup_gp_predictor
-from oat.data_module.transform import Transform
 from oat.predictor_module import OATPredictor
 from oat.predictor_module.schedulers import estimate_total_steps
 from omegaconf import DictConfig
@@ -15,8 +14,6 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 import torch
 import logging
-from pathlib import Path
-import pickle
 from typing import Dict, Tuple, List, Any
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer
@@ -29,7 +26,6 @@ from pytorch_lightning.loggers import WandbLogger
 import wandb
 from pytorch_lightning.profilers import SimpleProfiler
 from pytorch_lightning.profilers import Profiler
-from torch.utils.data import DataLoader
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,37 +130,6 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     ]
 
 
-def save_fixtures_for_tests(
-    input_transform: Transform,
-    output_transform: Transform,
-    train_loader: DataLoader,
-    cfg: DictConfig,
-) -> None:
-    assert (
-        cfg.dataloader.train.batch_size == 1
-    ), "Please use batch size = 1 when saving fixtures."
-
-    logger.info("Saving examples of transforms as fixtures ...")
-    ROOT = Path(__file__).resolve().parents[1]
-
-    out_file = ROOT / "test" / "oat_test" / "input_transform_fixture.pickle"
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_file, "wb") as f:
-        pickle.dump(input_transform, f)
-    logger.info(f"Saved input_transform object to {out_file}")
-
-    out_file = ROOT / "test" / "oat_test" / "output_transform_fixture.pickle"
-    with open(out_file, "wb") as f:
-        pickle.dump(output_transform, f)
-    logger.info(f"Saved output_transform object to {out_file}")
-
-    batch = next(iter(train_loader))
-    out_file = ROOT / "test" / "oat_test" / "example_batch_fixture.pickle"
-    with open(out_file, "wb") as f:
-        pickle.dump(batch, f)
-    logger.info(f"Saved batch fixture object to {out_file}")
-
-
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # set global seed
@@ -193,16 +158,6 @@ def main(cfg: DictConfig) -> None:
         output_transform,
     ) = setup_data_and_transform(cfg, logger)
 
-    if cfg.get("save_fixtures", False):
-        save_fixtures_for_tests(
-            input_transform=input_transform,
-            output_transform=output_transform,
-            train_loader=train_loader,
-            cfg=cfg,
-        )
-        return
-
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
     wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
 
     # print config
@@ -220,7 +175,6 @@ def main(cfg: DictConfig) -> None:
 
         predictor = setup_gp_predictor(
             cfg=cfg,
-            field_extent=field_extent,
             obs_vars=list(dataset.config.obs_vars),
             transforms=[input_transform, output_transform],
             project_index_coords=resolve_index_projection(dataset),
@@ -248,7 +202,7 @@ def main(cfg: DictConfig) -> None:
 
         index_projection = resolve_index_projection(dataset)
         oat_model_cfg = setup_oat_cfg(
-            cfg, field_extent, logger, project_index_coords=index_projection
+            cfg, logger, project_index_coords=index_projection
         )
 
         var_names = dataset.config.obs_vars

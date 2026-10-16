@@ -46,14 +46,11 @@ def main(cfg: DictConfig) -> None:
     dataset, len_train, train_loader, val_loader, _, input_transform, output_transform = \
         setup_data_and_transform(cfg, logger)
 
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-
     # ── model (single GPU, no DDP) ────────────────────────────────────────
     from oat.predictor_module.field_batch_utils import resolve_index_projection
 
     oat_model_cfg = setup_oat_cfg(
         cfg,
-        field_extent,
         logger,
         project_index_coords=resolve_index_projection(dataset),
     )

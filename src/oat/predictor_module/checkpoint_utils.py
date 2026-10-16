@@ -18,6 +18,7 @@ _DEFAULT_PREDICTOR = "oat.predictor_module.oat_predictor.OATPredictor"
 def _predictor_cls_from_config(cfg: DictConfig) -> Type[pl.LightningModule]:
     """Infer predictor class from cfg.model.model_cls."""
     import importlib
+
     model_cls_str = cfg.model.model_cls
     target = _DEFAULT_PREDICTOR
     for fragment, predictor_path in _MODEL_CLS_TO_PREDICTOR.items():
@@ -107,7 +108,6 @@ def _load_gp_predictor(
 
     predictor = setup_gp_predictor(
         cfg=cfg,
-        field_extent={k: v.tolist() for k, v in dataset.nwp_extent.items()},
         obs_vars=list(dataset.config.obs_vars),
         transforms=(input_transform, output_transform),
         project_index_coords=resolve_index_projection(dataset),

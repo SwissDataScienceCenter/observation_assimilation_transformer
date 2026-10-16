@@ -4,10 +4,6 @@
 nwp_path: "/store_new/mch/msopr/ml/datasets/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
 topo_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
 obs_path: "/scratch/mch/cdonner/data/peakweather"
-# Legacy-only: reference regridding grid for legacy.CosmoPeakWeatherDataset
-# (dataset_type: legacy_cosmo_peakweather) and the OOTG baseline, which is
-# built on top of it. Unused by the live field-based CosmoPeakWeatherDataset.
-ref_nwp_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
 nwp_extracted_path: "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
 
 # Topographic variables
@@ -34,12 +30,6 @@ stations: null
 # Time range (null = full available range)
 start_date: null  # Format: 'YYYY-MM-DD'
 end_date: null    # Format: 'YYYY-MM-DD'
-
-# Legacy-only: grid patch extraction size in legacy.CosmoPeakWeatherDataset.
-# Unused by the live field-based CosmoPeakWeatherDataset.
-patch_size:
-  - 1
-  - 1
 
 # Time embedding
 use_time_embedding: true

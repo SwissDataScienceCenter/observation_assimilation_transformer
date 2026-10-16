@@ -21,10 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-# Both families only ship "temp" (univariate) and "temp_precip" (multivariate)
-# at the top level now -- the old grid-only "precip" variant and the
-# "field_"-prefixed names were retired when Task 7 promoted the flat-Field
-# configs to these clean names and moved the grid-only ones to legacy/.
+# Each family ships these dataset variants at the top level of its config dir.
 DATASET_VARIANTS = (
     "temp",
     "precip",
@@ -52,10 +49,10 @@ MODEL_SPECS = {
         ("model=uninformed_oat", "predictor=oat_predictor", "split=no_conditioning"),
     ),
     # "_field" presets: same models with the point-wise global/topographic
-    # encoders pinned explicitly. Every non-legacy dataset is flat-Field-shaped
-    # now (Task 7 promoted those configs to the clean top-level names), and
-    # model=oat/uninformed_oat already default to point/mlp too, so these are
-    # a stable, explicit-override alias rather than a dataset-gated variant.
+    # encoders pinned explicitly. Every dataset is flat-Field-shaped,
+    # and model=oat/uninformed_oat already default to point/mlp too.
+    # So these are a stable, explicit-override alias.
+    # They are not a dataset-gated variant.
     "oat_field": ModelSpec(
         "scripts.train_model",
         (

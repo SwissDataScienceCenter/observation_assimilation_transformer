@@ -1,8 +1,7 @@
 """COSMO-PeakWeather dataset that emits a dict of ``Field`` per sample.
 
-Thin concrete subclass of ``DatasetBase``: reuses the existing COSMO NWP /
-topography / PeakWeather-observation loaders from
-``legacy/cosmo_peakweather_dataset.py`` and wires them into three ``Source``
+Thin concrete subclass of ``DatasetBase``. It loads the COSMO NWP,
+topography and PeakWeather observations. It wires them into three ``Source``
 objects (obs, nwp, topo) consumed by the config-driven field assembly in
 ``DatasetBase``.
 """
@@ -45,9 +44,8 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
 }
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
-# name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# legacy.cosmo_peakweather_dataset._OBS_NWP_MAPPING; surfaced on the dataset
-# via the obs_to_nwp property for the NWPInterpolator baseline.
+# name -> [..., N] column dict and returning the obs-unit tensor). Surfaced on
+# the dataset via the obs_to_nwp property for the NWPInterpolator baseline.
 COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temperature": (["T_2M"], lambda n: n["T_2M"] - 273.15),
     "wind_u": (["U_10M"], lambda n: n["U_10M"]),
@@ -65,9 +63,9 @@ COSMO_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tenso
 class CosmoPeakWeatherDataset(DatasetBase):
     """``DatasetBase`` wired to the existing COSMO / PeakWeather loaders.
 
-    Accepts the same ``config`` shape as ``legacy.CosmoPeakWeatherDataset``
-    (data paths, variable lists, station/time filters, ``catalog``) plus the field
-    schema (``coord_sources``, ``fields``, ``roles``). Builds an obs
+    Accepts a ``config`` with data paths, variable lists, station/time filters
+    and ``catalog``, plus the field schema
+    (``coord_sources``, ``fields``, ``roles``). Builds an obs
     ``PointSetSource``, an nwp ``PointSetSource`` (native grid points in
     EPSG:2056) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.
@@ -352,7 +350,7 @@ class CosmoPeakWeatherDataset(DatasetBase):
 
     def _build_obs_source(self) -> PointSetSource:
         # Note: full spawn-DDP picklability of open zarr/anemoi handles is
-        # pre-existing (shared with the old legacy.CosmoPeakWeatherDataset) and out
+        # pre-existing and out
         # of scope; this task only removes the newly-introduced lambda
         # unpicklability.
         units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}
