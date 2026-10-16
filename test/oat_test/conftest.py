@@ -1,126 +1,158 @@
-import pytest
-from pathlib import Path
-import torch
-import pickle
+"""Shared field-shaped fixtures for the OAT predictor and model tests.
 
+The fixtures build a small synthetic batch in code. They use the same field
+layout as the live datasets: an ``obs`` target field, an ``nwp`` global field,
+a ``geo`` geo-bias field and a ``topo`` field.
+"""
+
+from typing import Any
+
+import pytest
+import torch
+
+from oat.data_module.field import Field
+from oat.data_module.setup import collate
+from oat.data_module.transform import (
+    FieldValueTransform,
+    IdentityTransform,
+    NestedTransform,
+)
 from oat.model_module.model import (
     GlobalEncoderConfig,
-    TopographicEncoderConfig,
-    NwpTopoFusionConfig,
     InnovationFusionConfig,
+    LearnableGatingConfig,
     MaskingConfig,
-    TransformerConfig,
-    OutputHeadConfig,
+    NwpTopoFusionConfig,
     OATConfig,
+    OutputHeadConfig,
+    TopographicEncoderConfig,
+    TransformerConfig,
     UninformedOATConfig,
-    LearnableGatingConfig
 )
-from oat.data_module.transform import Transform
 
-@pytest.fixture
-def batch_fixture() -> dict[str, dict[str, torch.Tensor]]:
-    """Provides a dummy batch based on the saved batch_shapes.pickle table."""
-    # return generate_batch_from_table()
-    
-    batch_fixture_file = Path(__file__).resolve().parent / "example_batch_fixture.pickle"
-    with open(batch_fixture_file, "rb") as f:
-        batch = pickle.load(f)
-    return batch
+D_MODEL = 8
+N_NWP = 2
+N_GEO = 3
+N_TOPO = 5
+OBS_VARS = ["var_0", "var_1"]
+FIELD_ROLES = {"target": "obs", "global": "nwp", "geo_bias": "geo", "topo": "topo"}
 
-@pytest.fixture
-def model_cfg_fixture(batch_fixture):
+
+def _group(idx: int, n: int) -> dict[str, Field]:
+    coords = torch.zeros(n, 3)
+    coords[:, 0] = torch.linspace(0, 1, n)
+    coords[:, 1] = torch.linspace(0, 1, n)
+    coords[:, 2] = float(idx) + 100.0
+    n_obs = len(OBS_VARS)
+    return {
+        "obs": Field(
+            coords.clone(), torch.randn(n, n_obs), list(OBS_VARS), torch.ones(n, n_obs)
+        ),
+        "nwp": Field(coords.clone(), torch.randn(n, N_NWP), ["T_2M", "T_G"]),
+        "geo": Field(coords.clone(), torch.randn(n, N_GEO), ["x", "y", "d"]),
+        "topo": Field(coords.clone(), torch.randn(n, N_TOPO), list("pqrst")),
+    }
+
+
+def _make_sample(idx: int, n_ctx: int, n_qry: int) -> dict[str, Any]:
+    return {
+        "index": idx,
+        "observation_data": {"fields": _group(idx, n_ctx)},
+        "query_data": {"fields": _group(idx, n_qry)},
+    }
+
+
+def _backbone_cfgs() -> (
+    tuple[GlobalEncoderConfig, TopographicEncoderConfig, NwpTopoFusionConfig]
+):
     global_enc_cfg = GlobalEncoderConfig(
-        in_channels=batch_fixture['global_data']['global_field'].shape[1],
-        field_extent_min= [2255500.0, 840500.0],
-        field_extent_max= [2964500.0, 1479500.0],
-        out_channels=4,
-        channels=(4,8)
+        in_channels=N_NWP,
+        field_extent_min=(0.0, 0.0),
+        field_extent_max=(1.0, 1.0),
+        type="Point",
+        out_channels=D_MODEL // 2,
+        hidden_dims=(),
     )
-    
     topography_enc_cfg = TopographicEncoderConfig(
-        in_channels=batch_fixture['observation_data']['topo'].shape[2],
-        out_channels=4
+        in_channels=N_TOPO,
+        out_channels=D_MODEL // 2,
+        type="MLP",
+        hidden_dims=(),
     )
-    
-    n_obs_vars = batch_fixture['observation_data']['obs'].shape[-1]
-    nwp_topo_fusion_cfg = NwpTopoFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
-    innovation_fusion_cfg = InnovationFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
-    masking_cfg = MaskingConfig()
-    transformer_cfg = TransformerConfig(
-        d_geo_bias=batch_fixture['observation_data']['geo'].shape[-1],
-        dim_feedforward=4,
-        d_model=4,
-        dim_geo_bias_feedforward=4
+    nwp_topo_fusion_cfg = NwpTopoFusionConfig(
+        cond_dim=4, out_channels=D_MODEL, hidden_channels=D_MODEL
     )
-    output_head_cfg = OutputHeadConfig(
-        in_features=4,
-        variable_to_distribution={f"var_{i}": "normal" for i in range(n_obs_vars)},
+    return global_enc_cfg, topography_enc_cfg, nwp_topo_fusion_cfg
+
+
+def _output_head_cfg() -> OutputHeadConfig:
+    return OutputHeadConfig(
+        in_features=D_MODEL,
+        variable_to_distribution={v: "normal" for v in OBS_VARS},
         loss_scaling=None,
         crps_mc_samples=50,
-        observation_assimilation_as="innovation"
+        observation_assimilation_as="innovation",
     )
-    
-    gating_config = LearnableGatingConfig(in_channels=n_obs_vars, out_channels=4, hidden_channels=4)
 
-    oat_cfg = OATConfig(
+
+@pytest.fixture
+def batch_fixture() -> dict[str, Any]:
+    """Collated field batch: 2 samples, 6 context points, 5 query points."""
+    torch.manual_seed(0)
+    return collate([_make_sample(0, 6, 5), _make_sample(1, 6, 5)])
+
+
+@pytest.fixture
+def model_cfg_fixture() -> OATConfig:
+    global_enc_cfg, topography_enc_cfg, nwp_topo_fusion_cfg = _backbone_cfgs()
+    return OATConfig(
         global_encoder=global_enc_cfg,
         topographic_encoder=topography_enc_cfg,
         nwp_topo_fusion=nwp_topo_fusion_cfg,
-        innovation_fusion=innovation_fusion_cfg,
-        transformer=transformer_cfg,
-        masking=masking_cfg,
-        output_head=output_head_cfg,
-        learnable_gating=gating_config,
-        num_samples=10
+        innovation_fusion=InnovationFusionConfig(
+            cond_dim=4, out_channels=D_MODEL, hidden_channels=D_MODEL
+        ),
+        transformer=TransformerConfig(
+            d_geo_bias=N_GEO,
+            d_model=D_MODEL,
+            dim_feedforward=2 * D_MODEL,
+            dim_geo_bias_feedforward=4,
+        ),
+        masking=MaskingConfig(mode="knn", k=2),
+        output_head=_output_head_cfg(),
+        learnable_gating=LearnableGatingConfig(
+            in_channels=len(OBS_VARS), out_channels=D_MODEL, hidden_channels=4
+        ),
+        num_samples=10,
     )
-    
-    return oat_cfg
+
 
 @pytest.fixture
-def uninformed_model_cfg_fixture(batch_fixture):
-    global_enc_cfg = GlobalEncoderConfig(
-        in_channels=batch_fixture['global_data']['global_field'].shape[1],
-        field_extent_min= [2255500.0, 840500.0],
-        field_extent_max= [2964500.0, 1479500.0],
-        out_channels=4,
-        channels=(4,8)
-    )
-    
-    topography_enc_cfg = TopographicEncoderConfig(
-        in_channels=batch_fixture['observation_data']['topo'].shape[2],
-        out_channels=4
-    )
-    
-    nwp_topo_fusion_cfg = NwpTopoFusionConfig(cond_dim=4, out_channels=4, hidden_channels=4)
-
-    output_head_cfg = OutputHeadConfig(
-        in_features=4,
-        variable_to_distribution={f"var_{i}": "normal" for i in range(batch_fixture['observation_data']['obs'].shape[-1])},
-        loss_scaling=None,
-        crps_mc_samples=50,
-        observation_assimilation_as="innovation"
-    )
-
-    uninformed_oat_cfg = UninformedOATConfig(
+def uninformed_model_cfg_fixture() -> UninformedOATConfig:
+    global_enc_cfg, topography_enc_cfg, nwp_topo_fusion_cfg = _backbone_cfgs()
+    return UninformedOATConfig(
         global_encoder=global_enc_cfg,
         topographic_encoder=topography_enc_cfg,
         nwp_topo_fusion=nwp_topo_fusion_cfg,
-        output_head=output_head_cfg,
-        num_samples=10
+        output_head=_output_head_cfg(),
+        num_samples=10,
     )
-    return uninformed_oat_cfg
+
 
 @pytest.fixture
-def transform_fixture() -> tuple[Transform, Transform]:
-    """Provides a dummy transform."""
-    
-    in_pickle_file = Path(__file__).resolve().parent / "input_transform_fixture.pickle"
-    out_pickle_file = Path(__file__).resolve().parent / "output_transform_fixture.pickle"
-    
-    with open(in_pickle_file, "rb") as f:
-        in_transform = pickle.load(f) 
-        
-    with open(out_pickle_file, "rb") as f:
-        out_transform = pickle.load(f) 
-        
-    return in_transform, out_transform
+def transform_fixture() -> tuple[NestedTransform, IdentityTransform]:
+    """Identity input transform on every field, identity output transform."""
+
+    def leaves() -> dict[str, FieldValueTransform]:
+        return {
+            n: FieldValueTransform(IdentityTransform())
+            for n in ("obs", "nwp", "geo", "topo")
+        }
+
+    input_transform = NestedTransform(
+        {
+            "observation_data": {"fields": leaves()},
+            "query_data": {"fields": leaves()},
+        }
+    )
+    return input_transform, IdentityTransform()

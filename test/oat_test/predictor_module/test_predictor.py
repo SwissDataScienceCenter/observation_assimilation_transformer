@@ -14,33 +14,10 @@ from oat.data_module.transform import IdentityTransform
 from oat.model_module.distributions import _ALL_DISTRIBUTIONS
 from oat.model_module.model import OATConfig
 from oat.predictor_module import OATPredictor
+from oat_test.conftest import FIELD_ROLES
 from scripts.train_model import setup_oat_cfg
 
-# All tests below except test_default_hydra_config depend on conftest.py's
-# batch_fixture/model_cfg_fixture/uninformed_model_cfg_fixture, which build a
-# grid-shaped batch (a 'global_field' tensor) and a GlobalEncoderConfig /
-# TopographicEncoderConfig left at their dataclass defaults (type="UNet" /
-# type="CNN"). Those grid encoder classes are now hard-guarded (see
-# InterpolationGlobalEncoder.__init__ / CNNTopographyEncoder.__init__),
-# so constructing OATPredictor from these fixtures raises NotImplementedError.
-# This is a genuine regression from that guard (verified green at f61f8a3,
-# the commit right before the guard landed), not equivalent to the
-# pre-existing test_backbone_hidden_dims.py failures (which use their own
-# local Point/MLP-shaped _cfg() helper and fail for an unrelated reason).
-# Follow-up (tracked in the 2026-08-12-deprecate-old-data-path plan):
-# migrate these fixtures to build Point/MLP-shaped data instead --
-# test_field_training_step.py already has a working example of that pattern.
-_GRID_FIXTURE_XFAIL_REASON = (
-    "conftest.py's batch/model_cfg fixtures are grid-shaped (global_field + "
-    "GlobalEncoderConfig/TopographicEncoderConfig defaulting to type="
-    "'UNet'/'CNN'), now hard-guarded by Task 4's deprecation of the grid "
-    "encoders. Needs conftest.py's fixtures migrated to Point/MLP shape "
-    "(see test_field_training_step.py for the pattern); tracked follow-up "
-    "from the 2026-08-12-deprecate-old-data-path plan, not a permanent skip."
-)
 
-
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 @pytest.mark.parametrize("compute_loss", [True, False])
 def test_simple_predictor_forward(
     batch_fixture, transform_fixture, compute_loss, model_cfg_fixture
@@ -52,6 +29,7 @@ def test_simple_predictor_forward(
         model_cfg_fixture.pre_oat_loss_weight = 0.2
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -62,11 +40,13 @@ def test_simple_predictor_forward(
         optimizer_class=torch.optim.AdamW,
     )
 
+    # forward expects a normalized and unwrapped batch.
+    batch = pred._normalize_batch(batch_fixture)
     if not compute_loss:
-        out = pred(batch_fixture, return_loss_and_targets=False)
+        out = pred(batch, return_loss_and_targets=False)
     else:
         out, per_var_losses, loss, target, target_mask = pred.forward(
-            batch_fixture, return_loss_and_targets=True
+            batch, return_loss_and_targets=True
         )
 
         assert isinstance(loss, torch.Tensor)
@@ -82,7 +62,6 @@ def test_simple_predictor_forward(
         assert torch.isclose(sum, loss)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 @pytest.mark.parametrize("compile", [True, False], ids=["compile", "no_compile"])
 @pytest.mark.parametrize(
     "observation_assimilation_as",
@@ -108,6 +87,7 @@ def test_simple_predictor_train_step(
     input_transform, output_transform = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -122,7 +102,6 @@ def test_simple_predictor_train_step(
     pred.training_step(batch=batch_fixture, batch_idx=None)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_uninformed_predictor_train_step(
     batch_fixture, transform_fixture, uninformed_model_cfg_fixture
 ):
@@ -130,6 +109,7 @@ def test_uninformed_predictor_train_step(
     input_transform, output_transform = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=uninformed_model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -143,7 +123,6 @@ def test_uninformed_predictor_train_step(
     pred.training_step(batch=batch_fixture, batch_idx=None)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
 
     output_var_names = list(
@@ -152,6 +131,7 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     input_transform, output_transform = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -184,10 +164,10 @@ def test_checkpoint(batch_fixture, transform_fixture, model_cfg_fixture):
     assert pred is not reloaded_pred
 
     pl.seed_everything(42)
-    prediction = pred(batch_fixture)
+    prediction = pred(pred._normalize_batch(batch_fixture))
 
     pl.seed_everything(42)
-    prediction_reloaded = reloaded_pred(batch_fixture)
+    prediction_reloaded = reloaded_pred(reloaded_pred._normalize_batch(batch_fixture))
     # Check that all outputs apart from the samples are equivalent before and
     # after checkpointing
 
@@ -304,7 +284,6 @@ def _make_train_dataset_stub(obs_vars: list[str], obs_support: VariableSupport):
     )
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_validate_output_head_support_passes_for_compatible_supports(
     transform_fixture,
     model_cfg_fixture,
@@ -312,6 +291,7 @@ def test_validate_output_head_support_passes_for_compatible_supports(
     input_transform, _ = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=IdentityTransform(),
@@ -338,7 +318,6 @@ def test_validate_output_head_support_passes_for_compatible_supports(
     pred.validate_output_head_supports(train_dataset)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_validate_output_head_support_raises_with_meaningful_message(
     transform_fixture,
     model_cfg_fixture,
@@ -346,6 +325,7 @@ def test_validate_output_head_support_raises_with_meaningful_message(
     input_transform, _ = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=IdentityTransform(),
@@ -382,7 +362,6 @@ def test_validate_output_head_support_raises_with_meaningful_message(
         pred.validate_output_head_supports(train_dataset)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_validate_output_head_support_raises_type_error_for_invalid_dataset(
     transform_fixture,
     model_cfg_fixture,
@@ -390,6 +369,7 @@ def test_validate_output_head_support_raises_type_error_for_invalid_dataset(
     input_transform, _ = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=IdentityTransform(),
@@ -412,7 +392,6 @@ def _distribution_class_by_name() -> dict[str, type]:
     }
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 @pytest.mark.parametrize(
     "dist_name,first_var_lower,should_pass",
     [
@@ -432,6 +411,7 @@ def test_validate_output_head_support_selected_all_distributions_cases(
     input_transform, _ = transform_fixture
 
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=IdentityTransform(),
@@ -478,12 +458,12 @@ def test_validate_output_head_support_selected_all_distributions_cases(
             pred.validate_output_head_supports(train_dataset)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_predict_step_samples_shape(
     batch_fixture, transform_fixture, model_cfg_fixture
 ):
     input_transform, output_transform = transform_fixture
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -492,8 +472,7 @@ def test_predict_step_samples_shape(
         ),
     )
     n_samples = 5
-    B = batch_fixture["query_data"]["coords"].shape[0]
-    N_q = batch_fixture["query_data"]["coords"].shape[1]
+    B, N_q = batch_fixture["query_data"]["fields"]["obs"].coords.shape[:2]
     n_vars = len(pred.output_var_names)
 
     samples = pred.predict_step(batch_fixture, batch_idx=0, n_samples=n_samples)
@@ -501,12 +480,12 @@ def test_predict_step_samples_shape(
     assert samples.shape == (B, N_q, n_samples, n_vars)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_predict_step_pre_oat_samples_shape(
     batch_fixture, transform_fixture, model_cfg_fixture
 ):
     input_transform, output_transform = transform_fixture
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
@@ -515,8 +494,7 @@ def test_predict_step_pre_oat_samples_shape(
         ),
     )
     n_samples = 5
-    B = batch_fixture["query_data"]["coords"].shape[0]
-    N_q = batch_fixture["query_data"]["coords"].shape[1]
+    B, N_q = batch_fixture["query_data"]["fields"]["obs"].coords.shape[:2]
     n_vars = len(pred.output_var_names)
 
     samples = pred.predict_step(
@@ -525,12 +503,12 @@ def test_predict_step_pre_oat_samples_shape(
     assert samples.shape == (B, N_q, n_samples, n_vars)
 
 
-@pytest.mark.xfail(reason=_GRID_FIXTURE_XFAIL_REASON, strict=False)
 def test_predict_step_pre_oat_raises_for_uninformed(
     batch_fixture, transform_fixture, uninformed_model_cfg_fixture
 ):
     input_transform, output_transform = transform_fixture
     pred = OATPredictor(
+        field_roles=FIELD_ROLES,
         oat_model_cfg=uninformed_model_cfg_fixture,
         input_transform=input_transform,
         output_transform=output_transform,
