@@ -1,8 +1,17 @@
 [tool.poetry]
 name = "oat"
-version = "0.1.0"
-description = ""
-authors = ["Christian Donner <christian.donner@meteoswiss.ch>", "Michele Cattaneo <michele.cattaneo@meteoswiss.ch>"]
+version = "1.0.0"
+description = "Observation Assimilation Transformer: probabilistic weather analysis from sparse station observations"
+authors = [
+    "Christian Donner",
+    "Michele Cattaneo",
+    "Maxim Samarin",
+    "Francesco Zanetta",
+    "Icíar Lloréns Jover",
+    "Gabriela Aznar Siguan",
+    "Michele Volpi",
+]
+license = "MIT"
 packages = [{include = "oat", from = "src"},
             {include = "oat_test", from = "test"},
             {include = "scripts"}]

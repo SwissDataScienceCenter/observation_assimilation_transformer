@@ -13,6 +13,7 @@ data/processed/
 data/raw/
 data/figures/
 notebooks/wip/
+docs/superpowers/
 outputs
 
 # logs
