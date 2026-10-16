@@ -67,6 +67,8 @@ def finish_wandb_run():
     import wandb
 
     wandb.finish()
+    # Reset the global W&B setup, so that the next test reads WANDB_MODE again.
+    wandb.teardown()
 
 
 def test_logger_disabled_without_login(finish_wandb_run, monkeypatch, tmp_path):
