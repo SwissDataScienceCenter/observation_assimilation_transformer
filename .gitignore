@@ -41,6 +41,7 @@ build/
 
 # Misc
 release/stage/
+release/upload/
 setup_env.sh
 .DS_Store
 .cache_constant_inputs
