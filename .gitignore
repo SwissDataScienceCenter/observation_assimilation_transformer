@@ -12,6 +12,7 @@ env/
 data/processed/
 data/raw/
 data/figures/
+figures/out/
 notebooks/wip/
 docs/superpowers/
 outputs
