@@ -61,7 +61,15 @@ def _patch_api_key(monkeypatch, key):
     monkeypatch.setattr(type(wandb.api), "api_key", property(lambda self: key))
 
 
-def test_logger_disabled_without_login(monkeypatch, tmp_path):
+@pytest.fixture
+def finish_wandb_run():
+    yield
+    import wandb
+
+    wandb.finish()
+
+
+def test_logger_disabled_without_login(finish_wandb_run, monkeypatch, tmp_path):
     from scripts.train_model import setup_logger_and_callbacks
 
     _patch_api_key(monkeypatch, None)
@@ -76,7 +84,7 @@ def test_logger_disabled_without_login(monkeypatch, tmp_path):
     assert (tmp_path / cfg.logging.group / "t").is_dir()
 
 
-def test_logger_keeps_user_wandb_mode(monkeypatch, tmp_path):
+def test_logger_keeps_user_wandb_mode(finish_wandb_run, monkeypatch, tmp_path):
     from scripts.train_model import setup_logger_and_callbacks
 
     _patch_api_key(monkeypatch, None)
