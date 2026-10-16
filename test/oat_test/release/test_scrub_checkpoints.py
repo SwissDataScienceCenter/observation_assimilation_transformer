@@ -23,13 +23,13 @@ def _train_cfg():
         {
             "dataset": {
                 "dataset_type": "era5_meteostat",
-                "nwp_path": "/scratch/x/era5.zarr",
-                "obs_path": "/scratch/x/obs.parquet",
-                "ref_nwp_path": "/scratch/x/nwp.zarr",
+                "nwp_path": "/internal/x/era5.zarr",
+                "obs_path": "/internal/x/obs.parquet",
+                "ref_nwp_path": "/internal/x/nwp.zarr",
                 "obs_vars": ["temp", "prcp"],
             },
-            "logging": {"entity": "sdsc-mch", "group": "oat_field"},
-            "resume_from_checkpoint": "/scratch/x/last.ckpt",
+            "logging": {"entity": "team-entity", "group": "oat_field"},
+            "resume_from_checkpoint": "/internal/x/last.ckpt",
             "paths": {"run_root": "outputs/oat/2026"},
         }
     )
@@ -54,7 +54,7 @@ def test_scrubbed_config_resolves_with_env(monkeypatch):
 
 def test_scrub_config_fails_on_left_absolute_path():
     cfg = _train_cfg()
-    cfg.dataset.extra_path = "/scratch/x/other.zarr"
+    cfg.dataset.extra_path = "/internal/x/other.zarr"
     with pytest.raises(ScrubError, match="extra_path"):
         scrub_config(cfg, _BASE)
 
@@ -72,7 +72,7 @@ def test_scrub_ckpt_detaches_nodes_and_drops_callbacks():
     names = root.dataset.obs_vars  # child node: pickles the full root
     ckpt = {
         "state_dict": {"w": torch.ones(2)},
-        "callbacks": {"ModelCheckpoint": {"dirpath": "/scratch/x"}},
+        "callbacks": {"ModelCheckpoint": {"dirpath": "/internal/x"}},
         "hyper_parameters": {"output_var_names": names, "lr": 1e-3},
     }
     out = scrub_ckpt(ckpt)
@@ -82,15 +82,26 @@ def test_scrub_ckpt_detaches_nodes_and_drops_callbacks():
     assert torch.equal(out["state_dict"]["w"], torch.ones(2))
     import pickle
 
-    assert b"/scratch" not in pickle.dumps(out["hyper_parameters"])
+    assert b"/internal" not in pickle.dumps(out["hyper_parameters"])
 
 
-def test_check_no_leak(tmp_path):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "p: /scr" "atch/x\n",
+        "p: /us" "ers/x\n",
+        "p: /cap" "stor/x\n",
+        "p: /sto" "re_new/x\n",
+        "a: me@meteo" "swiss.ch\n",
+        "entity: sdsc" "-mch\n",
+    ],
+)
+def test_check_no_leak(tmp_path, text):
     good = tmp_path / "a.yaml"
     good.write_text("x: 1\n")
     check_no_leak(good)
     bad = tmp_path / "b.yaml"
-    bad.write_text("entity: sdsc-mch\n")
+    bad.write_text(text)
     with pytest.raises(ScrubError, match=r"b\.yaml"):
         check_no_leak(bad)
 

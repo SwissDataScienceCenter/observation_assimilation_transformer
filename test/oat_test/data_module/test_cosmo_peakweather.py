@@ -10,9 +10,10 @@ from oat.paths import data_root
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _DATA_DIR = str(data_root() / "cosmo-1e_rechunked")
 _DATA = os.path.join(_DATA_DIR, "nwp_extracted.zarr")
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(_DATA), reason="COSMO data not present"
-)
+pytestmark = [
+    pytest.mark.requires_data,
+    pytest.mark.skipif(not os.path.exists(_DATA), reason="COSMO data not present"),
+]
 
 _FIELD_SCHEMA = {
     "obs_vars": ["temperature"],

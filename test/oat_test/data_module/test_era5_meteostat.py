@@ -15,9 +15,12 @@ _CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 
 _settings_path = os.path.join(_REPO_ROOT, "configs/dataset/era5_meteostat/base.yaml")
 _TOPO_PATH = str(data_root() / "europe-static.zarr")
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(_TOPO_PATH), reason="ERA5 topo data not present"
-)
+pytestmark = [
+    pytest.mark.requires_data,
+    pytest.mark.skipif(
+        not os.path.exists(_TOPO_PATH), reason="ERA5 topo data not present"
+    ),
+]
 
 
 def _compose_dataset():

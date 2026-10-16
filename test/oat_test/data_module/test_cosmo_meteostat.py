@@ -49,6 +49,7 @@ def test_composed_with_spatial_holdout_split_pulls_in_meteostat_stations():
     assert "02926" in list(cfg.split.train_station_indices)
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not os.path.exists(_TOPO_PATH), reason="Meteostat topo data not present")
 @pytest.mark.skipif(not os.path.exists(_NWP_PATH), reason="COSMO-E1 NWP archive not present")
 def test_cosmo_meteostat_field_dataset_smoke():

@@ -176,6 +176,7 @@ _DATA_DIR = str(data_root() / "cosmo-1e_rechunked")
 _DATA = os.path.join(_DATA_DIR, "nwp_extracted.zarr")
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not os.path.exists(_DATA), reason="COSMO data not present")
 def test_field_training_step_real_data_smoke():
     import logging
