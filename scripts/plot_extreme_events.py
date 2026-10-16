@@ -443,8 +443,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=50,
         help="Samples for the map fields (the maps show only the mean).",
     )
+    p.add_argument(
+        "--dataset",
+        choices=sorted({e.dataset for e in EVENTS}),
+        default=None,
+        help="Draw only the row of this dataset (default: all rows).",
+    )
     p.add_argument("--out", default=None, help="Output path (.pdf; a .png is added).")
     return p.parse_args(argv)
+
+
+def _select_events(dataset: str | None) -> list[ExtremeEvent]:
+    """Return the events of *dataset*, or all events when it is None."""
+    return [e for e in EVENTS if dataset is None or e.dataset == dataset]
 
 
 def _load_event(event: ExtremeEvent, logger: logging.Logger) -> tuple[Any, Any, Any]:
@@ -797,22 +808,23 @@ def main() -> None:
     )
     logger = logging.getLogger(__name__)
     args = _parse_args()
+    events = _select_events(args.dataset)
 
     if args.list_candidates:
-        for event in EVENTS:
+        for event in events:
             predictor, dataset, test_ds = _load_event(event, logger)
             _print_candidates(event, predictor, dataset, test_ds)
             del predictor, dataset, test_ds
             gc.collect()
         return
 
-    n_rows = len(EVENTS)
+    n_rows = len(events)
     fig = plt.figure(
         figsize=(FIG_WIDTH_IN, n_rows * _ROW_HEIGHT_IN), layout="constrained"
     )
     # One subfigure per event. Only the top row has legends.
     subfigs = fig.subfigures(n_rows, 1, squeeze=False)[:, 0]
-    for row, (subfig, event) in enumerate(zip(subfigs, EVENTS, strict=True)):
+    for row, (subfig, event) in enumerate(zip(subfigs, events, strict=True)):
         predictor, dataset, test_ds = _load_event(event, logger)
         _draw_event_row(
             subfig,

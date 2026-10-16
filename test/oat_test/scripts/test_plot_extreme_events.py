@@ -15,6 +15,7 @@ from scripts.plot_extreme_events import (
     _parse_time,
     _rank_stations,
     _restyle_window_missing,
+    _select_events,
     _station_mae,
     _station_name,
     _station_window_obs,
@@ -284,3 +285,19 @@ def test_diff_limit_without_cap_is_the_percentile_and_skips_nan():
 
 def test_diff_limit_is_one_for_zero_values():
     assert _diff_limit(np.zeros(5), cap=None) == 1.0
+
+
+def test_select_events_default_keeps_all_rows():
+    assert _select_events(None) == EVENTS
+
+
+def test_select_events_filters_by_dataset():
+    events = _select_events("era5_meteostat")
+    assert [e.dataset for e in events] == ["era5_meteostat"]
+
+
+def test_parse_args_dataset_option():
+    assert _parse_args(["--dataset", "era5_meteostat"]).dataset == "era5_meteostat"
+    assert _parse_args([]).dataset is None
+    with pytest.raises(SystemExit):
+        _parse_args(["--dataset", "mars"])
