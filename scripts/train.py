@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-# Both families ship "temp" (univariate) and "temp_precip" (multivariate) at the top level.
+# Each family ships these dataset variants at the top level of its config dir.
 DATASET_VARIANTS = (
     "temp",
     "precip",
