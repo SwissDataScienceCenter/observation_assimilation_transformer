@@ -3,7 +3,7 @@ name = "oat"
 version = "1.0.0"
 description = "Observation Assimilation Transformer: probabilistic weather analysis from sparse station observations"
 authors = [
-    "Christian Donner",
+    "Christian Donner <christian.research@mailbox.org>",
     "Michele Cattaneo",
     "Maxim Samarin",
     "Francesco Zanetta",
