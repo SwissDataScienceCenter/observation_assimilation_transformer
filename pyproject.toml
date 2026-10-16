@@ -92,6 +92,8 @@ url = "https://data.pyg.org/whl/torch-2.4.0+cu121.html"
 priority = "supplemental"
 
 [tool.pytest.ini_options]
+# Do not collect the tests of the gridded-tnp submodule.
+testpaths = ["test"]
 markers = [
     "requires_data: needs the real datasets below the data root (skips when they are missing)",
 ]
