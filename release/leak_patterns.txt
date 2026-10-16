@@ -1,0 +1,10 @@
+# Internal strings that must not be in the public tree.
+# Used by release/leak_check.py and release/scrub_checkpoints.py.
+# One Python regex on each line. Empty lines and lines that start with "#"
+# are ignored.
+/scratch
+/users/
+/capstor
+/store
+@meteoswiss\.ch
+sdsc-mch

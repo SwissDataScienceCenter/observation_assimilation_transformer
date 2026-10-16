@@ -15,7 +15,6 @@ Usage:
 import argparse
 import dataclasses
 import hashlib
-import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -24,8 +23,9 @@ import torch
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from oat.paths import REGISTRY_PATH, REPO_ROOT, checkpoint_root
+from release.leak_check import load_pattern
 
-LEAK_RE = re.compile(rb"/scratch|/users/|/capstor|/store|@meteoswiss\.ch|sdsc-mch")
+LEAK_RE = load_pattern()
 _DATA_KEYS = (
     "nwp_path",
     "topo_path",
