@@ -47,8 +47,8 @@ import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-# Same registry path as oat.predictor_module.checkpoint_utils._DEFAULT_REGISTRY,
-# resolved directly to avoid importing the heavy oat/torch stack for one Path.
+# Same file as oat.paths.REGISTRY_PATH. The registry values are relative;
+# this script uses only the run folder name (Path(value).parent.name).
 _DEFAULT_REGISTRY = Path(__file__).parents[1] / "configs" / "checkpoints.yaml"
 RESULTS_DIR = Path(__file__).parents[1] / "data/results"
 
