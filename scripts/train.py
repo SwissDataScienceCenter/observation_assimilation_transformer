@@ -21,10 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-# Both families only ship "temp" (univariate) and "temp_precip" (multivariate)
-# at the top level now -- the old grid-only "precip" variant and the
-# "field_"-prefixed names were retired when Task 7 promoted the flat-Field
-# configs to these clean names and moved the grid-only ones to legacy/.
+# Both families ship "temp" (univariate) and "temp_precip" (multivariate) at the top level.
 DATASET_VARIANTS = (
     "temp",
     "precip",

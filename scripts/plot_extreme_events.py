@@ -33,6 +33,7 @@ from matplotlib.collections import PathCollection
 from matplotlib.lines import Line2D
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import (
     _add_borders,
     build_domain_grid,
@@ -51,7 +52,6 @@ from scripts.plot_timeseries import (
 from scripts.plotter_utils import (
     load_plot_config,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 _MODEL = "oat_temp_precip"
@@ -561,8 +561,8 @@ def _draw_event_row(
     else:
         map_label, map_unit = var_label, unit
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
-    plotter_cls = select_plotter_cls(dataset)
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
+    plotter_cls = OATPlotter
 
     def _plotter(n_samples: int) -> Any:
         return plotter_cls(

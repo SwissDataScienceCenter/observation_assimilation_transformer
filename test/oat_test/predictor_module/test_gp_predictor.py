@@ -225,7 +225,7 @@ def test_train_model_routes_gp_configs_to_the_gp_path(model_name, is_gp):
             config_name="config",
             overrides=[
                 f"model={model_name}",
-                "dataset=cosmo_peakweather/legacy/precip",
+                "dataset=cosmo_peakweather/precip",
             ],
         )
 

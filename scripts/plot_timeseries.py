@@ -252,7 +252,7 @@ def main() -> None:
             dataset.times[-1].strftime("%Y-%m-%d %H:%M UTC"),
         )
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
 
     if args.time is not None:
         start_idx = _resolve_time_idx(dataset, args.time)

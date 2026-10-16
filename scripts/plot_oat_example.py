@@ -24,12 +24,12 @@ import numpy as np
 import pandas as pd
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import _add_borders
 from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from scripts.plotter_utils import (
     load_plot_config,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "data/figures"
@@ -265,7 +265,7 @@ def main() -> None:
         hours,
     )
 
-    PlotterCls = select_plotter_cls(dataset)
+    PlotterCls = OATPlotter
     plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
@@ -276,7 +276,7 @@ def main() -> None:
         plot_config=load_plot_config(dataset),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
     nwp_plotter = PlotterCls(
         predictor=nwp_predictor,
         dataset=dataset,

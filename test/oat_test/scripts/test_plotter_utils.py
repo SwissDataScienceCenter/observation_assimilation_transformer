@@ -1,34 +1,11 @@
-"""Tests for scripts/plotter_utils.py path-detection helpers."""
+"""Tests for scripts/plotter_utils.py helpers."""
 
 import logging
 import types
 
-import pytest
-import torch
-
 from oat.data_module.field_spec import parse_field_config
-from oat.plotting_module import OATPlotter
-from oat.plotting_module.legacy import LegacyOATPlotter
 from oat.predictor_module.baseline_predictor import NWPInterpolatorPredictor
-from scripts.plotter_utils import (
-    is_field_path,
-    load_plot_config,
-    maybe_build_nwp_baseline,
-    select_plotter_cls,
-)
-
-
-def _legacy_dataset():
-    return types.SimpleNamespace(
-        nwp_extent={"min": torch.zeros(2), "max": torch.ones(2)},
-    )
-
-
-def _field_dataset():
-    return types.SimpleNamespace(
-        roles=lambda: {"target": "obs", "global": "nwp"},
-        nwp_extent={"min": torch.zeros(2), "max": torch.ones(2)},
-    )
+from scripts.plotter_utils import load_plot_config, maybe_build_nwp_baseline
 
 
 def _field_dataset_with_baseline_support():
@@ -49,22 +26,6 @@ def _field_dataset_with_baseline_support():
     )
 
 
-def test_is_field_path_true_when_dataset_has_roles():
-    assert is_field_path(_field_dataset()) is True
-
-
-def test_is_field_path_false_when_dataset_has_no_roles():
-    assert is_field_path(_legacy_dataset()) is False
-
-
-def test_select_plotter_cls_field_path():
-    assert select_plotter_cls(_field_dataset()) is OATPlotter
-
-
-def test_select_plotter_cls_legacy_path():
-    assert select_plotter_cls(_legacy_dataset()) is LegacyOATPlotter
-
-
 def test_maybe_build_nwp_baseline_builds_predictor_on_field_path():
     result = maybe_build_nwp_baseline(
         _field_dataset_with_baseline_support(), logging.getLogger(__name__)
@@ -72,23 +33,11 @@ def test_maybe_build_nwp_baseline_builds_predictor_on_field_path():
     assert isinstance(result, NWPInterpolatorPredictor)
 
 
-def test_maybe_build_nwp_baseline_warns_and_returns_none_on_legacy_path(caplog):
-    with caplog.at_level(logging.WARNING):
-        result = maybe_build_nwp_baseline(
-            _legacy_dataset(), logging.getLogger(__name__)
-        )
-    assert result is None
-    assert "not supported" in caplog.text
-
-
-def test_maybe_build_nwp_baseline_required_raises_systemexit_on_legacy_path(caplog):
-    with caplog.at_level(logging.WARNING):
-        with pytest.raises(SystemExit) as exc_info:
-            maybe_build_nwp_baseline(
-                _legacy_dataset(), logging.getLogger(__name__), required=True
-            )
-    assert exc_info.value.code != 0
-
-
 def test_load_plot_config_returns_none_for_unrecognized_dataset_type():
-    assert load_plot_config(_legacy_dataset()) is None
+    assert load_plot_config(types.SimpleNamespace()) is None
+
+
+def test_plotting_module_exports_only_oat_plotter():
+    import oat.plotting_module as pm
+
+    assert pm.__all__ == ["OATPlotter"]

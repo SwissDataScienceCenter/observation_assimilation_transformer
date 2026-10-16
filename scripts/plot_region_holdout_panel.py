@@ -42,12 +42,12 @@ from matplotlib.lines import Line2D
 from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import _add_borders
 from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from scripts.plotter_utils import (
     load_plot_config,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 _PROJECT_ROOT = Path(__file__).parents[1]
@@ -175,7 +175,7 @@ def _load_cosmo_baseline(
     cfg = _compose_cosmo_cfg(split_config)
     cfg.dataset.data_points_for_stats = 0
     dataset, _, _, _val_loader, test_loader, *_ = setup_data_and_transform(cfg, logger)
-    predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    predictor = maybe_build_nwp_baseline(dataset, logger)
     return predictor, dataset, test_loader.dataset
 
 
@@ -211,7 +211,7 @@ def main() -> None:
     predictor_uninf, u_dataset, _u_test_ds = _load_model(
         args.dataset, args.uninformed_model, args.split_config, logger
     )
-    era5_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    era5_predictor = maybe_build_nwp_baseline(dataset, logger)
     cosmo_predictor, cosmo_dataset, cosmo_test_ds = _load_cosmo_baseline(
         args.split_config, logger
     )
@@ -250,7 +250,7 @@ def main() -> None:
     var_label = var.capitalize()
     cb_label = f"{var_label} [{unit}]" if unit else var_label
 
-    PlotterCls = select_plotter_cls(dataset)
+    PlotterCls = OATPlotter
     plotter = PlotterCls(
         predictor=predictor_oat,
         dataset=dataset,
@@ -260,7 +260,7 @@ def main() -> None:
         device="cpu",
         plot_config=plot_config,
     )
-    UPlotterCls = select_plotter_cls(u_dataset)
+    UPlotterCls = OATPlotter
     u_plotter = UPlotterCls(
         predictor=predictor_uninf,
         dataset=u_dataset,
@@ -268,7 +268,7 @@ def main() -> None:
         device="cpu",
         plot_config=load_plot_config(u_dataset),
     )
-    CosmoPlotterCls = select_plotter_cls(cosmo_dataset)
+    CosmoPlotterCls = OATPlotter
     cosmo_plotter = CosmoPlotterCls(
         predictor=cosmo_predictor,
         dataset=cosmo_dataset,
