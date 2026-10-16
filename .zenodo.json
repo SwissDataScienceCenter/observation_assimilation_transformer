@@ -1,0 +1,16 @@
+{
+  "title": "Observation Assimilation Transformer (OAT)",
+  "upload_type": "software",
+  "description": "Code of the paper 'Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations'. OAT makes probabilistic weather analysis fields from coarse NWP fields and sparse station observations.",
+  "license": "MIT",
+  "creators": [
+    {"name": "Donner, Christian", "affiliation": "Swiss Data Science Center, ETH Zurich"},
+    {"name": "Cattaneo, Michele", "affiliation": "Swiss Data Science Center, ETH Zurich"},
+    {"name": "Samarin, Maxim", "affiliation": "Swiss Data Science Center, ETH Zurich"},
+    {"name": "Zanetta, Francesco", "affiliation": "Federal Office of Meteorology and Climatology MeteoSwiss"},
+    {"name": "Lloréns Jover, Icíar", "affiliation": "Federal Office of Meteorology and Climatology MeteoSwiss"},
+    {"name": "Aznar Siguan, Gabriela", "affiliation": "Federal Office of Meteorology and Climatology MeteoSwiss"},
+    {"name": "Volpi, Michele", "affiliation": "Swiss Data Science Center, ETH Zurich"}
+  ],
+  "keywords": ["weather", "downscaling", "data assimilation", "transformer", "probabilistic forecasting"]
+}
