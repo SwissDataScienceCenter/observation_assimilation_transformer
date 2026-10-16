@@ -5,9 +5,10 @@ import torch
 from omegaconf import OmegaConf
 
 from oat.data_module.field import Field
+from oat.paths import data_root
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_DATA_DIR = "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked"
+_DATA_DIR = str(data_root() / "cosmo-1e_rechunked")
 _DATA = os.path.join(_DATA_DIR, "nwp_extracted.zarr")
 pytestmark = pytest.mark.skipif(
     not os.path.exists(_DATA), reason="COSMO data not present"
@@ -49,6 +50,7 @@ def _config():
         base,
         settings,
         OmegaConf.create({"catalog": catalog}),
+        OmegaConf.create({"paths": {"data_root": str(data_root())}}),
         OmegaConf.create(_FIELD_SCHEMA),
     )
 

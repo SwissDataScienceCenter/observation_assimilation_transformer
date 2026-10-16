@@ -34,6 +34,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from oat.paths import data_root
+
 TEST_START_DATE = "2024-01-02T00:00:00"
 TEST_END_DATE = "2024-09-04T23:00:00"
 
@@ -228,7 +230,7 @@ def render_config(
         f"# context_fraction: {context_fraction}",
         f"# val_station_fraction: {val_station_fraction}",
         f"# seed: {seed}",
-        f"# source: {station_meta_path}, {obs_path}",
+        f"# source: {Path(station_meta_path).name}, {Path(obs_path).name}",
         "#",
         "defaults:",
         "  - default",
@@ -290,19 +292,13 @@ def main() -> None:
     p.add_argument(
         "--station-meta-path",
         type=str,
-        default=(
-            "/scratch/mch/cdonner/meteostats_dataset/data/processed/"
-            "station_quality.parquet"
-        ),
+        default=str(data_root() / "station_quality.parquet"),
         help="Path to the station metadata file",
     )
     p.add_argument(
         "--obs-path",
         type=str,
-        default=(
-            "/scratch/mch/cdonner/meteostats_dataset/data/processed/"
-            "hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
-        ),
+        default=str(data_root() / "hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"),
         help="Path to the observation file",
     )
     p.add_argument(

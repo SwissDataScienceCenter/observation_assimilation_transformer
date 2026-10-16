@@ -18,14 +18,15 @@ from matplotlib.patches import FancyArrowPatch
 from matplotlib.lines import Line2D
 from matplotlib.legend_handler import HandlerBase
 
+from oat.paths import data_root
+
 from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-TOPO_PATH = Path(
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
-)
+_COSMO_DIR = data_root() / "cosmo-1e_rechunked"
+TOPO_PATH = _COSMO_DIR / "topo.zarr"
 OUT_PATH = Path(__file__).parents[3] / "data/figures/oat_panel_d_real.png"
 
 # ---------------------------------------------------------------------------
