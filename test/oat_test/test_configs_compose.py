@@ -38,8 +38,18 @@ def test_global_encoder_option_composes(option):
 
 def test_legacy_dataset_option_is_gone():
     with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.3"):
-        with pytest.raises(Exception, match="legacy"):
+        with pytest.raises(Exception, match="Could not find"):
             compose(
                 config_name="config",
                 overrides=["dataset=cosmo_peakweather/legacy/precip"],
             )
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["model/global_encoder=unet", "model/topographic_encoder=default"],
+)
+def test_removed_encoder_option_is_gone(override):
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.3"):
+        with pytest.raises(Exception, match="Could not find"):
+            compose(config_name="config", overrides=[override])

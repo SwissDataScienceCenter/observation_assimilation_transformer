@@ -201,7 +201,7 @@ def test_field_training_step_real_data_smoke():
 
     logger = logging.getLogger("test_field_training_step_real_data_smoke")
     (
-        dataset,
+        _dataset,
         _n_train,
         train_loader,
         _val_loader,

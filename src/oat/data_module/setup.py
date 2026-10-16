@@ -101,7 +101,7 @@ def build_two_group_transform(
 
 
 def validate_field_config_against_scalars(dataset: Any, cfg: DictConfig) -> None:
-    """Check that field-config channel order matches the legacy scalar var lists.
+    """Check that field-config channel order matches the scalar var lists.
 
     Requires ``roles`` to define ``target`` and ``global``; ``geo_bias`` is
     only checked when present, so field configs without a geo field are

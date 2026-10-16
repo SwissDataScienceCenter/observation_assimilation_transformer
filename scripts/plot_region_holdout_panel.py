@@ -15,9 +15,8 @@ Context stations (train + val + test-context, revealed at test time) and
 held-out test stations are drawn with the circle/square convention from
 plot_assimilation_panel.py. COSMO-E1 comes from CosmoMeteostatDataset (the
 same Meteostat station/topo universe, COSMO-E1 as the NWP source) via the
-NWP-interpolation baseline predictor, not the raw COSMO-1E zarr used by the
-older plot_ERA5_to_COSMO_grid.py (COSMO-1E's Switzerland-only domain is too
-small for this region).
+NWP-interpolation baseline predictor, not the raw COSMO-1E zarr (COSMO-1E's
+Switzerland-only domain is too small for this region).
 
 Usage
 -----

@@ -319,11 +319,11 @@ class UninformedOAT(nn.Module):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
                 'topo': (B, N_q, C_topo) - topographic values at the points
                 'geo': (B, N_q, D) - query coordinates
             }
@@ -366,11 +366,11 @@ class UninformedOAT(nn.Module):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
                 'topo': (B, N_q, C_topo) - topographic values at the points
                 'obs': (B, N_q, C_y) - ground truth observations
                 'mask_obs': (B, N_q, C_y) - observation mask
@@ -566,11 +566,11 @@ class OAT(UninformedOAT):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             observation_data: {
                 'coords': (B, N_kv, 2) - station coordinates
+                'global_tokens': (B, N_kv, C_nwp) - NWP values at the points
                 'topo': (B, N_kv, C_topo) - topographic values at the points
                 'geo': (B, N_kv, D) - station coordinates
                 'obs': (B, N_kv, C_y) - observations
@@ -578,6 +578,7 @@ class OAT(UninformedOAT):
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
                 'topo': (B, N_q, C_topo) - topographic values at the points
                 'geo': (B, N_q, D) - query coordinates
             }

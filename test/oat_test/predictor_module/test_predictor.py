@@ -7,6 +7,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
+from oat_test.conftest import FIELD_ROLES
 from torch.distributions import constraints
 
 from oat.data_module.support import VariableSupport
@@ -14,7 +15,6 @@ from oat.data_module.transform import IdentityTransform
 from oat.model_module.distributions import _ALL_DISTRIBUTIONS
 from oat.model_module.model import OATConfig
 from oat.predictor_module import OATPredictor
-from oat_test.conftest import FIELD_ROLES
 from scripts.train_model import setup_oat_cfg
 
 

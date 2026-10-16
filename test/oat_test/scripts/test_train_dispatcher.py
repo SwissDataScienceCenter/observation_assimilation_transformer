@@ -29,7 +29,7 @@ def test_oat_field_bundles_point_and_mlp_encoders():
 
 
 def test_field_and_non_field_models_accept_the_same_dataset():
-    # Every non-legacy dataset is flat-Field-shaped now, so there is no
+    # Every dataset is flat-Field-shaped, so there is no
     # dataset-naming split left to gate on: both the "_field" preset and the
     # plain model accept the same dataset variant without raising.
     validate("oat_field", "cosmo_peakweather/temp_precip")

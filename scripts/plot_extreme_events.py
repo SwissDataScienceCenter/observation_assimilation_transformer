@@ -65,7 +65,7 @@ _MAP_MARKER_EDGE = 0.4  # edge width (points) of those markers
 # Diverging colormap for differences, the same as plot_assimilation_panel.py.
 # It is not RdBu_r, so it does not look like a temperature map.
 _DIFF_CMAP = "PuOr"
-_DIFF_PERCENTILE = 99.0  # colour limit of the Δ map, as in plot_ERA5_to_COSMO_grid
+_DIFF_PERCENTILE = 99.0  # colour limit of the Δ map
 _OBS_DOT_SIZE = 8.0  # marker area (points^2) of the time-series obs dots
 _CANDIDATE_PAD_DAYS = 7  # extra days on each side for the heat daily means
 _VAR_LABELS = {"precipitation": "Precipitation", "temp": "Temperature"}
@@ -605,7 +605,7 @@ def _draw_event_row(
         fields = {name: np.where(land, f, np.nan) for name, f in fields.items()}
     vmin = float(np.nanmin([np.nanmin(f) for f in fields.values()]))
     vmax = float(np.nanmax([np.nanmax(f) for f in fields.values()]))
-    # Reference minus model, as in plot_ERA5_to_COSMO_grid.py: Δ = NWP - OAT.
+    # Reference minus model: Δ = NWP - OAT.
     diff = fields["NWP interpolation"] - fields["OAT"]
 
     # Window values at the drawn stations: obs (NaN without a full window),
@@ -628,7 +628,7 @@ def _draw_event_row(
         s: float(nwp_minus_obs[s]) for s in drawn if np.isfinite(nwp_minus_obs[s])
     }
     # The scale covers the field and the markers on the map, or the markers
-    # saturate. As in plot_ERA5_to_COSMO_grid.py, the limit is a percentile of
+    # saturate. The limit is a percentile of
     # |Δ|, so a small number of outliers cannot make the map white.
     on_map = [
         s

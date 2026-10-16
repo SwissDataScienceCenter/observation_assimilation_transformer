@@ -1,8 +1,7 @@
 """ERA5-Meteostat dataset that emits a dict of ``Field`` per sample.
 
-Thin concrete subclass of ``DatasetBase``: reuses the existing ERA5 NWP /
-topography / Meteostat-observation loaders from
-``legacy/era5_meteostat_dataset.py`` and wires them into three ``Source``
+Thin concrete subclass of ``DatasetBase``. It loads the ERA5 NWP,
+topography and Meteostat observations. It wires them into three ``Source``
 objects (obs, nwp, topo) consumed by the config-driven field assembly in
 ``DatasetBase``.
 """
@@ -120,10 +119,8 @@ DERIVED_FEATURES: dict[str, tuple[list[str], Callable[..., torch.Tensor]]] = {
 }
 
 # Mapping from obs variable name -> (required NWP vars, conversion fn taking a
-# name -> [..., N] column dict and returning the obs-unit tensor). Copied from
-# legacy.ERA5MeteostatDataset.get_baseline_pre_transform's ``_mapping``;
-# surfaced on the dataset via the obs_to_nwp property for the NWPInterpolator
-# baseline.
+# name -> [..., N] column dict and returning the obs-unit tensor). Surfaced on
+# the dataset via the obs_to_nwp property for the NWPInterpolator baseline.
 ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor]]] = {
     "temp": (["2t"], lambda n: n["2t"] - 273.15),
     "wspd": (["10u", "10v"], lambda n: torch.sqrt(n["10u"] ** 2 + n["10v"] ** 2)),
@@ -135,9 +132,9 @@ ERA5_OBS_TO_NWP: dict[str, tuple[list[str], Callable[[dict[str, Tensor]], Tensor
 class ERA5MeteostatDataset(DatasetBase):
     """``DatasetBase`` wired to the existing ERA5 / Meteostat loaders.
 
-    Accepts the same ``config`` shape as ``legacy.ERA5MeteostatDataset``
-    (data paths, variable lists, station/time filters, ``catalog``) plus the field
-    schema (``coord_sources``, ``fields``, ``roles``). Builds an
+    Accepts a ``config`` with data paths, variable lists, station/time filters
+    and ``catalog``, plus the field schema
+    (``coord_sources``, ``fields``, ``roles``). Builds an
     obs ``PointSetSource``, an nwp ``PointSetSource`` (native ERA5 lon/lat
     grid points) and a topo ``RasterSource``, then delegates assembly to
     ``DatasetBase``.
@@ -347,7 +344,7 @@ class ERA5MeteostatDataset(DatasetBase):
         # Data vars are (latitude, longitude); RasterSource.build_index does
         # row * W + col with row from y (=latitude), col from x (=longitude),
         # and assumes strictly increasing (origin, res) axes. Flip to
-        # ascending latitude first (mirrors legacy.ERA5MeteostatDataset._load_topo)
+        # ascending latitude first
         # so origin=(lon[0], lat[0]) / res=(dlon, dlat) index correctly; a
         # lat/lon swap or descending-latitude origin here would silently
         # misalign every topo lookup.
@@ -406,7 +403,7 @@ class ERA5MeteostatDataset(DatasetBase):
 
         for wind_var in ("wspd", "wpgt"):
             if wind_var in self._obs_vars:
-                # Convert from m/s to km/h for consistency with legacy.ERA5MeteostatDataset
+                # Convert from m/s to km/h
                 self.obs_tensor[..., self._obs_vars.index(wind_var)] /= 3.6
 
         coord_vars = [str(v) for v in config.coord_vars]
@@ -424,7 +421,7 @@ class ERA5MeteostatDataset(DatasetBase):
 
     def _build_obs_source(self) -> PointSetSource:
         # Note: full spawn-DDP picklability of open zarr/anemoi handles is
-        # pre-existing (shared with the old legacy.ERA5MeteostatDataset) and out
+        # pre-existing and out
         # of scope; this task only removes the newly-introduced lambda
         # unpicklability.
         units = {v: str(self.catalog.obs_vars[v].unit) for v in self._obs_vars}

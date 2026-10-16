@@ -1,9 +1,5 @@
 """Shared dataset helpers used by both the COSMO/PeakWeather and ERA5/Meteostat
-dataset implementations (legacy and field paths alike).
-
-Extracted so the old ``cosmo_peakweather_dataset.py`` / ``era5_meteostat_dataset.py``
-files can move to a ``legacy`` package without dragging the newer "field" path
-files along with them.
+dataset implementations.
 """
 
 from typing import Any
