@@ -38,7 +38,7 @@ def zenodo(monkeypatch):
                         for k, v in records[rid].items()
                     ],
                 }
-                body = json.dumps(meta).encode()
+                body = meta if isinstance(meta, bytes) else json.dumps(meta).encode()
             elif (
                 len(parts) == 6
                 and parts[3] == "files"
@@ -182,3 +182,43 @@ def test_main_uses_record_override_and_sandbox(zenodo, tmp_path, monkeypatch):
     argv = ["--what", "checkpoints", "--sandbox", "--checkpoints-record", "11"]
     assert dl.main([*argv, "--dest", str(tmp_path / "dest")]) == 0
     assert (tmp_path / "dest/checkpoints/oat_field/run_a/best.ckpt").is_file()
+
+
+def _tar_with(info, data=b""):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_non_json_metadata_gives_clear_error(zenodo, tmp_path):
+    zenodo.records["11"] = {"a": b"x"}
+    zenodo.meta_override["11"] = b"<html>proxy</html>"
+    with pytest.raises(dl.DownloadError, match="not JSON"):
+        dl.download_record(zenodo.base, "11", tmp_path / "d")
+
+
+def test_symlink_tar_member_is_refused(zenodo, tmp_path):
+    info = tarfile.TarInfo("data/link")
+    info.type = tarfile.SYMTYPE
+    info.linkname = "/etc/passwd"
+    zenodo.records["11"] = {"bad.tar": _tar_with(info), "SHA256SUMS": b""}
+    with pytest.raises(dl.DownloadError, match=r"bad\.tar"):
+        dl.download_record(zenodo.base, "11", tmp_path / "d")
+    assert not (tmp_path / "d/data/link").exists()
+
+
+def test_absolute_tar_member_is_refused(zenodo, tmp_path):
+    info = tarfile.TarInfo("/abs.txt")
+    info.size = 1
+    zenodo.records["11"] = {"bad.tar": _tar_with(info, b"x"), "SHA256SUMS": b""}
+    with pytest.raises(dl.DownloadError, match=r"bad\.tar"):
+        dl.download_record(zenodo.base, "11", tmp_path / "d")
+    assert not (tmp_path / "d/abs.txt").exists()
+
+
+def test_empty_sums_file_is_refused(zenodo, tmp_path):
+    ckpt_files, _ = _packed(tmp_path)
+    zenodo.records["11"] = {**ckpt_files, "SHA256SUMS": b""}
+    with pytest.raises(dl.DownloadError, match="lists no files"):
+        dl.download_record(zenodo.base, "11", tmp_path / "d")

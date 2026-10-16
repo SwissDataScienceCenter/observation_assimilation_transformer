@@ -2,7 +2,7 @@
 
 The files come from two Zenodo records. For each file the script checks the
 MD5 sum that Zenodo gives. Then it unpacks the tar files below --dest and
-checks every unpacked file against the SHA256SUMS file of the record. It
+checks every file that the SHA256SUMS file of the record lists. It
 fails on a checksum mismatch or an HTTP error. It uses only the standard
 library.
 
@@ -25,7 +25,7 @@ import sys
 import tarfile
 import urllib.error
 import urllib.request
-from http.client import HTTPResponse
+from http.client import HTTPException, HTTPResponse
 from pathlib import Path
 from typing import cast
 
@@ -58,7 +58,7 @@ def _open(url: str) -> HTTPResponse:
     req = urllib.request.Request(url, headers={"User-Agent": "oat-download"})
     try:
         return cast(HTTPResponse, urllib.request.urlopen(req, timeout=_TIMEOUT_S))
-    except OSError as exc:  # URLError and HTTPError are OSError
+    except (OSError, HTTPException) as exc:  # URLError, HTTPError: OSError
         raise DownloadError(f"{url}: {exc}") from exc
 
 
@@ -66,7 +66,10 @@ def record_files(base: str, record_id: str) -> list[tuple[str, str]]:
     """Return (file name, MD5 hex) for each file of a published record."""
     url = f"{base}/api/records/{record_id}"
     with _open(url) as resp:
-        meta = json.load(resp)
+        try:
+            meta = json.load(resp)
+        except (ValueError, OSError, HTTPException) as exc:
+            raise DownloadError(f"{url}: metadata is not JSON ({exc})") from exc
     files = meta.get("files") if isinstance(meta, dict) else None
     if not isinstance(files, list) or not files:
         raise DownloadError(f"{url}: no file list in the record metadata")
@@ -74,7 +77,7 @@ def record_files(base: str, record_id: str) -> list[tuple[str, str]]:
     for entry in files:
         key = entry.get("key") if isinstance(entry, dict) else None
         checksum = str(entry.get("checksum", "")) if isinstance(entry, dict) else ""
-        if not key or "/" in key or key in {".", ".."}:
+        if not isinstance(key, str) or not key or "/" in key or key in {".", ".."}:
             raise DownloadError(f"{url}: file entry without a safe name: {entry}")
         if not checksum.startswith("md5:"):
             raise DownloadError(f"{url}: {key} has no MD5 checksum")
@@ -88,7 +91,7 @@ def fetch(url: str, path: Path, md5: str) -> None:
     try:
         with _open(url) as resp, part.open("wb") as f:
             shutil.copyfileobj(resp, f, _CHUNK)
-    except OSError as exc:
+    except (OSError, HTTPException) as exc:
         part.unlink(missing_ok=True)
         raise DownloadError(f"{url}: {exc}") from exc
     got = file_digest(part, "md5")
@@ -98,11 +101,26 @@ def fetch(url: str, path: Path, md5: str) -> None:
     part.replace(path)
 
 
+def _check_member(tar_name: str, member: tarfile.TarInfo) -> None:
+    parts = Path(member.name).parts
+    if (
+        member.issym()
+        or member.islnk()
+        or ".." in parts
+        or not parts
+        or parts[0] not in {"checkpoints", "data"}
+        or member.name.startswith("/")
+    ):
+        raise DownloadError(f"{tar_name}: unsafe member {member.name!r}")
+
+
 def unpack(path: Path, dest: Path) -> None:
     """Extract a ``.tar`` file into *dest*, or move another file to dest/data/."""
     if path.name.endswith(".tar"):
         try:
             with tarfile.open(path) as tar:
+                for member in tar.getmembers():
+                    _check_member(path.name, member)
                 tar.extractall(dest, filter="data")  # refuses unsafe members
         except tarfile.TarError as exc:
             raise DownloadError(f"{path.name}: {exc}") from exc
@@ -118,7 +136,10 @@ def verify_sums(sums: Path, dest: Path) -> int:
     for line in sums.read_text().splitlines():
         if not line.strip():
             continue
-        digest, rel = line.split(maxsplit=1)
+        fields = line.split(maxsplit=1)
+        if len(fields) != 2:
+            raise DownloadError(f"{SUMS_NAME}: bad line {line!r}")
+        digest, rel = fields
         if rel.startswith("/") or ".." in Path(rel).parts:
             raise DownloadError(f"{SUMS_NAME}: unsafe path {rel!r}")
         target = dest / rel
@@ -127,6 +148,8 @@ def verify_sums(sums: Path, dest: Path) -> int:
         if file_digest(target, "sha256") != digest:
             raise DownloadError(f"{rel}: SHA256 does not match {SUMS_NAME}")
         count += 1
+    if count == 0:
+        raise DownloadError(f"{SUMS_NAME} lists no files")
     return count
 
 
