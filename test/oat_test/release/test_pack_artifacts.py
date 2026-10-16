@@ -36,6 +36,9 @@ def test_pack_checkpoints_member_names_and_sums(tmp_path):
         ]
     with tarfile.open(out / "results.tar") as tar:
         assert tar.getnames() == ["data/results/tag_metrics_test.csv"]
+    for name in ("checkpoints.tar", "results.tar"):
+        with tarfile.open(out / name) as tar:
+            assert all(m.uname == "" and m.uid == 0 for m in tar.getmembers())
     sums = _sums(out / SUMS_NAME)
     assert set(sums) == {
         "checkpoints/oat_field/run_a/best.ckpt",

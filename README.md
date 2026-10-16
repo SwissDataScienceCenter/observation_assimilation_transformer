@@ -8,7 +8,7 @@ This repository holds the code of the paper "Observation Assimilation Transforme
 
 ## Install
 
-You need Python 3.12 and [Poetry](https://python-poetry.org/) 2.x. A CUDA GPU is optional; only the scaling benchmarks (figures 8 and 9) need one.
+You need Python 3.12 and [Poetry](https://python-poetry.org/) 2.x. A CUDA GPU is optional. Figures 8 and 9 (scaling benchmarks) need a CUDA GPU. Figures 4 and 7 run faster on a GPU.
 
 ```bash
 git clone https://github.com/SwissDataScienceCenter/observation_assimilation_transformer.git
@@ -32,6 +32,10 @@ poetry run python -m scripts.download_artifacts --what all --dest .
 ```
 
 The script checks each file and puts the files into `checkpoints/` and `data/`. These are the default folders. To use other folders, set `OAT_CKPT_ROOT` and `OAT_DATA_ROOT`.
+
+The checkpoint record is about 61 MB. The data record is about 13 GB (the ERA5 zarr is about 12 GB). The unpack needs about two times the size of the largest tar file as free disk space, because the tar file stays until it is unpacked.
+
+The result files go to `<dest>/data/results`. The scripts `build_results_table` and `evaluate_test_set` always use `<repo>/data/results`. With another `--dest`, give `--results-dir <dest>/data/results` to `build_results_table`. Or download the checkpoints record with `--dest .`.
 
 The Swiss dataset (COSMO-1E, COSMO-E1 and PeakWeather as prepared for the paper) is not public. You cannot compute the Swiss rows of the results table again without MeteoSwiss data. The released result files give these rows.
 

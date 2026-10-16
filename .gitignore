@@ -51,4 +51,7 @@ checkpoints/
 benchmarking/*
 profiler_outputs/
 docs/
+!docs/oat_scheme.png
 .claude/
+# Work folder of scripts/download_artifacts.py after a failed run
+.oat_download/

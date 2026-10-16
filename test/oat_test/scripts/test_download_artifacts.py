@@ -65,6 +65,7 @@ def zenodo(monkeypatch):
         meta_override=meta_override,
     )
     srv.shutdown()
+    srv.server_close()
 
 
 def _record_from(folder):

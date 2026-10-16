@@ -46,6 +46,13 @@ def _walk(src: Path) -> list[Path]:
     return sorted(found)
 
 
+def _scrub_owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Remove the owner names and ids. Keep the mode and the time."""
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    return info
+
+
 def _tar_tree(src: Path, arc_root: str, tar_path: Path, sums: list[str]) -> None:
     """Write the files below *src* to *tar_path* as ``<arc_root>/<rel>``."""
     files = _walk(src)
@@ -54,7 +61,7 @@ def _tar_tree(src: Path, arc_root: str, tar_path: Path, sums: list[str]) -> None
     with tarfile.open(tar_path, "w", dereference=True) as tar:
         for f in files:
             arc = f"{arc_root}/{f.relative_to(src).as_posix()}"
-            tar.add(f, arcname=arc, recursive=False)
+            tar.add(f, arcname=arc, recursive=False, filter=_scrub_owner)
             sums.append(f"{file_digest(f, 'sha256')}  {arc}")
 
 

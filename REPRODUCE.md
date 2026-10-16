@@ -10,7 +10,7 @@ Each script writes to `figures/out/`. It stops with one message when an input is
 
 | Paper item | Script | Needs | Approximate run time |
 |---|---|---|---|
-| Table 1 (`tab:ml_results`, `tab:ci_table`) | `figures/generate_table1.sh` | Europe data and checkpoints. Swiss rows: the released result files, or MeteoSwiss data. | 4 h on 8 CPU cores (Europe evaluations) |
+| Table 1 (`tab:ml_results`, `tab:ci_table`, `tab:att_oat_perf`) | `figures/generate_table1.sh` | Europe data and checkpoints. Swiss rows: the released result files, or MeteoSwiss data. | 4 h on 8 CPU cores (Europe evaluations) |
 | Figure 1 (`fig:oat`), panels only | `figures/generate_fig1.sh` | MeteoSwiss data | minutes |
 | Figure 2 (`fig:data`) | `figures/generate_fig2.sh` | Europe data and MeteoSwiss data | minutes |
 | Figure 3 (`fig:example_field`) | `figures/generate_fig3.sh` | MeteoSwiss data, Swiss OAT checkpoint | minutes |
@@ -24,7 +24,8 @@ Each script writes to `figures/out/`. It stops with one message when an input is
 Notes:
 
 - The run times come from the paper runs (2026). The figure and benchmark times depend on the hardware. The benchmark figures show the times of your hardware, not the paper times.
-- `generate_table1.sh` writes new Europe result files into `data/results/`. They replace the released files of the same name. Keep a copy of the released files if you want to compare.
+- `generate_table1.sh` and `generate_fig5.sh` (when it computes missing dumps) write new result files (`<tag>_metrics_test.csv` and `<tag>_metrics_test.summary.json`) into `data/results/`. They replace the released files of the same name. Keep a copy of the released files if you want to compare.
+- The result files unpack to `<dest>/data/results`. The scripts `build_results_table` and `evaluate_test_set` always use `<repo>/data/results`. With another `--dest`, give `--results-dir <dest>/data/results` to `build_results_table`. Or download the checkpoints record with `--dest .`.
 - To build the table from the released result files only: `poetry run python -m scripts.build_results_table --results-dir data/results`.
 - The paper layout of figure 1 was put together by hand from the panels.
 - `DRY_RUN=1 bash figures/<script>` prints the commands and does not run them.
