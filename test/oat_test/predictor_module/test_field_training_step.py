@@ -67,8 +67,6 @@ def _backbone_cfgs() -> (
 ):
     global_encoder_cfg = M.GlobalEncoderConfig(
         in_channels=2,
-        field_extent_min=(0.0, 0.0),
-        field_extent_max=(1.0, 1.0),
         type="Point",
         out_channels=D_MODEL // 2,
         hidden_dims=(),
@@ -214,8 +212,7 @@ def test_field_training_step_real_data_smoke():
 
     batch = next(iter(train_loader))
 
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
+    oat_model_cfg = setup_oat_cfg(cfg, logger)
     predictor = setup_oat_predictor(
         oat_model_cfg,
         estimated_total_step=1,

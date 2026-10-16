@@ -32,8 +32,6 @@ class GlobalEncoderConfig:
     """Configuration for the point global encoder (Eq. 1)."""
 
     in_channels: int  # data dependent
-    field_extent_min: Tuple[float, float]  # data dependent
-    field_extent_max: Tuple[float, float]  # data dependent
     type: str = "Point"
     out_channels: int = 32
     hidden_dims: Tuple[int, ...] = (32,)

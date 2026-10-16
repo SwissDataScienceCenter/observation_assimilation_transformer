@@ -211,18 +211,13 @@ def test_default_hydra_config(transform_fixture):
     input_transform, output_transform = transform_fixture
     config_dir = str(Path(__file__).resolve().parents[3] / "configs")
 
-    dummy_field_extent = {
-        "min": [2255500.0, 840500.0],
-        "max": [2964500.0, 1479500.0],
-    }
-
     with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
         cfg = compose(
             config_name="config"
         )  # TODO potentially use all configs in this dir, not just config
 
     logger = logging.getLogger(__name__)
-    oat_cfg = setup_oat_cfg(cfg, dummy_field_extent, logger)
+    oat_cfg = setup_oat_cfg(cfg, logger)
 
     assert isinstance(oat_cfg, OATConfig)
     assert oat_cfg.output_head.in_features == cfg.model.d_model
@@ -245,10 +240,6 @@ def test_default_hydra_config(transform_fixture):
 
 def test_radius_masking_rejected_with_sphere_projection():
     config_dir = str(Path(__file__).resolve().parents[3] / "configs")
-    dummy_field_extent = {
-        "min": [2255500.0, 840500.0],
-        "max": [2964500.0, 1479500.0],
-    }
     with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
         cfg = compose(
             config_name="config",
@@ -268,7 +259,6 @@ def test_radius_masking_rejected_with_sphere_projection():
     with pytest.raises(ValueError, match="not compatible with an index-coordinate"):
         setup_oat_cfg(
             cfg,
-            dummy_field_extent,
             logger,
             project_index_coords=_sphere_projection,
         )

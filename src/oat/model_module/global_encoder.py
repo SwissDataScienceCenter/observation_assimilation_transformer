@@ -33,7 +33,7 @@ class PointGlobalEncoder(BaseGlobalEncoder):
     """Point-based global encoder: MLP over pre-sampled NWP tokens.
 
     Reads local_data['global_tokens'] [B, N, C_nwp] and returns [B, N, out].
-    No grid_sample, no field_extent, no global_field.
+    No grid_sample and no global_field.
     """
 
     def __init__(self, *, mlp_params: dict[str, Any], **kwargs: Any) -> None:

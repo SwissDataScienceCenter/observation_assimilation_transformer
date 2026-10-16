@@ -99,19 +99,14 @@ def load_cfg(
 
 
 def build_model(model_name: str, cfg) -> torch.nn.Module:
-    field_extent = {
-        "min": [EASTING_MIN, NORTHING_MIN],
-        "max": [EASTING_MAX, NORTHING_MAX],
-    }
     if model_name == "oat":
-        oat_cfg = setup_oat_cfg(cfg, field_extent, logger)
+        oat_cfg = setup_oat_cfg(cfg, logger)
         return OAT(oat_cfg)
     if model_name == "gp_baseline":
         # The predictor only stores the transforms; the fake inputs are already
         # "normalized", so no transforms are needed.
         predictor = setup_gp_predictor(
             cfg=cfg,
-            field_extent=field_extent,
             obs_vars=list(cfg.dataset.obs_vars),
             transforms=(None, None),
         )

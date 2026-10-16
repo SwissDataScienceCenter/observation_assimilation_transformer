@@ -6,12 +6,13 @@ from oat.model_module import model as M
 
 
 def test_global_encoder_config_defaults_to_point():
-    assert (
-        M.GlobalEncoderConfig(
-            in_channels=2, field_extent_min=(0.0, 0.0), field_extent_max=(1.0, 1.0)
-        ).type
-        == "Point"
-    )
+    assert M.GlobalEncoderConfig(in_channels=2).type == "Point"
+
+
+def test_global_encoder_config_has_no_field_extent():
+    cfg = M.GlobalEncoderConfig(in_channels=2)
+    assert not hasattr(cfg, "field_extent_min")
+    assert not hasattr(cfg, "field_extent_max")
 
 
 def test_topographic_encoder_config_defaults_to_mlp():

@@ -4,7 +4,6 @@ import torch
 from oat.model_module.gp_baseline import GPBaselineConfig, GPBaseline
 from oat.predictor_module.gp_predictor import GPPredictor
 
-FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
 NWP_VARS = ["T_2M", "U_10M", "V_10M"]
 OBS_VAR = ["temperature"]
 
@@ -156,7 +155,6 @@ def test_gp_oat_baseline_config_builds_trunk_backed_gp(model_name, deep):
 
     predictor = setup_gp_predictor(
         cfg,
-        FIELD_EXTENT,
         list(cfg.dataset.obs_vars),
         (IdentityTransform(), IdentityTransform()),
     )
@@ -196,7 +194,7 @@ def test_gp_oat_mean_matches_uninformed_baseline_trunk(model_name):
                     "dataset=cosmo_peakweather/temp",
                 ],
             )
-        return setup_backbone_cfgs(cfg, FIELD_EXTENT)
+        return setup_backbone_cfgs(cfg)
 
     assert backbone_for(model_name) == backbone_for("uninformed_oat")
 

@@ -67,8 +67,6 @@ def _backbone_cfgs() -> (
 ):
     global_enc_cfg = GlobalEncoderConfig(
         in_channels=N_NWP,
-        field_extent_min=(0.0, 0.0),
-        field_extent_max=(1.0, 1.0),
         type="Point",
         out_channels=D_MODEL // 2,
         hidden_dims=(),

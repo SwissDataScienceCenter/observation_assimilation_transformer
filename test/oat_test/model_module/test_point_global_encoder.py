@@ -22,8 +22,6 @@ def test_point_global_encoder_dispatch() -> None:
 
     cfg = M.GlobalEncoderConfig(
         in_channels=3,
-        field_extent_min=(0.0, 0.0),
-        field_extent_max=(1.0, 1.0),
         type="Point",
         out_channels=8,
         hidden_dims=(),

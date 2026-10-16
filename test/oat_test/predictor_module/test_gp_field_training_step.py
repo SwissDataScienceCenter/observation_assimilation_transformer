@@ -11,7 +11,6 @@ from oat.data_module.setup import collate
 from oat.predictor_module.gp_predictor import setup_gp_predictor
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[3] / "configs")
-FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
 
 
 class IdentityTransform:
@@ -75,7 +74,6 @@ def test_gp_field_training_step_runs(model_name, overrides):
 
     predictor = setup_gp_predictor(
         cfg,
-        FIELD_EXTENT,
         list(cfg.dataset.obs_vars),
         (IdentityTransform(), IdentityTransform()),
     )
@@ -159,7 +157,6 @@ def test_gp_field_training_step_runs_under_precision_64(model_name, overrides):
 
     predictor = setup_gp_predictor(
         cfg,
-        FIELD_EXTENT,
         list(cfg.dataset.obs_vars),
         (ValuesToDoubleTransform(), ValuesToDoubleTransform()),
     )

@@ -158,7 +158,6 @@ def main(cfg: DictConfig) -> None:
         output_transform,
     ) = setup_data_and_transform(cfg, logger)
 
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
     wandb_logger, callbacks = setup_logger_and_callbacks(cfg)
 
     # print config
@@ -176,7 +175,6 @@ def main(cfg: DictConfig) -> None:
 
         predictor = setup_gp_predictor(
             cfg=cfg,
-            field_extent=field_extent,
             obs_vars=list(dataset.config.obs_vars),
             transforms=[input_transform, output_transform],
             project_index_coords=resolve_index_projection(dataset),
@@ -204,7 +202,7 @@ def main(cfg: DictConfig) -> None:
 
         index_projection = resolve_index_projection(dataset)
         oat_model_cfg = setup_oat_cfg(
-            cfg, field_extent, logger, project_index_coords=index_projection
+            cfg, logger, project_index_coords=index_projection
         )
 
         var_names = dataset.config.obs_vars
