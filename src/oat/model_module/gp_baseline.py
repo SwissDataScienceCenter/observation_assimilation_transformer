@@ -338,9 +338,7 @@ class GPBaseline(nn.Module):
 
         if self.pre_oat is not None:
             # Eq. 1-7 trunk: global encode -> readout -> topo encode -> fusion.
-            # Called once for the context points and once for the queries, so
-            # the global encoder runs twice per step; cheap for the MLP encoder,
-            # worth hoisting if this is ever run with UNet/SwinUNETR.
+            # Called once for the context points and once for the queries.
             parts.append(
                 self.pre_oat._create_uninformed_tokens(global_data, local_data)
             )
