@@ -21,23 +21,18 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 
+from oat.paths import data_root
+
 from ._shared import canonical_stations, canonical_queries, canonical_queries_grid
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-TOPO_PATH = Path(
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
-)
-NWP_EXTRACTED_PATH = Path(
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr"
-)
-NWP_REF_PATH = Path(
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp.zarr"
-)
-ANEMOI_PATH = (
-    "/store_new/mch/msopr/ml/datasets/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
-)
+_COSMO_DIR = data_root() / "cosmo-1e_rechunked"
+TOPO_PATH = _COSMO_DIR / "topo.zarr"
+NWP_EXTRACTED_PATH = _COSMO_DIR / "nwp_extracted.zarr"
+NWP_REF_PATH = _COSMO_DIR / "nwp.zarr"
+ANEMOI_PATH = str(data_root() / "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr")
 OUT_PATH = Path(__file__).parents[3] / "data/figures/oat_panel_e_real.png"
 
 # ---------------------------------------------------------------------------

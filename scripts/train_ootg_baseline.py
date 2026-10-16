@@ -124,7 +124,9 @@ def main(cfg: DictConfig) -> None:
         f"ootg-baseline{ablation_tag}_{dataset_tag}_{now_str}_job{job_id}"
     )
     run_name = cfg.get("run_name") or default_run_name
-    checkpoint_dir = os.path.join("checkpoints", cfg.logging.group, run_name)
+    checkpoint_dir = os.path.join(
+        cfg.paths.checkpoint_root, cfg.logging.group, run_name
+    )
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # Persist the resolved config (the split indices are written back by
@@ -149,12 +151,17 @@ def main(cfg: DictConfig) -> None:
         )
         _LOG.info("Saved config.yaml and ootg_stats.pt to %s", checkpoint_dir)
 
+    # Without a W&B login (and no WANDB_MODE), log nothing instead of stopping.
+    wandb_mode = (
+        None if wandb.api.api_key or os.environ.get("WANDB_MODE") else "disabled"
+    )
     wandb_logger = WandbLogger(
         name=run_name,
         project=cfg.logging.project,
         group=cfg.logging.group,
         entity=cfg.logging.entity,
         log_model=False,
+        mode=wandb_mode,
         settings=wandb.Settings(init_timeout=300),
     )
     wandb_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))

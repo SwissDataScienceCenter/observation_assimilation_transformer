@@ -12,12 +12,13 @@ import numpy as np
 import zarr
 from matplotlib.colors import LinearSegmentedColormap
 
+from oat.paths import data_root
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-TOPO_PATH = Path(
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/topo.zarr"
-)
+_COSMO_DIR = data_root() / "cosmo-1e_rechunked"
+TOPO_PATH = _COSMO_DIR / "topo.zarr"
 
 # ---------------------------------------------------------------------------
 # Style
@@ -81,7 +82,7 @@ def canonical_stations() -> tuple[np.ndarray, np.ndarray]:
 
     xlo, xhi, ylo, yhi = zoom_bounds()
     obs_ds = PeakWeatherDataset(
-        root="/scratch/mch/cdonner/data/peakweather",
+        root=str(data_root() / "peakweather"),
         station_type="meteo_station",
         freq="1h",
     )

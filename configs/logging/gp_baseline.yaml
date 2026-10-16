@@ -1,4 +1,4 @@
 run_name_prefix: "gp_baseline"
 project: "oat"
 group: "gp_baseline"
-entity: "sdsc-mch"
+entity: ${oc.env:WANDB_ENTITY,null}  # the team sets WANDB_ENTITY in the shell profile

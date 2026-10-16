@@ -1,7 +1,7 @@
-nwp_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/era5-europe-mars-n320-2019-2024-1h-v1.zarr"
-topo_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/europe-static.zarr"
-obs_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
-station_meta_path: "/scratch/mch/cdonner/meteostats_dataset/data/processed/station_quality.parquet"
+nwp_path: "${paths.data_root}/era5-europe-mars-n320-2019-2024-1h-v1.zarr"
+topo_path: "${paths.data_root}/europe-static.zarr"
+obs_path: "${paths.data_root}/hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
+station_meta_path: "${paths.data_root}/station_quality.parquet"
 
 topo_vars:
   - elevation

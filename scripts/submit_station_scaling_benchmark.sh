@@ -46,16 +46,17 @@ EOF
 # means cuda:0), so they do not compete for the node and the timings stay
 # comparable. The other GPUs of the node stay idle.
 
-# Models as in the paper: the config.yaml saved next to each checkpoint in
-# configs/checkpoints.yaml (COSMO/PeakWeather). The data stays fake.
-CKPT="/scratch/mch/cdonner/observation_assimilation_transformer/checkpoints"
-OAT_CONFIG="$CKPT/oat_field/oat_field_cosmo_peakweather-temp_precip_20260820_job5151598/config.yaml"
-GP_OAT_RUN="$CKPT/gp_oat_field/gp_oat_field_cosmo_peakweather-temp_20260821_job5160231"
-GP_OAT_CONFIG="$GP_OAT_RUN/config.yaml"
-GP_OAT_WEIGHTS="$GP_OAT_RUN/best-model-epoch=86-val_crps_temperature=0.9044.ckpt"
-DEEP_GP_OAT_RUN="$CKPT/deep_gp_oat_field/deep_gp_oat_field_cosmo_peakweather-temp_20260821_job5160669"
-DEEP_GP_OAT_CONFIG="$DEEP_GP_OAT_RUN/config.yaml"
-DEEP_GP_OAT_WEIGHTS="$DEEP_GP_OAT_RUN/best-model-epoch=84-val_crps_temperature=0.8519.ckpt"
+# Models as in the paper: the registry entries of configs/checkpoints.yaml
+# (COSMO/PeakWeather), below $OAT_CKPT_ROOT (else <repo>/checkpoints).
+# The data stays fake.
+ckpt() {
+    python -c "from oat.predictor_module.checkpoint_utils import resolve_checkpoint; print(resolve_checkpoint('cosmo_peakweather', '$1'))"
+}
+OAT_CONFIG="$(dirname "$(ckpt oat_temp_precip)")/config.yaml"
+GP_OAT_WEIGHTS="$(ckpt gp_oat_temp)"
+GP_OAT_CONFIG="$(dirname "$GP_OAT_WEIGHTS")/config.yaml"
+DEEP_GP_OAT_WEIGHTS="$(ckpt deep_gp_oat_temp)"
+DEEP_GP_OAT_CONFIG="$(dirname "$DEEP_GP_OAT_WEIGHTS")/config.yaml"
 
 # Same inputs and outputs for all models: the dataset part of the GP config
 # (NWP T_2M and T_G, 5 topography channels -> temperature). The GPs already

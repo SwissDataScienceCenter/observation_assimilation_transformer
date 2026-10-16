@@ -5,7 +5,9 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf, DictConfig
 
-_DEFAULT_REGISTRY = Path(__file__).parents[3] / "configs" / "checkpoints.yaml"
+from oat.paths import REGISTRY_PATH, checkpoint_root
+
+_DEFAULT_REGISTRY = REGISTRY_PATH
 
 # Maps substrings of model_cls to the predictor class that loads them.
 _MODEL_CLS_TO_PREDICTOR = {
@@ -122,7 +124,10 @@ def resolve_checkpoint(
     model: str,
     registry_path: str | Path | None = None,
 ) -> str:
-    """Return the checkpoint path for (dataset, model) from configs/checkpoints.yaml."""
+    """Return the checkpoint path for (dataset, model) from the registry.
+
+    Relative registry values are below oat.paths.checkpoint_root().
+    """
     path = Path(registry_path) if registry_path is not None else _DEFAULT_REGISTRY
     registry = OmegaConf.load(path)
     try:
@@ -135,7 +140,11 @@ def resolve_checkpoint(
         raise ValueError(
             f"Checkpoint for dataset={dataset!r}, model={model!r} is not set (null) in {path}"
         )
-    return str(value)
+    if value == model:
+        # Sentinel entry (for example ``interpolator``): no checkpoint file.
+        return str(value)
+    # A relative value is below the checkpoint root. An absolute value stays.
+    return str(checkpoint_root() / str(value))
 
 
 def load_checkpoint(

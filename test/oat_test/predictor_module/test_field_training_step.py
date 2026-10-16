@@ -19,6 +19,7 @@ from oat.data_module.transform import (
     NestedTransform,
 )
 from oat.model_module import model as M
+from oat.paths import data_root
 from oat.predictor_module.oat_predictor import OATPredictor
 
 D_MODEL = 16
@@ -171,7 +172,7 @@ def test_temp_config_composes():
     assert list(cfg.dataset.obs_vars) == ["temperature"]
 
 
-_DATA_DIR = "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked"
+_DATA_DIR = str(data_root() / "cosmo-1e_rechunked")
 _DATA = os.path.join(_DATA_DIR, "nwp_extracted.zarr")
 
 

@@ -2,17 +2,16 @@ import os
 
 import pytest
 from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
 
 from oat.data_module.field_spec import parse_field_config, validate_field_config
 from oat.data_module.sources import SourceInfo
+from oat.paths import data_root
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 
-_settings_path = os.path.join(_REPO_ROOT, "configs/dataset/era5_meteostat/base.yaml")
-_TOPO_PATH = str(OmegaConf.load(_settings_path).topo_path)
-_NWP_PATH = "/store_new/mch/msopr/ml/datasets/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+_NWP_PATH = str(data_root() / "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr")
+_TOPO_PATH = str(data_root() / "europe-static.zarr")
 
 
 def _compose_dataset():
