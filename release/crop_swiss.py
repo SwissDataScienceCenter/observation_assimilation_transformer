@@ -267,10 +267,14 @@ def copy_nwp_axes(src: Path, dst: Path) -> None:
 def crop_all(src_root: Path, dest_root: Path, workers: int) -> None:
     """Write the 5 cropped stores below *dest_root* at the default names.
 
-    The function checks all target paths before it writes. It raises
-    FileExistsError when one of them exists.
+    The function checks all source and target paths before it writes. It
+    raises FileNotFoundError when a source path is missing. It raises
+    FileExistsError when a target path exists.
     """
     targets = [ARCHIVE, EXTRACTED, TOPO, NWP_AXES, PEAKWEATHER]
+    for t in targets:
+        if not (src_root / t).exists():
+            raise FileNotFoundError(f"{src_root / t}: source path is missing")
     found = [t for t in targets if (dest_root / t).exists()]
     if found:
         raise FileExistsError(f"{dest_root}: holds {found}")

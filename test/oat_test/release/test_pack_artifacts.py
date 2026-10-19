@@ -151,3 +151,28 @@ def test_pack_swiss_parts_stay_within_max_bytes(tmp_path):
     assert len(parts) > 1
     for p in parts:
         assert p.stat().st_size <= 30000
+
+
+def test_pack_swiss_refuses_an_out_folder_with_old_tars(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    (tmp_path / "up").mkdir()
+    (tmp_path / "up" / "old.tar").write_bytes(b"")
+    with pytest.raises(FileExistsError, match="tar files"):
+        pack_swiss(root, tmp_path / "up")
+    assert sorted(p.name for p in (tmp_path / "up").iterdir()) == ["old.tar"]
+
+
+def test_pack_swiss_refuses_a_file_larger_than_the_part_size(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    (root / "peakweather" / "huge.bin").write_bytes(b"h" * 20000)
+    with pytest.raises(ValueError, match="larger than the part size"):
+        pack_swiss(root, tmp_path / "up", max_bytes=16000)
+
+
+def test_pack_swiss_refuses_an_internal_string_in_zarr_metadata(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    bad = root / "cosmo-1e_rechunked/topo.zarr/.zattrs"
+    bad.write_text('{"source": "/' + 'users/someone/topo.zarr"}')
+    with pytest.raises(ValueError, match=r"topo\.zarr/\.zattrs"):
+        pack_swiss(root, tmp_path / "up")
+    assert not (tmp_path / "up").exists()

@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -265,3 +267,10 @@ def test_crop_all_refuses_an_existing_target(fake_root, tmp_path):
     with pytest.raises(FileExistsError):
         crop_all(fake_root, tmp_path / "out", workers=1)
     assert not (tmp_path / "out" / ARCHIVE).exists()
+
+
+def test_crop_all_refuses_a_missing_source(fake_root, tmp_path):
+    shutil.rmtree(fake_root / "cosmo-1e_rechunked/topo.zarr")
+    with pytest.raises(FileNotFoundError, match=r"topo\.zarr"):
+        crop_all(fake_root, tmp_path / "out", workers=1)
+    assert not (tmp_path / "out").exists()

@@ -51,3 +51,20 @@ def test_unpack_fails_on_a_changed_file(packed, tmp_path):
     _rewrite_one_member(packed)
     with pytest.raises(DownloadError, match="SHA256"):
         main(["--src", str(packed), "--dest", str(tmp_path / "d")])
+
+
+def test_unpack_refuses_a_tar_member_not_in_the_sums(packed, tmp_path):
+    extra = tmp_path / "x.txt"
+    extra.write_text("old")
+    with tarfile.open(packed / "zz_old.tar", "w") as tar:
+        tar.add(extra, arcname="data/old_store/x.txt")
+    with pytest.raises(DownloadError, match="not in SHA256SUMS"):
+        main(["--src", str(packed), "--dest", str(tmp_path / "d")])
+    assert not (tmp_path / "d").exists()
+
+
+def test_unpack_refuses_a_src_without_sums(packed, tmp_path):
+    (packed / "SHA256SUMS").unlink()
+    with pytest.raises(DownloadError, match="SHA256SUMS"):
+        main(["--src", str(packed), "--dest", str(tmp_path / "d")])
+    assert not (tmp_path / "d").exists()

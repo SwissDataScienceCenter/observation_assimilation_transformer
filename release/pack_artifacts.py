@@ -29,6 +29,7 @@ import tarfile
 from pathlib import Path
 
 from oat.paths import REPO_ROOT, data_root
+from release.leak_check import load_pattern
 from scripts.download_artifacts import SUMS_NAME, file_digest
 
 DATA_DIRS = ("era5-europe-mars-n320-2019-2024-1h-v1.zarr", "europe-static.zarr")
@@ -44,6 +45,7 @@ SWISS_STORES = (
     "peakweather",
 )
 MAX_TAR_BYTES = 50 * 10**9
+_ZARR_META = (".zattrs", ".zarray", ".zgroup", ".zmetadata")
 SWISS_README = """# Swiss data pack (OAT)
 
 This pack holds the COSMO-1E and PeakWeather data cropped to Switzerland.
@@ -92,6 +94,8 @@ the repository root:
 
 The data goes to <parent folder>/data. This is the data root (OAT_DATA_ROOT).
 The command stops if a store exists already in <parent folder>/data.
+If the SHA256 check fails, remove the listed stores below <parent folder>/data.
+Then run the command again.
 """
 _STAGE = REPO_ROOT / "release" / "stage"
 
@@ -138,7 +142,7 @@ def _tar_parts(
 
     A part is full when the next file would pass *max_bytes*. The count
     includes the tar headers and padding. A file that is larger than the
-    budget gets its own part.
+    budget causes a ValueError.
     """
     files = _walk(src)
     if not files:
@@ -150,6 +154,8 @@ def _tar_parts(
     for f in files:
         # A pax header (2 blocks), the member header and the padded data.
         n = 3 * block + -(-f.stat().st_size // block) * block
+        if n > budget:
+            raise ValueError(f"{f}: larger than the part size {max_bytes} bytes")
         if groups[-1] and size + n > budget:
             groups.append([])
             size = 0
@@ -197,11 +203,24 @@ def pack_data(root: Path, out: Path) -> list[Path]:
     return [*written, _write_sums(out, sums)]
 
 
+def _check_metadata(root: Path) -> None:
+    """Raise ValueError if a zarr metadata file of a store holds a leak pattern."""
+    pattern = load_pattern()
+    for store in SWISS_STORES:
+        for f in _walk(root / store):
+            if f.name in _ZARR_META and pattern.search(f.read_bytes()):
+                raise ValueError(f"{f}: holds an internal string")
+
+
 def pack_swiss(root: Path, out: Path, max_bytes: int = MAX_TAR_BYTES) -> list[Path]:
     """Pack the Swiss data below *root*. Return the written files."""
     for store in SWISS_STORES:
         if not (root / store).is_dir():
             raise FileNotFoundError(f"{root / store}: not a folder")
+    old = sorted(out.glob("*.tar"))
+    if old:
+        raise FileExistsError(f"{out}: holds tar files already, {old[0].name}")
+    _check_metadata(root)
     out.mkdir(parents=True, exist_ok=True)
     sums: list[str] = []
     written: list[Path] = []
