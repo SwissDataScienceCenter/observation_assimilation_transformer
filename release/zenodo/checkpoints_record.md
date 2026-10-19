@@ -39,9 +39,8 @@ The record has three files:
   `checkpoints/<family>/<run>/` contains the best checkpoint (`.ckpt`) and the
   `config.yaml` of the run. The `ootg` run folders also contain
   `ootg_stats.pt`, the normalization statistics that the OOTG loader needs.
-  The families are `oat`, `oat_field`,
-  `uninformed_oat`, `uninformed_oat_field`, `gp_oat_field`,
-  `deep_gp_oat_field` and `ootg` (the Gridded TNP baseline). There are 9
+  The families are `oat`, `uninformed_oat`,
+  `gp_oat`, `deep_gp_oat` and `ootg` (the Gridded TNP baseline). There are 9
   checkpoints for the Swiss dataset (COSMO-1E and PeakWeather) and 9 for the
   Europe dataset (ERA5 and Meteostat). The file `configs/checkpoints.yaml` in
   the code repository gives the checkpoint for each model in the paper.
