@@ -4,12 +4,16 @@ import json
 import tarfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from release.pack_artifacts import DATA_DIRS, DATA_FILES, pack_checkpoints, pack_data
 from scripts import download_artifacts as dl
+
+REPO = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
@@ -171,7 +175,8 @@ def test_http_error_names_the_url(zenodo, tmp_path):
         dl.download_record(zenodo.base, "404", tmp_path / "d")
 
 
-def test_main_without_record_id_stops_with_message(capsys, tmp_path):
+def test_main_without_record_id_stops_with_message(capsys, tmp_path, monkeypatch):
+    monkeypatch.setitem(dl.RECORD_IDS, "zenodo", {"checkpoints": None, "data": None})
     assert dl.main(["--what", "checkpoints", "--dest", str(tmp_path)]) == 1
     assert "--checkpoints-record" in capsys.readouterr().err
 
@@ -223,3 +228,27 @@ def test_empty_sums_file_is_refused(zenodo, tmp_path):
     zenodo.records["11"] = {**ckpt_files, "SHA256SUMS": b""}
     with pytest.raises(dl.DownloadError, match="lists no files"):
         dl.download_record(zenodo.base, "11", tmp_path / "d")
+
+
+def test_release_record_ids_are_set_and_distinct():
+    ids = [v for server in dl.RECORD_IDS.values() for v in server.values()]
+    assert all(isinstance(i, str) and i.isdigit() for i in ids)
+    assert len(set(ids)) == 4
+
+
+def test_citation_files_name_the_record_dois():
+    dois = {f"10.5281/zenodo.{i}" for i in dl.RECORD_IDS["zenodo"].values()}
+    for name in ("README.md", "CITATION.cff", ".zenodo.json"):
+        text = (REPO / name).read_text()
+        assert all(d in text for d in dois), name
+    assert "10.5072/" not in (REPO / "README.md").read_text()
+
+
+def test_citation_cff_gives_the_records_as_data_references():
+    cff = yaml.safe_load((REPO / "CITATION.cff").read_text())
+    assert "identifiers" not in cff
+    refs = {r["doi"]: r for r in cff["references"]}
+    assert set(refs) == {
+        f"10.5281/zenodo.{i}" for i in dl.RECORD_IDS["zenodo"].values()
+    }
+    assert all(r["type"] == "data" and r["authors"] for r in refs.values())

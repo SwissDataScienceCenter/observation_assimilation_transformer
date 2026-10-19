@@ -403,7 +403,7 @@ class ERA5MeteostatDataset(DatasetBase):
 
         for wind_var in ("wspd", "wpgt"):
             if wind_var in self._obs_vars:
-                # Convert from m/s to km/h
+                # Convert from km/h to m/s
                 self.obs_tensor[..., self._obs_vars.index(wind_var)] /= 3.6
 
         coord_vars = [str(v) for v in config.coord_vars]

@@ -33,3 +33,12 @@ preferred-citation:
   authors: *authors
   year: 2026
   notes: "Submitted"
+references:
+  - type: data
+    title: "OAT checkpoints and results v1.0"
+    authors: *authors
+    doi: 10.5281/zenodo.23470442
+  - type: data
+    title: "OAT Europe dataset"
+    authors: *authors
+    doi: 10.5281/zenodo.23470444

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Figure 8 (fig:scaling, 4 panels): train and inference time of OAT and the GP
+# Figure A1 (fig:scaling, 4 panels): train and inference time of OAT and the GP
 # for more and more stations. The benchmark uses fake station data, so it
 # needs no dataset. It reads the model configs and the GP weights of the Swiss
-# checkpoints. Needs: a CUDA GPU (about 4 h together with figure 9).
+# checkpoints. Needs: a CUDA GPU (about 4 h together with figure A2).
 # Timings depend on the hardware.
-# Output: figures/out/fig8_{fixed,proportional}_{train,inference}.pdf
+# Output: figures/out/figA1_{fixed,proportional}_{train,inference}.pdf
 source "$(dirname "$0")/_lib.sh"
 
 need_ckpt cosmo_peakweather oat_temp_precip gp_oat_temp
@@ -37,7 +37,7 @@ for mode in fixed proportional; do
             --gp-exact "$gp_exact" --gp-iterative "$gp_iterative" \
             --step "$step" --figure-dir "$OUT_DIR"
         run mv "$OUT_DIR/station_scaling_${mode}_${step}.pdf" \
-            "$OUT_DIR/fig8_${mode}_${step}.pdf"
+            "$OUT_DIR/figA1_${mode}_${step}.pdf"
         run rm -f "$OUT_DIR/station_scaling_${mode}_${step}.png"
     done
 done
