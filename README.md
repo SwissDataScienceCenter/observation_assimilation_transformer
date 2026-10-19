@@ -22,10 +22,10 @@ poetry run pytest                # the tests that need real data skip
 
 The paper checkpoints, the result files and the Europe dataset (ERA5 and Meteostat) are on Zenodo:
 
-| Record | Content | Licence |
-|---|---|---|
-| OAT checkpoints and results v1.0 | the 18 paper checkpoints with their configs, the per-station result files | CC BY 4.0 |
-| OAT Europe dataset | ERA5 (N320, 2019–2024, 1 h), static fields, Meteostat hourly observations, station quality | CC BY-NC 4.0 |
+| Record | DOI | Content | Licence |
+|---|---|---|---|
+| OAT checkpoints and results v1.0 | [10.5281/zenodo.23470442](https://doi.org/10.5281/zenodo.23470442) | the 18 paper checkpoints with their configs, the per-station result files | CC BY 4.0 |
+| OAT Europe dataset | [10.5281/zenodo.23470444](https://doi.org/10.5281/zenodo.23470444) | ERA5 (N320, 2019–2024, 1 h), static fields, Meteostat hourly observations, station quality | CC BY-NC 4.0 |
 
 ```bash
 poetry run python -m scripts.download_artifacts --what all --dest .

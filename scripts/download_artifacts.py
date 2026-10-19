@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import cast
 
 SERVERS = {"zenodo": "https://zenodo.org", "sandbox": "https://sandbox.zenodo.org"}
-# The record IDs are set when the records are reserved (release step 2).
+# Record IDs of the reserved v1.0 records.
 RECORD_IDS: dict[str, dict[str, str | None]] = {
-    "zenodo": {"checkpoints": None, "data": None},
-    "sandbox": {"checkpoints": None, "data": None},
+    "zenodo": {"checkpoints": "23470442", "data": "23470444"},
+    "sandbox": {"checkpoints": "622293", "data": "622295"},
 }
 SUMS_NAME = "SHA256SUMS"
 _CHUNK = 1 << 20
