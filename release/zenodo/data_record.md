@@ -22,7 +22,6 @@ version of the record. Resolve each `[USER CHECK]` before publication. The
 - **Related identifiers:**
   - The paper "Observation Assimilation Transformer: Probabilistic Weather
     Analysis from Sparse Station Observations". Relation: "is supplement to".
-    [USER CHECK] The paper has no DOI yet. Add it when it is known.
   - https://github.com/SwissDataScienceCenter/observation_assimilation_transformer.
     Relation: "is supplement to". Resource type: Software.
 - **Keywords:** weather, ERA5, Meteostat, station observations, Europe,
@@ -71,18 +70,25 @@ The script unpacks the files into `data/` and checks each file against
   with `anemoi.datasets.open_dataset`. The values are not changed. The
   statistics (mean, standard deviation, minimum, maximum) are computed over
   2019 to 2024.
-- Licence: [LEGAL] Copernicus licence. Attribution text: "Contains modified
-  Copernicus Climate Change Service information [2026]. Neither the European
-  Commission nor ECMWF is responsible for any use that may be made of the
-  Copernicus information or data it contains." [USER CHECK] Confirm the
-  attribution text and the year.
+- Licence: [LEGAL] Copernicus licence. The source anemoi dataset gives the
+  licence CC BY 4.0 and the attribution "ECMWF". The data was copied from MARS
+  in 2026. Attribution text: "Contains modified Copernicus Climate Change
+  Service information [2026]. Neither the European Commission nor ECMWF is
+  responsible for any use that may be made of the Copernicus information or
+  data it contains."
 
 ### Static fields
 
-- `elevation` (m, NaN over the ocean): from the SRTM terrain tiles of the AWS
-  Open Data terrain tiles
+- `elevation` (m, NaN over the ocean): from the AWS Terrain Tiles
+  (https://registry.opendata.aws/terrain-tiles), skadi format
   (https://s3.amazonaws.com/elevation-tiles-prod/skadi/), 1 arc-second HGT
-  tiles. The tiles are merged and averaged to a coarser grid.
+  tiles. Tilezen joerd (https://github.com/tilezen/joerd) makes these tiles
+  from a blend of elevation sources. For this area, the sources are EU-DEM,
+  SRTM, GMTED2010, ETOPO1, ArcticDEM (north of 60° N) and national models of
+  Austria, Norway and the United Kingdom. The tiles are merged and averaged to
+  a coarser grid. The attribute `long_name` in the zarr says "SRTM 90m". This
+  is not correct: the source is the blend above and the grid spacing is about
+  1 km.
 - `distance_to_coast` (m, 0 over the ocean): the land mask comes from the
   Natural Earth 10 m land polygons
   (https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip). The
@@ -90,18 +96,32 @@ The script unpacks the files into `data/` and checks each file against
   projected back to EPSG:4326 with bilinear interpolation.
 - Grid: EPSG:4326, latitude 34° N to 72° N, longitude 25° W to 45° E,
   4145 × 7636 points, spacing 33 arc-seconds (0.0091667°).
-  [USER CHECK] The attribute `long_name` of `elevation` says "SRTM 90m", but
-  the grid spacing is about 1 km. The text here gives the grid spacing.
-- Licence: [LEGAL] SRTM elevation data (NASA, public domain) through the AWS
-  terrain tiles, and Natural Earth (public domain). Confirm both.
+- Licence of `elevation`: [LEGAL] the licences of the Tilezen sources
+  (https://github.com/tilezen/joerd/blob/master/docs/attribution.md). The
+  Tilezen page does not give the EU-DEM licence. Attribution:
+  - Europe terrain data produced using Copernicus data and information funded
+    by the European Union - EU-DEM layers.
+  - SRTM data courtesy of the U.S. Geological Survey.
+  - GMTED2010 data courtesy of the U.S. Geological Survey.
+  - Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric
+    Administration.
+  - ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc.,
+    imagery and funded under National Science Foundation awards 1043681,
+    1559691, and 1542736.
+  - Austria terrain data © offene Daten Österreichs – Digitales Geländemodell
+    (DGM) Österreich (CC BY 3.0 AT).
+  - Norway terrain data © Kartverket (CC BY 4.0).
+  - United Kingdom terrain data © Environment Agency copyright and/or
+    database right 2015. All rights reserved (Open Government Licence v3).
+- Licence of `distance_to_coast`: Natural Earth (public domain,
+  https://www.naturalearthdata.com/about/terms-of-use/).
 
 ### Station observations (Meteostat)
 
 - Source: Meteostat hourly data (https://meteostat.net), downloaded with
   `meteostat-cli` 0.3.0 (Python package `meteostat` 2.1.4) on 2026-05-19, for
   all stations in latitude 34° N to 72° N and longitude 25° W to 45° E.
-- Time range: 2019-01-01 to 2025-12-31, every hour. [USER CHECK] Confirm the
-  last hour of the download.
+- Time range: 2019-01-01T00:00 UTC to 2025-12-31T00:00 UTC, every hour.
 - Columns and units: `station` (Meteostat station ID), `time`, `temp` (°C),
   `rhum` (%), `prcp` (mm/h), `wspd` (km/h), `wpgt` (wind gust, km/h).
 - Processing:
@@ -110,9 +130,8 @@ The script unpacks the files into `data/` and checks each file against
   - Set `temp` below −40 °C to missing.
   - Set `prcp` above 200 mm/h to missing.
 - Size: 184 572 846 rows.
-- Licence: [LEGAL] Meteostat data, CC BY-NC 4.0. Attribution: "Data by
-  Meteostat" (https://meteostat.net). Confirm the terms of Meteostat and of
-  its data sources.
+- Licence: Meteostat data, Deutscher Wetterdienst (DWD), CC BY-NC 4.0.
+  Attribution: "Data by Meteostat" (https://dev.meteostat.net/license).
 
 ### Station quality
 
@@ -135,7 +154,6 @@ The script unpacks the files into `data/` and checks each file against
   and elevation of each station.
 - Use in the paper: the OAT code does not apply a quality threshold. It only
   removes the stations with a missing latitude, longitude or elevation.
-  [USER CHECK] Confirm that the paper uses no quality filter.
 
 ### Units in the OAT code
 
