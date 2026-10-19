@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from release.pack_artifacts import DATA_DIRS, DATA_FILES, pack_checkpoints, pack_data
 from scripts import download_artifacts as dl
@@ -241,3 +242,13 @@ def test_citation_files_name_the_record_dois():
         text = (REPO / name).read_text()
         assert all(d in text for d in dois), name
     assert "10.5072/" not in (REPO / "README.md").read_text()
+
+
+def test_citation_cff_gives_the_records_as_data_references():
+    cff = yaml.safe_load((REPO / "CITATION.cff").read_text())
+    assert "identifiers" not in cff
+    refs = {r["doi"]: r for r in cff["references"]}
+    assert set(refs) == {
+        f"10.5281/zenodo.{i}" for i in dl.RECORD_IDS["zenodo"].values()
+    }
+    assert all(r["type"] == "data" and r["authors"] for r in refs.values())

@@ -4,13 +4,6 @@ title: "Observation Assimilation Transformer (OAT)"
 version: 1.0.0
 license: MIT
 repository-code: "https://github.com/SwissDataScienceCenter/observation_assimilation_transformer"
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.23470442
-    description: "OAT checkpoints and results v1.0"
-  - type: doi
-    value: 10.5281/zenodo.23470444
-    description: "OAT Europe dataset"
 authors: &authors
   - family-names: Donner
     given-names: Christian
@@ -40,3 +33,12 @@ preferred-citation:
   authors: *authors
   year: 2026
   notes: "Submitted"
+references:
+  - type: data
+    title: "OAT checkpoints and results v1.0"
+    authors: *authors
+    doi: 10.5281/zenodo.23470442
+  - type: data
+    title: "OAT Europe dataset"
+    authors: *authors
+    doi: 10.5281/zenodo.23470444
