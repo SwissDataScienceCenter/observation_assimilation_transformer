@@ -14,7 +14,7 @@ BENCH_DIR="${OAT_BENCH_DIR:-benchmarking/scaling_benchmark}"
 OUT_DIR="figures/out"
 mkdir -p "$OUT_DIR"
 
-SWISS_MSG="This part of the figure needs MeteoSwiss data (COSMO-1E, COSMO-E1 and PeakWeather as prepared for the paper). This data is not public, see REPRODUCE.md."
+SWISS_MSG="This part of the figure needs MeteoSwiss data (COSMO-1E and PeakWeather as prepared for the paper). This data is not public, see REPRODUCE.md."
 DOWNLOAD_MSG="Get it with: python -m scripts.download_artifacts --what all --dest ."
 EUROPE_FILES=(
     era5-europe-mars-n320-2019-2024-1h-v1.zarr

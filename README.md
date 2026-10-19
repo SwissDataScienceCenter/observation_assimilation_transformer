@@ -37,7 +37,7 @@ The checkpoint record is about 61 MB. The data record is about 13 GB (the ERA5 z
 
 The result files go to `<dest>/data/results`. The scripts `build_results_table` and `evaluate_test_set` always use `<repo>/data/results`. With another `--dest`, give `--results-dir <dest>/data/results` to `build_results_table`. Or download the checkpoints record with `--dest .`.
 
-The Swiss dataset (COSMO-1E, COSMO-E1 and PeakWeather as prepared for the paper) is not public. You cannot compute the Swiss rows of the results table again without MeteoSwiss data. The released result files give these rows.
+The Swiss dataset (COSMO-1E and PeakWeather as prepared for the paper) is not public. You cannot compute the Swiss rows of the results table again without MeteoSwiss data. The released result files give these rows.
 
 ## Reproduce the paper
 

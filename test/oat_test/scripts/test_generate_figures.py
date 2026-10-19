@@ -159,6 +159,7 @@ def test_table1_without_full_domain_skips_swiss_ootg_and_cosmo_interpolator(tmp_
 
 def test_table1_with_full_domain_runs_swiss_ootg(tmp_path):
     result = _run("table1", _roots(tmp_path, [*EUROPE, *SWISS, *FULL], ckpts=True))
+    assert result.returncode == 0, result.stderr
     cmds = _commands(result.stderr)
     assert any("ootg_temp_precip" in c and "cosmo_peakweather" in c for c in cmds)
     assert any("cosmo_interpolator" in c for c in cmds)
