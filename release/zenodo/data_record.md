@@ -56,9 +56,10 @@ The script unpacks the files into `data/` and checks each file against
 
 ### ERA5 surface fields
 
-- Source: ERA5 and ERA5.1 hourly analysis on the reduced Gaussian grid N320,
-  from the ECMWF MARS archive (class `ea`, stream `oper`, type `an`, surface
-  level).
+- Source: ERA5 and ERA5.1 on the reduced Gaussian grid N320, from the ECMWF
+  MARS archive (class `ea`, stream `oper`, surface level). `2t`, `10u`, `10v`
+  and `tcc` are hourly analyses (type `an`). `tp` comes from the short-range
+  forecasts (type `fc`, step 1 h). It is the accumulation over the hour.
 - Variables: `2t` (2 m temperature, K), `10u` and `10v` (10 m wind components,
   m/s), `tcc` (total cloud cover, fraction 0 to 1), `tp` (total precipitation,
   m for each hour).
