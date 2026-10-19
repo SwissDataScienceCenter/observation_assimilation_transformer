@@ -1,8 +1,17 @@
+import shutil
 import tarfile
 
 import pytest
 
-from release.pack_artifacts import DATA_DIRS, DATA_FILES, pack_checkpoints, pack_data
+from release.pack_artifacts import (
+    DATA_DIRS,
+    DATA_FILES,
+    SWISS_README,
+    SWISS_STORES,
+    pack_checkpoints,
+    pack_data,
+    pack_swiss,
+)
 from scripts.download_artifacts import SUMS_NAME, file_digest
 
 
@@ -96,3 +105,38 @@ def test_pack_checkpoints_fails_on_empty_stage(tmp_path):
     (tmp_path / "stage" / "results").mkdir()
     with pytest.raises(FileNotFoundError, match="no files"):
         pack_checkpoints(tmp_path / "stage", tmp_path / "up")
+
+
+def _fake_swiss_root(tmp_path):
+    root = tmp_path / "swiss"
+    for store in SWISS_STORES:
+        if store == "peakweather":
+            for name in ("disclaimer.txt", "a.csv", "b.csv"):
+                (root / store).mkdir(parents=True, exist_ok=True)
+                (root / store / name).write_bytes(b"p" * 40)
+        else:
+            (root / store / "0").mkdir(parents=True)
+            (root / store / ".zgroup").write_bytes(b"{}")
+            (root / store / "0" / "0.0").write_bytes(b"z" * 10)
+    return root
+
+
+def test_pack_swiss_splits_a_large_store_into_complete_tars(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    written = pack_swiss(root, tmp_path / "up", max_bytes=100)
+    pw = sorted(p.name for p in written if p.name.startswith("peakweather"))
+    assert pw == ["peakweather.000.tar", "peakweather.001.tar"]
+    names = [
+        n for p in written if p.suffix == ".tar" for n in tarfile.open(p).getnames()
+    ]
+    assert len(names) == len(set(names))
+    assert set(_sums(tmp_path / "up" / SUMS_NAME)) == set(names)
+    assert all(n.startswith("data/") for n in names)
+    assert (tmp_path / "up/README.md").read_text() == SWISS_README
+
+
+def test_pack_swiss_needs_every_store(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    shutil.rmtree(root / "peakweather")
+    with pytest.raises(FileNotFoundError):
+        pack_swiss(root, tmp_path / "up")
