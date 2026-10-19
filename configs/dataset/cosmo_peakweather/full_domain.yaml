@@ -1,0 +1,3 @@
+# Paths to the full COSMO-1E domain. Only the OOTG variants use them.
+nwp_path: "${paths.data_root}/cosmo-1e_full_domain/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+nwp_extracted_path: "${paths.data_root}/cosmo-1e_full_domain/nwp_extracted.zarr"

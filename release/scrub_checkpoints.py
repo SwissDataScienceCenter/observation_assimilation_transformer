@@ -48,6 +48,21 @@ def _is_ootg(cfg: DictConfig) -> bool:
     return "use_topo" in cfg
 
 
+def dataset_base(dataset_type: str, ootg: bool) -> DictConfig:
+    """Return the tracked base config of a dataset type.
+
+    OOTG runs read the full COSMO-1E domain. For them, merge the
+    full_domain.yaml of the same folder when that file exists.
+    """
+    folder = REPO_ROOT / "configs/dataset" / dataset_type
+    base = OmegaConf.load(folder / "base.yaml")
+    full = folder / "full_domain.yaml"
+    if ootg and full.is_file():
+        base = OmegaConf.merge(base, OmegaConf.load(full))
+    assert isinstance(base, DictConfig)
+    return base
+
+
 def _absolute_strings(node: Any, prefix: str = "") -> list[str]:
     """Return the keys of all string values that start with ``/``."""
     found: list[str] = []
@@ -184,10 +199,7 @@ def scrub_all(
 
             cfg = OmegaConf.load(src.parent / "config.yaml")
             assert isinstance(cfg, DictConfig)
-            base = OmegaConf.load(
-                REPO_ROOT / "configs/dataset" / cfg.dataset.dataset_type / "base.yaml"
-            )
-            assert isinstance(base, DictConfig)
+            base = dataset_base(cfg.dataset.dataset_type, _is_ootg(cfg))
             OmegaConf.save(scrub_config(cfg, base), dst.parent / "config.yaml")
             written.append(dst.parent / "config.yaml")
 
