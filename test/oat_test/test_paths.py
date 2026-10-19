@@ -65,3 +65,16 @@ def test_tracked_registry_is_relative():
             if value is None or value == key:
                 continue
             assert not Path(value).is_absolute(), (key, value)
+
+
+def test_tracked_registry_has_no_field_family_folders():
+    from omegaconf import OmegaConf
+
+    reg = OmegaConf.to_container(OmegaConf.load(paths.REGISTRY_PATH))
+    families = {
+        Path(value).parts[0]
+        for models in reg.values()
+        for key, value in (models or {}).items()
+        if value is not None and value != key
+    }
+    assert not [f for f in families if f.endswith("_field")]
