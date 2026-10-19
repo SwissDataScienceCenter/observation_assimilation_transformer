@@ -12,6 +12,7 @@ env/
 data/processed/
 data/raw/
 data/figures/
+figures/out/
 notebooks/wip/
 docs/superpowers/
 outputs
@@ -41,6 +42,7 @@ build/
 
 # Misc
 release/stage/
+release/upload/
 setup_env.sh
 .DS_Store
 .cache_constant_inputs
@@ -49,4 +51,7 @@ checkpoints/
 benchmarking/*
 profiler_outputs/
 docs/
+!docs/oat_scheme.png
 .claude/
+# Work folder of scripts/download_artifacts.py after a failed run
+.oat_download/

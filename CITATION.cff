@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "Observation Assimilation Transformer (OAT)"
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/SwissDataScienceCenter/observation_assimilation_transformer"
+authors: &authors
+  - family-names: Donner
+    given-names: Christian
+    email: christian.research@mailbox.org
+    affiliation: "Swiss Data Science Center, ETH Zurich"
+  - family-names: Cattaneo
+    given-names: Michele
+    affiliation: "Swiss Data Science Center, ETH Zurich"
+  - family-names: Samarin
+    given-names: Maxim
+    affiliation: "Swiss Data Science Center, ETH Zurich"
+  - family-names: Zanetta
+    given-names: Francesco
+    affiliation: "Federal Office of Meteorology and Climatology MeteoSwiss"
+  - family-names: "Lloréns Jover"
+    given-names: "Icíar"
+    affiliation: "Federal Office of Meteorology and Climatology MeteoSwiss"
+  - family-names: "Aznar Siguan"
+    given-names: Gabriela
+    affiliation: "Federal Office of Meteorology and Climatology MeteoSwiss"
+  - family-names: Volpi
+    given-names: Michele
+    affiliation: "Swiss Data Science Center, ETH Zurich"
+preferred-citation:
+  type: article
+  title: "Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations"
+  authors: *authors
+  year: 2026
+  notes: "Submitted"
