@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import runpy
 import shlex
 import subprocess
@@ -10,7 +11,7 @@ import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-NAMES = [f"fig{i}" for i in range(1, 10)] + ["table1"]
+NAMES = [f"fig{i}" for i in range(1, 8)] + ["figA1", "figA2", "table1"]
 EUROPE = [
     "era5-europe-mars-n320-2019-2024-1h-v1.zarr",
     "europe-static.zarr",
@@ -137,11 +138,25 @@ def test_table1_uses_result_files_without_swiss_data(tmp_path):
     assert commands[-1][2] == "scripts.build_results_table"
 
 
-def test_fig9_needs_the_fig8_runs(tmp_path):
+def test_figA2_needs_the_figA1_runs(tmp_path):
     roots = _roots(tmp_path, ckpts=True)
-    result = _run("fig9", roots)
+    result = _run("figA2", roots)
     assert result.returncode == 1
-    assert "Run figures/generate_fig8.sh first" in result.stderr
+    assert "Run figures/generate_figA1.sh first" in result.stderr
+
+
+def test_every_named_generate_script_exists():
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split()
+    named = set()
+    for f in tracked:
+        if f.startswith("docs/superpowers/") or not (REPO / f).is_file():
+            continue
+        text = (REPO / f).read_text(errors="ignore")
+        named |= set(re.findall(r"generate_\w+\.sh", text))
+    missing = [n for n in sorted(named) if not (REPO / "figures" / n).exists()]
+    assert not missing
 
 
 class _Parsed(Exception):

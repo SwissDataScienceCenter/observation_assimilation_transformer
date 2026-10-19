@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Figure 9 (fig:fullattention_vs_sparse, 4 panels): OAT with sparse and with
-# full attention. It uses the OAT and GP runs of figure 8 and stops when they
+# Figure A2 (fig:fullattention_vs_sparse, 4 panels): OAT with sparse and with
+# full attention. It uses the OAT and GP runs of figure A1 and stops when they
 # are missing. Needs: a CUDA GPU.
-# Output: figures/out/fig9_{fixed,proportional}_{train,inference}.pdf
+# Output: figures/out/figA2_{fixed,proportional}_{train,inference}.pdf
 source "$(dirname "$0")/_lib.sh"
 
 need_ckpt cosmo_peakweather oat_temp_precip gp_oat_temp
@@ -12,7 +12,7 @@ OAT_CONFIG="$(dirname "$OAT_CKPT")/config.yaml"
 GP_CONFIG="$(dirname "$GP_WEIGHTS")/config.yaml"
 need "$OAT_CONFIG" "$DOWNLOAD_MSG"
 need "$GP_CONFIG" "$DOWNLOAD_MSG"
-for mode in fixed proportional; do  # stop early when the figure 8 runs are missing
+for mode in fixed proportional; do  # stop early when the figure A1 runs are missing
     oat_run="$(newest oat "$mode")"
     gp_exact="$(newest gp_oat "$mode" _exact)"
     gp_iterative="$(newest gp_oat "$mode")"
@@ -36,7 +36,7 @@ for mode in fixed proportional; do
             --gp-exact "$gp_exact" --gp-iterative "$gp_iterative" \
             --oat-full-attention "$full_run" --step "$step" --figure-dir "$OUT_DIR"
         run mv "$OUT_DIR/fullattention_vs_sparse_${mode}_${step}.pdf" \
-            "$OUT_DIR/fig9_${mode}_${step}.pdf"
+            "$OUT_DIR/figA2_${mode}_${step}.pdf"
         run rm -f "$OUT_DIR/fullattention_vs_sparse_${mode}_${step}.png" \
             "$OUT_DIR/station_scaling_${mode}_${step}.pdf" \
             "$OUT_DIR/station_scaling_${mode}_${step}.png"

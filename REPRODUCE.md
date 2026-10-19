@@ -18,8 +18,8 @@ Each script writes to `figures/out/`. It stops with one message when an input is
 | Figure 5 (`fig:error_cosmo`, `fig:error_era5`) | `figures/generate_fig5.sh` | As figure 4. Computes missing `evaluate_test_set --long` dumps. | 2 h for each dataset on CPU, when the dumps are missing |
 | Figure 6 (`fig:era5_to_cosmo`) | `figures/generate_fig6.sh` | Europe data and MeteoSwiss COSMO-E1 data | minutes |
 | Figure 7 (`fig:extreme_events`) | `figures/generate_fig7.sh` | Europe row: Europe data and checkpoint. Swiss row: MeteoSwiss data. | 10 min (GPU node) |
-| Figure 8 (`fig:scaling`) | `figures/generate_fig8.sh` | Swiss checkpoints (configs and GP weights only; the data is fake), a CUDA GPU | 4 h together with figure 9 |
-| Figure 9 (`fig:fullattention_vs_sparse`) | `figures/generate_fig9.sh` | The figure 8 runs, a CUDA GPU | see figure 8 |
+| Figure A1 (`fig:scaling`) | `figures/generate_figA1.sh` | Swiss checkpoints (configs and GP weights only; the data is fake), a CUDA GPU | 4 h together with figure A2 |
+| Figure A2 (`fig:fullattention_vs_sparse`) | `figures/generate_figA2.sh` | The figure A1 runs, a CUDA GPU | see figure A1 |
 
 Notes:
 

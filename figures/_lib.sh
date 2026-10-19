@@ -76,6 +76,6 @@ need_gpu() {
 newest() {
     local runs=("$BENCH_DIR"/????-??-??_??-??-??_"$1"_"$2"_B1"${3:-}")
     [[ -d "${runs[-1]}" ]] \
-        || die "missing input: benchmark run $1 ($2) in $BENCH_DIR. Run figures/generate_fig8.sh first."
+        || die "missing input: benchmark run $1 ($2) in $BENCH_DIR. Run figures/generate_figA1.sh first."
     echo "${runs[-1]}"
 }
