@@ -2,16 +2,21 @@
 
 The crop makes a smaller copy of the data (the Swiss data pack). The NWP
 archive (anemoi layout) keeps the grid points in the index box and the
-selected variables. The extracted NWP store keeps the same grid points and
-all its variables. The time axis and the metadata do not change. The script
-writes v2 zarr stores with the source compressor and one time step per
-chunk. The source paths come only from the arguments.
+variables of the extracted NWP store. The extracted NWP store keeps the same
+grid points and all its variables. The time axis and the metadata do not
+change. The script writes v2 zarr stores with the source compressor and one
+time step per chunk. The topography keeps the used variables in the LV95 box
+of the cropped points plus a margin. The NWP reference store keeps only its
+full x and y axes. PeakWeather is copied unchanged. The source paths come
+only from the arguments.
 
 Usage (from the repository root):
     python -m release.crop_swiss --src <data root> --dest <new data root>
 """
 
+import argparse
 import multiprocessing
+import shutil
 from concurrent.futures import ProcessPoolExecutor
 from itertools import pairwise
 from pathlib import Path
@@ -19,11 +24,24 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+import xarray as xr
 import zarr
+from pyproj import Transformer
 
 BOX = (45.59, 48.0, 5.75, 10.81)  # (south, north, west, east) in degrees
 ARCHIVE = "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
 EXTRACTED = "cosmo-1e_rechunked/nwp_extracted.zarr"
+TOPO = "cosmo-1e_rechunked/topo.zarr"
+NWP_AXES = "cosmo-1e_rechunked/nwp.zarr"
+PEAKWEATHER = "peakweather"
+TOPO_VARS = (
+    "DEM",
+    "TPI_500M",
+    "TPI_2000M",
+    "WE_DERIVATIVE_2000M_SIGRATIO1",
+    "SN_DERIVATIVE_2000M_SIGRATIO1",
+)
+TOPO_MARGIN_M = 5_000  # margin around the cropped NWP points, in metres
 _STATS = ("mean", "stdev", "minimum", "maximum", "sums", "squares", "count")
 _PER_VARIABLE = (*_STATS, "has_nans")
 # Attrs that list variable names. The crop removes the names it drops.
@@ -189,3 +207,110 @@ def crop_extracted(
     )
     d.attrs.update(dict(s.attrs))
     _crop_time_parallel(src, dst, None, np.asarray(points, np.int64), workers)
+
+
+def lv95_box(
+    lat: npt.NDArray[Any], lon: npt.NDArray[Any]
+) -> tuple[float, float, float, float]:
+    """Return (xmin, xmax, ymin, ymax) in EPSG:2056 of the points *lat*, *lon*."""
+    to_lv95 = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True)
+    x, y = to_lv95.transform(np.ravel(lon), np.ravel(lat))
+    return float(np.min(x)), float(np.max(x)), float(np.min(y)), float(np.max(y))
+
+
+def _axis_slice(axis: Any, low: float, high: float) -> slice:
+    """Return the label slice for [low, high] in the direction of *axis*."""
+    return slice(low, high) if axis[1] >= axis[0] else slice(high, low)
+
+
+def _clipped(ds: xr.Dataset) -> xr.Dataset:
+    """Rechunk each variable to its source chunks, clipped to its shape.
+
+    The function also sets the zarr encoding of the chunks to the same
+    values. The other encoding values (compressor, fill value) stay.
+    """
+    out = ds.copy()
+    for name, var in ds.variables.items():
+        src = var.encoding.get("chunks") or var.shape
+        chunks = tuple(min(c, n) for c, n in zip(src, var.shape, strict=True))
+        enc = {k: v for k, v in var.encoding.items() if k != "preferred_chunks"}
+        enc["chunks"] = chunks
+        if name in ds.dims:
+            out[name].encoding = enc
+            continue
+        out[name] = var.chunk(dict(zip(var.dims, chunks, strict=True)))
+        out[name].encoding = enc
+    return out
+
+
+def crop_topo(src: Path, dst: Path, box: tuple[float, float, float, float]) -> None:
+    """Crop the topography *src* to ``TOPO_VARS`` and the LV95 *box*.
+
+    *box* is (xmin, xmax, ymin, ymax). The coordinates of the variables
+    stay. The source chunks stay where they fit in the cropped shape.
+    """
+    xmin, xmax, ymin, ymax = box
+    ds = xr.open_zarr(src)[list(TOPO_VARS)]
+    ds = ds.sel(
+        x=_axis_slice(ds.x.values, xmin, xmax), y=_axis_slice(ds.y.values, ymin, ymax)
+    )
+    _clipped(ds).to_zarr(dst, mode="w-", zarr_format=2, consolidated=True)
+
+
+def copy_nwp_axes(src: Path, dst: Path) -> None:
+    """Write a zarr store with only the full ``x`` and ``y`` axes of *src*."""
+    ds = xr.open_zarr(src)
+    axes = xr.Dataset(coords={"x": ds.x, "y": ds.y}, attrs=ds.attrs)
+    _clipped(axes).to_zarr(dst, mode="w-", zarr_format=2, consolidated=True)
+
+
+def crop_all(src_root: Path, dest_root: Path, workers: int) -> None:
+    """Write the 5 cropped stores below *dest_root* at the default names.
+
+    The function checks all target paths before it writes. It raises
+    FileExistsError when one of them exists.
+    """
+    targets = [ARCHIVE, EXTRACTED, TOPO, NWP_AXES, PEAKWEATHER]
+    found = [t for t in targets if (dest_root / t).exists()]
+    if found:
+        raise FileExistsError(f"{dest_root}: holds {found}")
+
+    archive = zarr.open_group(str(src_root / ARCHIVE), mode="r")
+    height, width = (int(n) for n in archive.attrs["field_shape"])
+    lat = archive["latitudes"][:].reshape(height, width)
+    lon = archive["longitudes"][:].reshape(height, width)
+    rows, cols = crop_box(lat, lon, BOX)
+    pts = point_index(rows, cols, width)
+    print(
+        f"rows {rows.start}:{rows.stop}, cols {cols.start}:{cols.stop},"
+        f" {pts.size} points"
+    )
+    variables = list(
+        zarr.open_array(str(src_root / EXTRACTED), mode="r").attrs["variables"]
+    )
+    xmin, xmax, ymin, ymax = lv95_box(lat[rows, cols], lon[rows, cols])
+    m = TOPO_MARGIN_M
+    topo_box = (xmin - m, xmax + m, ymin - m, ymax + m)
+
+    (dest_root / EXTRACTED).parent.mkdir(parents=True, exist_ok=True)
+    crop_archive(
+        src_root / ARCHIVE, dest_root / ARCHIVE, rows, cols, variables, workers
+    )
+    crop_extracted(src_root / EXTRACTED, dest_root / EXTRACTED, pts, workers)
+    crop_topo(src_root / TOPO, dest_root / TOPO, topo_box)
+    copy_nwp_axes(src_root / NWP_AXES, dest_root / NWP_AXES)
+    shutil.copytree(src_root / PEAKWEATHER, dest_root / PEAKWEATHER)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Read the command line and run crop_all."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--src", type=Path, required=True, help="source data root")
+    parser.add_argument("--dest", type=Path, required=True, help="new data root")
+    parser.add_argument("--workers", type=int, default=8, help="worker processes")
+    args = parser.parse_args(argv)
+    crop_all(args.src, args.dest, args.workers)
+
+
+if __name__ == "__main__":
+    main()

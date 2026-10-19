@@ -1,9 +1,23 @@
 import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 import zarr
 from anemoi.datasets import open_dataset
 
-from release.crop_swiss import crop_archive, crop_box, crop_extracted, point_index
+from release.crop_swiss import (
+    ARCHIVE,
+    EXTRACTED,
+    TOPO_VARS,
+    copy_nwp_axes,
+    crop_all,
+    crop_archive,
+    crop_box,
+    crop_extracted,
+    crop_topo,
+    lv95_box,
+    point_index,
+)
 from release.leak_check import load_pattern
 
 GLOBAL_VARS = ["T_G", "T_2M", "U_10M", "V_10M", "TOT_PREC_1H", "CLCT"]
@@ -86,6 +100,57 @@ def make_fake_extracted(path, T=5, N=24):
     return path
 
 
+def make_fake_topo(path, descending=False):
+    """Write a small topography store on a 10 km LV95 grid."""
+    x = np.arange(2_480_000, 2_840_001, 10_000, dtype="f8")
+    y = np.arange(1_070_000, 1_300_001, 10_000, dtype="f8")
+    y = y[::-1] if descending else y
+    shape = (len(y), len(x))
+    names = (*TOPO_VARS, "SLOPE_100M_SIGRATIO1")
+    rng = np.random.default_rng(0)
+    data = {n: (("y", "x"), rng.random(shape, dtype="f4")) for n in names}
+    yy, xx = np.meshgrid(y, x, indexing="ij")
+    ds = xr.Dataset(
+        data,
+        coords={
+            "x": x,
+            "y": y,
+            "latitude": (("y", "x"), 46 + (yy - 1_200_000) / 111_000),
+            "longitude": (("y", "x"), 8 + (xx - 2_600_000) / 77_000),
+        },
+        attrs={"crs": "epsg:2056"},
+    )
+    ds.chunk({"y": 8, "x": 16}).to_zarr(path, zarr_format=2, consolidated=True)
+    return path
+
+
+@pytest.fixture(params=[False, True], ids=["y_up", "y_down"])
+def fake_topo(tmp_path, request):
+    return make_fake_topo(tmp_path / "topo.zarr", descending=request.param)
+
+
+@pytest.fixture
+def fake_root(tmp_path):
+    """Write a data root. The BOX selects rows 2:7 and cols 1:11 (50 points)."""
+    root = tmp_path / "root"
+    (root / "cosmo-1e_rechunked").mkdir(parents=True)
+    make_fake_archive(
+        root / ARCHIVE, H=8, W=12, variables=("A", *GLOBAL_VARS), lon0=5.5, step=0.5
+    )
+    make_fake_extracted(root / EXTRACTED, N=96)
+    make_fake_topo(root / "cosmo-1e_rechunked/topo.zarr")
+    nwp = xr.Dataset(
+        {"HSURF": (("y", "x"), np.zeros((3, 4), "f4"))},
+        coords={"x": np.arange(4.0) * 1000, "y": np.arange(3.0) * 1000},
+    )
+    nwp.to_zarr(root / "cosmo-1e_rechunked/nwp.zarr", zarr_format=2)
+    pw = root / "peakweather"
+    pw.mkdir()
+    pd.DataFrame({"station": ["ABO"]}).to_parquet(pw / "stations.parquet")
+    (pw / "disclaimer.txt").write_text("disclaimer")
+    return root
+
+
 @pytest.fixture
 def fake_archive(tmp_path):
     return make_fake_archive(tmp_path / "archive.zarr")
@@ -146,3 +211,57 @@ def test_cropped_archive_has_no_internal_path_and_filters_name_lists(
     attrs = zarr.open_group(str(dst), "r").attrs
     assert "_create_yaml_config" not in attrs
     assert attrs["constant_fields"] == []
+
+
+def test_lv95_box_of_bern():
+    xmin, xmax, ymin, ymax = lv95_box(np.array([46.95, 46.95]), np.array([7.44, 7.44]))
+    assert abs(xmin - 2_600_000) < 2_000 and abs(ymin - 1_200_000) < 2_000
+    assert xmin == xmax and ymin == ymax
+
+
+def test_crop_topo_keeps_only_the_used_variables_in_the_box(fake_topo, tmp_path):
+    crop_topo(
+        fake_topo, tmp_path / "t.zarr", (2_500_000, 2_600_000, 1_100_000, 1_200_000)
+    )
+    ds = xr.open_zarr(tmp_path / "t.zarr")
+    assert set(ds.data_vars) == set(TOPO_VARS)
+    assert {"latitude", "longitude"} <= set(ds.coords)
+    assert ds.x.min() >= 2_500_000 and ds.x.max() <= 2_600_000
+    assert ds.y.min() >= 1_100_000 and ds.y.max() <= 1_200_000
+    assert ds.sizes == {"y": 11, "x": 11}
+    src = xr.open_zarr(fake_topo).sel(x=ds.x, y=ds.y)
+    np.testing.assert_array_equal(ds.DEM, src.DEM)
+
+
+def test_copy_nwp_axes_keeps_full_x_and_y_only(fake_root, tmp_path):
+    copy_nwp_axes(fake_root / "cosmo-1e_rechunked/nwp.zarr", tmp_path / "n.zarr")
+    src = xr.open_zarr(fake_root / "cosmo-1e_rechunked/nwp.zarr")
+    dst = xr.open_zarr(tmp_path / "n.zarr")
+    assert not dst.data_vars
+    np.testing.assert_array_equal(dst.x, src.x)
+    np.testing.assert_array_equal(dst.y, src.y)
+
+
+def test_crop_all_writes_the_default_names_and_a_consistent_grid(fake_root, tmp_path):
+    out = tmp_path / "out"
+    crop_all(fake_root, out, workers=1)
+    a = open_dataset(str(out / ARCHIVE))
+    e = zarr.open(str(out / EXTRACTED), "r")
+    assert (
+        e.shape[2]
+        == len(a.latitudes)
+        < len(open_dataset(str(fake_root / ARCHIVE)).latitudes)
+    )
+    assert e.shape[2] == 50 and list(a.name_to_index) == GLOBAL_VARS
+    assert (out / "peakweather/disclaimer.txt").is_file()
+    assert set(xr.open_zarr(out / "cosmo-1e_rechunked/topo.zarr").data_vars) == set(
+        TOPO_VARS
+    )
+    assert not xr.open_zarr(out / "cosmo-1e_rechunked/nwp.zarr").data_vars
+
+
+def test_crop_all_refuses_an_existing_target(fake_root, tmp_path):
+    (tmp_path / "out/peakweather").mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        crop_all(fake_root, tmp_path / "out", workers=1)
+    assert not (tmp_path / "out" / ARCHIVE).exists()
