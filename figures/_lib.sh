@@ -22,7 +22,9 @@ EUROPE_FILES=(
     hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet
     station_quality.parquet
 )
-COSMO_E1="mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+SWISS_ARCHIVE="mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+FULL_DOMAIN="cosmo-1e_full_domain"
+FULL_DOMAIN_MSG="This part needs the full COSMO-1E domain (MeteoSwiss data, not cropped to Switzerland). This data is not public, see REPRODUCE.md."
 
 die() { echo "$(basename "$0"): $*" >&2; exit 1; }
 
@@ -40,12 +42,20 @@ need_europe() {
     for f in "${EUROPE_FILES[@]}"; do need "$DATA_ROOT/$f" "$DOWNLOAD_MSG"; done
 }
 
-has_swiss() { [[ -e "$DATA_ROOT/cosmo-1e_rechunked" && -e "$DATA_ROOT/peakweather" ]]; }
-need_swiss() {
-    has_swiss || die "missing input $DATA_ROOT/cosmo-1e_rechunked or $DATA_ROOT/peakweather. $SWISS_MSG"
+has_swiss() {
+    [[ -e "$DATA_ROOT/cosmo-1e_rechunked" && -e "$DATA_ROOT/peakweather" \
+        && -e "$DATA_ROOT/$SWISS_ARCHIVE" ]]
 }
-has_cosmo_e1() { [[ -e "$DATA_ROOT/$COSMO_E1" ]]; }
-need_cosmo_e1() { has_cosmo_e1 || die "missing input $DATA_ROOT/$COSMO_E1. $SWISS_MSG"; }
+need_swiss() {
+    has_swiss || die "missing input $DATA_ROOT/cosmo-1e_rechunked, $DATA_ROOT/peakweather or $DATA_ROOT/$SWISS_ARCHIVE. $SWISS_MSG"
+}
+has_full_domain() {
+    [[ -e "$DATA_ROOT/$FULL_DOMAIN/$SWISS_ARCHIVE" \
+        && -e "$DATA_ROOT/$FULL_DOMAIN/nwp_extracted.zarr" ]]
+}
+need_full_domain() {
+    has_full_domain || die "missing input $DATA_ROOT/$FULL_DOMAIN/$SWISS_ARCHIVE or $DATA_ROOT/$FULL_DOMAIN/nwp_extracted.zarr. $FULL_DOMAIN_MSG"
+}
 
 # ckpt DATASET MODEL: print the checkpoint path of a registry entry.
 ckpt() {
