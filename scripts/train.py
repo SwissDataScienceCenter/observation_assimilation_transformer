@@ -6,7 +6,7 @@ run name used consistently for the checkpoint dir and W&B run.
 
 Usage:
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp_precip
-    python -m scripts.train --model gp_field --dataset era5_meteostat/temp --dry-run
+    python -m scripts.train --model gp --dataset era5_meteostat/temp --dry-run
     python -m scripts.train --model ootg --dataset cosmo_peakweather/temp_ootg --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
@@ -48,31 +48,7 @@ MODEL_SPECS = {
         "scripts.train_model",
         ("model=uninformed_oat", "predictor=oat_predictor", "split=no_conditioning"),
     ),
-    # "_field" presets: same models with the point-wise global/topographic
-    # encoders pinned explicitly. Every dataset is flat-Field-shaped,
-    # and model=oat/uninformed_oat already default to point/mlp too.
-    # So these are a stable, explicit-override alias.
-    # They are not a dataset-gated variant.
-    "oat_field": ModelSpec(
-        "scripts.train_model",
-        (
-            "model=oat",
-            "predictor=oat_predictor",
-            "model/global_encoder=point",
-            "model/topographic_encoder=mlp",
-        ),
-    ),
-    "uninformed_oat_field": ModelSpec(
-        "scripts.train_model",
-        (
-            "model=uninformed_oat",
-            "predictor=oat_predictor",
-            "split=no_conditioning",
-            "model/global_encoder=point",
-            "model/topographic_encoder=mlp",
-        ),
-    ),
-    "gp_field": ModelSpec(
+    "gp": ModelSpec(
         "scripts.train_model",
         (
             "model=gp_baseline",
@@ -82,7 +58,7 @@ MODEL_SPECS = {
         ),
         univariate_only=True,
     ),
-    "deep_gp_field": ModelSpec(
+    "deep_gp": ModelSpec(
         "scripts.train_model",
         (
             "model=deep_gp_baseline",
@@ -92,7 +68,7 @@ MODEL_SPECS = {
         ),
         univariate_only=True,
     ),
-    "gp_oat_field": ModelSpec(
+    "gp_oat": ModelSpec(
         "scripts.train_model",
         (
             "model=gp_oat_baseline",
@@ -103,7 +79,7 @@ MODEL_SPECS = {
         ),
         univariate_only=True,
     ),
-    "deep_gp_oat_field": ModelSpec(
+    "deep_gp_oat": ModelSpec(
         "scripts.train_model",
         (
             "model=deep_gp_oat_baseline",
