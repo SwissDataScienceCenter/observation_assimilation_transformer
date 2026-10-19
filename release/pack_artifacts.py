@@ -136,17 +136,21 @@ def _tar_parts(
 ) -> list[Path]:
     """Write the files below *src* to ``<stem>.tar`` or ``<stem>.NNN.tar``.
 
-    A part is full when the next file would pass *max_bytes*. A file that is
-    larger than *max_bytes* gets its own part.
+    A part is full when the next file would pass *max_bytes*. The count
+    includes the tar headers and padding. A file that is larger than the
+    budget gets its own part.
     """
     files = _walk(src)
     if not files:
         raise FileNotFoundError(f"{src}: no files to pack")
+    block = tarfile.BLOCKSIZE
+    budget = max_bytes - 2 * block - tarfile.RECORDSIZE  # end marker, record pad
     groups: list[list[Path]] = [[]]
     size = 0
     for f in files:
-        n = f.stat().st_size
-        if groups[-1] and size + n > max_bytes:
+        # A pax header (2 blocks), the member header and the padded data.
+        n = 3 * block + -(-f.stat().st_size // block) * block
+        if groups[-1] and size + n > budget:
             groups.append([])
             size = 0
         groups[-1].append(f)

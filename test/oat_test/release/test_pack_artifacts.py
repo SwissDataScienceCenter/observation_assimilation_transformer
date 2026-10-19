@@ -123,7 +123,7 @@ def _fake_swiss_root(tmp_path):
 
 def test_pack_swiss_splits_a_large_store_into_complete_tars(tmp_path):
     root = _fake_swiss_root(tmp_path)
-    written = pack_swiss(root, tmp_path / "up", max_bytes=100)
+    written = pack_swiss(root, tmp_path / "up", max_bytes=16000)
     pw = sorted(p.name for p in written if p.name.startswith("peakweather"))
     assert pw == ["peakweather.000.tar", "peakweather.001.tar"]
     names = [
@@ -140,3 +140,14 @@ def test_pack_swiss_needs_every_store(tmp_path):
     shutil.rmtree(root / "peakweather")
     with pytest.raises(FileNotFoundError):
         pack_swiss(root, tmp_path / "up")
+
+
+def test_pack_swiss_parts_stay_within_max_bytes(tmp_path):
+    root = _fake_swiss_root(tmp_path)
+    for i in range(12):
+        (root / "peakweather" / f"big{i}.bin").write_bytes(b"q" * 3000)
+    written = pack_swiss(root, tmp_path / "up", max_bytes=30000)
+    parts = [p for p in written if p.name.startswith("peakweather")]
+    assert len(parts) > 1
+    for p in parts:
+        assert p.stat().st_size <= 30000
