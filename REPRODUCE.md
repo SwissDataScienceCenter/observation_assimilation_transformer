@@ -6,7 +6,7 @@ Run all commands from the repository root, in the project environment (`poetry r
 poetry run python -m scripts.download_artifacts --what all --dest .
 ```
 
-Each script writes to `figures/out/`. It stops with one message when an input is missing. "MeteoSwiss data" means the Swiss dataset (COSMO-1E, COSMO-E1 and PeakWeather as prepared for the paper). This data is not public. On a cluster, run a script with `sbatch --wrap "bash figures/<script>"`.
+Each script writes to `figures/out/`. It stops with one message when an input is missing. "MeteoSwiss data" means the Swiss dataset (COSMO-1E, COSMO-E1 and PeakWeather as prepared for the paper). This data is not public. On a cluster, run a script with `sbatch --wrap "poetry run bash figures/<script>"`.
 
 | Paper item | Script | Needs | Approximate run time |
 |---|---|---|---|

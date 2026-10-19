@@ -67,7 +67,7 @@ need_ckpt() {
 need_gpu() {
     [[ -n "${DRY_RUN:-}" ]] && return 0
     python -c 'import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)' \
-        || die "missing input: a CUDA GPU. On a cluster, run: sbatch --wrap \"bash $0\""
+        || die "missing input: a CUDA GPU. On a cluster, run: sbatch --wrap \"poetry run bash $0\""
 }
 
 # newest LABEL MODE [SUFFIX]: print the newest benchmark run folder, or stop.
