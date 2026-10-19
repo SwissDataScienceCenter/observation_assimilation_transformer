@@ -125,8 +125,9 @@ def crop_archive(
     """Crop the anemoi archive *src* to the index box and *variables*.
 
     The variables stay in the source order. The per-variable arrays and attrs
-    are sliced. The ``field_shape`` attr gets the cropped shape. All other
-    attrs and the ``_build`` group are copied unchanged.
+    are sliced. The ``field_shape`` attr gets the cropped shape. The
+    ``_create_yaml_config`` attr is dropped. All other attrs and the
+    ``_build`` group are copied unchanged.
     """
     s = zarr.open_group(str(src), mode="r")
     names = list(s.attrs["variables"])
@@ -156,6 +157,8 @@ def crop_archive(
     zarr.copy(s["_build"], d, name="_build")
 
     attrs = dict(s.attrs)
+    # The build recipe holds internal paths. The pack must not show them.
+    attrs.pop("_create_yaml_config", None)
     attrs["variables"] = kept
     attrs["variables_metadata"] = {n: attrs["variables_metadata"][n] for n in kept}
     for key in _NAME_LISTS:

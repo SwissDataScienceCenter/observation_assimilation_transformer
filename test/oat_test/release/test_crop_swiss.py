@@ -4,6 +4,7 @@ import zarr
 from anemoi.datasets import open_dataset
 
 from release.crop_swiss import crop_archive, crop_box, crop_extracted, point_index
+from release.leak_check import load_pattern
 
 GLOBAL_VARS = ["T_G", "T_2M", "U_10M", "V_10M", "TOT_PREC_1H", "CLCT"]
 _STATS = ("mean", "stdev", "minimum", "maximum", "sums", "squares", "count")
@@ -59,6 +60,9 @@ def make_fake_archive(
         licence="unknown",
         attribution="unknown",
         version="0.30",
+        constant_fields=["A"],
+        # Split the string, so that the leak check of this file does not match.
+        _create_yaml_config={"config_path": "/" + "users/someone/config.yaml"},
     )
     ds = open_dataset(str(path))
     assert list(ds.name_to_index) == list(variables)
@@ -130,3 +134,15 @@ def test_cropped_extracted_keeps_times_variables_and_order(fake_extracted, tmp_p
     assert dst.shape == (5, 6, 4) and dst.chunks == (1, 6, 4)
     assert dst.attrs["variables"] == src.attrs["variables"]
     np.testing.assert_array_equal(dst[:], src[:][:, :, pts])
+
+
+def test_cropped_archive_has_no_internal_path_and_filters_name_lists(
+    fake_archive, tmp_path
+):
+    dst = tmp_path / "a.zarr"
+    crop_archive(fake_archive, dst, slice(1, 3), slice(2, 4), ["T_2M"], workers=1)
+    assert load_pattern().search((fake_archive / ".zattrs").read_bytes())
+    assert not load_pattern().search((dst / ".zattrs").read_bytes())
+    attrs = zarr.open_group(str(dst), "r").attrs
+    assert "_create_yaml_config" not in attrs
+    assert attrs["constant_fields"] == []
