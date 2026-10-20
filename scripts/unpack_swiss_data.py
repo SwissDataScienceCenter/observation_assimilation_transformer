@@ -1,4 +1,4 @@
-"""Unpack the Swiss data pack.
+"""Unpack the Swiss data pack with this command.
 
 The folder given with --src holds the tar files and the SHA256SUMS file of
 the pack. The tar member names start with ``data/``. So the data goes to
@@ -8,7 +8,7 @@ not in SHA256SUMS, or if a store exists already below <dest>/data.
 It checks every file with SHA256SUMS after the unpack. It keeps the tar files.
 
 Usage (from the repository root):
-    python -m scripts.unpack_artifacts --src <folder> --dest <parent folder>
+    python -m scripts.unpack_swiss_data --src <folder> --dest <parent folder>
 """
 
 import argparse

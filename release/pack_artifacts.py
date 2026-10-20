@@ -92,7 +92,7 @@ COSMO-1E domain. The full domain is not in this pack.
 Put all tar files and SHA256SUMS in one folder. Then run this command from
 the repository root:
 
-    python -m scripts.unpack_artifacts --src <folder> --dest <parent folder>
+    python -m scripts.unpack_swiss_data --src <folder> --dest <parent folder>
 
 The data goes to <parent folder>/data. This is the data root (OAT_DATA_ROOT).
 The command stops if a store exists already in <parent folder>/data.

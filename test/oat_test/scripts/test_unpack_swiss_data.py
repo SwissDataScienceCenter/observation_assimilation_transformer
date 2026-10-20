@@ -5,7 +5,7 @@ import pytest
 
 from release.pack_artifacts import SWISS_STORES, pack_swiss
 from scripts.download_artifacts import DownloadError
-from scripts.unpack_artifacts import main
+from scripts.unpack_swiss_data import main
 
 
 @pytest.fixture
