@@ -8,6 +8,8 @@ poetry run python -m scripts.download_artifacts --what all --dest .
 
 Each script writes to `figures/out/`. It stops with one message when an input is missing. "MeteoSwiss data" means the Swiss dataset (COSMO-1E and PeakWeather as prepared for the paper). This data is not public. The Swiss OOTG row, the COSMO holdout row and Figure 6 read the full domain from `<data root>/cosmo-1e_full_domain/` (the archive and `nwp_extracted.zarr`). On the cluster, these are symbolic links to the full files. On a cluster, run a script with `sbatch --wrap "poetry run bash figures/<script>"`.
 
+The evaluation of a probabilistic model draws predictive samples without a fixed seed. Thus a new run can differ from the released result files in the last digit of the table (relative difference about 1e-3). Deterministic models, for example the interpolators, give the same values.
+
 | Paper item | Script | Needs | Approximate run time |
 |---|---|---|---|
 | Table 1 (`tab:ml_results`, `tab:ci_table`, `tab:att_oat_perf`) | `figures/generate_table1.sh` | Europe data and checkpoints. Swiss rows: the released result files, or MeteoSwiss data. The Swiss OOTG row and the COSMO holdout row need the full COSMO-1E domain. | 4 h on 8 CPU cores (Europe evaluations) |
