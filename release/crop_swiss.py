@@ -2,13 +2,14 @@
 
 The crop makes a smaller copy of the data (the Swiss data pack). The NWP
 archive (anemoi layout) keeps the grid points in the index box and the
-variables of the extracted NWP store. The extracted NWP store keeps the same
-grid points and all its variables. The time axis and the metadata do not
-change. The script writes v2 zarr stores with the source compressor and one
-time step per chunk. The topography keeps the used variables in the LV95 box
-of the cropped points plus a margin. The NWP reference store keeps only its
-full x and y axes. PeakWeather is copied unchanged. The source paths come
-only from the arguments.
+variables of the extracted NWP store. It holds only the metadata and no data
+chunks. The NWP values are in the extracted store. The extracted NWP store
+keeps the same grid points and all its variables. The time axis and the
+metadata do not change. The script writes v2 zarr stores with the source
+compressor and one time step per chunk. The topography keeps the used
+variables in the LV95 box of the cropped points plus a margin. The NWP
+reference store keeps only its full x and y axes. PeakWeather is copied
+unchanged. The source paths come only from the arguments.
 
 Usage (from the repository root):
     python -m release.crop_swiss --src <data root> --dest <new data root>
@@ -139,8 +140,13 @@ def crop_archive(
     cols: slice,
     variables: list[str],
     workers: int,
+    data: bool = True,
 ) -> None:
     """Crop the anemoi archive *src* to the index box and *variables*.
+
+    When *data* is False, the ``data`` array has the same shape, type,
+    chunks, compressor and fill value, but the function writes no chunks.
+    A read of it gives the fill value. The workers do not start.
 
     The variables stay in the source order. The per-variable arrays and attrs
     are sliced. The ``field_shape`` attr gets the cropped shape. The
@@ -158,14 +164,14 @@ def crop_archive(
     pts = point_index(rows, cols, width)
 
     d = zarr.open_group(str(dst), mode="w", zarr_version=2)
-    data = s["data"]
+    values = s["data"]
     d.create_dataset(
         "data",
-        shape=(data.shape[0], len(keep), data.shape[2], len(pts)),
-        chunks=(1, len(keep), data.shape[2], len(pts)),
-        dtype=data.dtype,
-        compressor=data.compressor,
-        fill_value=data.fill_value,
+        shape=(values.shape[0], len(keep), values.shape[2], len(pts)),
+        chunks=(1, len(keep), values.shape[2], len(pts)),
+        dtype=values.dtype,
+        compressor=values.compressor,
+        fill_value=values.fill_value,
     )
     _write(d, "dates", s["dates"], s["dates"][:])
     for name in ("latitudes", "longitudes"):
@@ -184,7 +190,8 @@ def crop_archive(
             attrs[key] = [n for n in attrs[key] if n in kept]
     attrs["field_shape"] = [rows.stop - rows.start, cols.stop - cols.start]
     d.attrs.update(attrs)
-    _crop_time_parallel(src / "data", dst / "data", keep, pts, workers)
+    if data:
+        _crop_time_parallel(src / "data", dst / "data", keep, pts, workers)
 
 
 def crop_extracted(
@@ -269,7 +276,8 @@ def crop_all(src_root: Path, dest_root: Path, workers: int) -> None:
 
     The function checks all source and target paths before it writes. It
     raises FileNotFoundError when a source path is missing. It raises
-    FileExistsError when a target path exists.
+    FileExistsError when a target path exists. The cropped archive holds only
+    the metadata and no data chunks. The NWP values are in the extracted store.
     """
     targets = [ARCHIVE, EXTRACTED, TOPO, NWP_AXES, PEAKWEATHER]
     for t in targets:
@@ -298,7 +306,7 @@ def crop_all(src_root: Path, dest_root: Path, workers: int) -> None:
 
     (dest_root / EXTRACTED).parent.mkdir(parents=True, exist_ok=True)
     crop_archive(
-        src_root / ARCHIVE, dest_root / ARCHIVE, rows, cols, variables, workers
+        src_root / ARCHIVE, dest_root / ARCHIVE, rows, cols, variables, workers, False
     )
     crop_extracted(src_root / EXTRACTED, dest_root / EXTRACTED, pts, workers)
     crop_topo(src_root / TOPO, dest_root / TOPO, topo_box)

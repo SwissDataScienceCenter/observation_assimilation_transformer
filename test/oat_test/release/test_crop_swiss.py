@@ -193,6 +193,33 @@ def test_cropped_archive_opens_with_anemoi_and_keeps_metadata(fake_archive, tmp_
         assert dst.statistics["mean"][i] == src.statistics["mean"][j]
 
 
+def _chunk_files(store):
+    """Return the names in the data array folder that are not metadata."""
+    return [f.name for f in (store / "data").iterdir() if not f.name.startswith(".z")]
+
+
+def test_crop_archive_without_data_keeps_metadata_and_writes_no_chunks(
+    fake_archive, tmp_path
+):
+    args = (slice(1, 3), slice(2, 4), ["CLCT", "T_2M"])
+    crop_archive(fake_archive, tmp_path / "full.zarr", *args, workers=1)
+    crop_archive(fake_archive, tmp_path / "meta.zarr", *args, workers=1, data=False)
+    full = open_dataset(str(tmp_path / "full.zarr"))
+    meta = open_dataset(str(tmp_path / "meta.zarr"))
+    assert meta.name_to_index == full.name_to_index
+    assert tuple(meta.field_shape) == tuple(full.field_shape)
+    assert (meta.dates == full.dates).all() and meta.missing == full.missing
+    np.testing.assert_array_equal(meta.latitudes, full.latitudes)
+    np.testing.assert_array_equal(meta.statistics["mean"], full.statistics["mean"])
+    a, b = (
+        zarr.open(str(tmp_path / n), "r")["data"] for n in ("full.zarr", "meta.zarr")
+    )
+    assert (a.shape, a.dtype, a.chunks) == (b.shape, b.dtype, b.chunks)
+    assert a.compressor == b.compressor and a.fill_value == b.fill_value
+    assert _chunk_files(tmp_path / "meta.zarr") == []
+    assert _chunk_files(tmp_path / "full.zarr") != []
+
+
 def test_cropped_extracted_keeps_times_variables_and_order(fake_extracted, tmp_path):
     pts = np.array([8, 9, 14, 15])
     crop_extracted(fake_extracted, tmp_path / "e.zarr", pts, workers=2)
@@ -260,6 +287,7 @@ def test_crop_all_writes_the_default_names_and_a_consistent_grid(fake_root, tmp_
         TOPO_VARS
     )
     assert not xr.open_zarr(out / "cosmo-1e_rechunked/nwp.zarr").data_vars
+    assert _chunk_files(out / ARCHIVE) == []
 
 
 def test_crop_all_refuses_an_existing_target(fake_root, tmp_path):

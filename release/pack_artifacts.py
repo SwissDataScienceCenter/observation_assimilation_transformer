@@ -53,8 +53,10 @@ It is for the reviewers of the paper.
 
 ## Content
 
-- mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr: the NWP archive.
-- cosmo-1e_rechunked/nwp_extracted.zarr: the extracted NWP fields.
+- mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr: the metadata of the NWP
+  archive (dates, grid, variable names and statistics). It holds no values.
+- cosmo-1e_rechunked/nwp_extracted.zarr: the NWP values. Do not remove this
+  store, because the dataset reads the values from it.
 - cosmo-1e_rechunked/topo.zarr: the topography.
 - cosmo-1e_rechunked/nwp.zarr: the x and y axes of the NWP grid.
 - peakweather: the PeakWeather station data.
