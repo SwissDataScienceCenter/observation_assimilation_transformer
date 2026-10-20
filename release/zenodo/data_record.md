@@ -1,9 +1,5 @@
 # Zenodo record: OAT Europe dataset
 
-Paste these fields into the Zenodo upload form. Use the same text for the next
-version of the record. Resolve each `[USER CHECK]` before publication. The
-`[LEGAL]` points stay open until the legal checks of the release are done.
-
 ## Fields
 
 - **Title:** OAT Europe dataset
@@ -95,7 +91,7 @@ The script unpacks the files into `data/` and checks each file against
   projected back to EPSG:4326 with bilinear interpolation.
 - Grid: EPSG:4326, latitude 34° N to 72° N, longitude 25° W to 45° E,
   4145 × 7636 points, spacing 33 arc-seconds (0.0091667°).
-- Licence of `elevation`: [LEGAL] the licences of the Tilezen sources
+- Licence of `elevation`: the licences of the Tilezen sources
   (https://github.com/tilezen/joerd/blob/master/docs/attribution.md). The
   Tilezen page does not give the EU-DEM licence. Attribution:
   - Europe terrain data produced using Copernicus data and information funded
