@@ -306,7 +306,13 @@ def crop_all(src_root: Path, dest_root: Path, workers: int) -> None:
 
     (dest_root / EXTRACTED).parent.mkdir(parents=True, exist_ok=True)
     crop_archive(
-        src_root / ARCHIVE, dest_root / ARCHIVE, rows, cols, variables, workers, False
+        src_root / ARCHIVE,
+        dest_root / ARCHIVE,
+        rows,
+        cols,
+        variables,
+        workers,
+        data=False,
     )
     crop_extracted(src_root / EXTRACTED, dest_root / EXTRACTED, pts, workers)
     crop_topo(src_root / TOPO, dest_root / TOPO, topo_box)
