@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Any, Dict, Literal, Type, Optional, List
+from typing import Any, Literal, Type, Optional, List
 from importlib import import_module
 import logging
 
@@ -511,7 +511,7 @@ def _resolve_point_hidden_dims(kwargs: dict[str, Any], d_model: int) -> list[int
     return [int(width)] * n_layers
 
 
-def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[model.GlobalEncoderConfig, model.TopographicEncoderConfig, model.NwpTopoFusionConfig]:
+def setup_backbone_cfgs(cfg: DictConfig) -> tuple[model.GlobalEncoderConfig, model.TopographicEncoderConfig, model.NwpTopoFusionConfig]:
     """Build the configs for the uninformed trunk (Eq. 1-7).
 
     Shared by the OAT/UninformedOAT setup and by the GP baseline, which reuses
@@ -543,9 +543,7 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
         **global_encoder_kwargs,
         in_channels=global_input_chans,
         out_channels=d_model // 2,
-        field_extent_max=field_extent['max'],
-        field_extent_min=field_extent['min']
-        )
+    )
 
     topography_encoder_kwargs = OmegaConf.to_container(
         model_cfg.topographic_encoder, resolve=True
@@ -572,7 +570,6 @@ def setup_backbone_cfgs(cfg: DictConfig, field_extent: Dict[str, Any]) -> tuple[
 
 def setup_oat_cfg(
     cfg: DictConfig,
-    field_extent: Dict,
     logger: logging.Logger,
     project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> model.OATConfig | model.UninformedOATConfig:
@@ -588,7 +585,7 @@ def setup_oat_cfg(
     proj_dim = index_projection_dim(project_index_coords)
     logger.info("Setting up model configs...")
     d_model = model_cfg.d_model
-    global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(cfg, field_extent)
+    global_encoder_cfg, topography_encoder_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(cfg)
     time_cond_dim = nwp_topo_fusion_cfg.cond_dim
 
     if list(cfg.dataset.obs_variable_to_distribution.items()) != list(cfg.model.output_head.variable_to_distribution.items()):

@@ -222,7 +222,7 @@ def test_geometry_aware_decoder_layer(setup_data: Dict[str, Any]) -> None:
     assert dec_out.shape == (B, N_q, D)
     
     
-def test_decoder_optional_self_attention(model_cfg_fixture):
+def test_decoder_optional_self_attention():
     
     
     tr_with_sa = transformer.ObservationAssimilationTransformer(decoder_self_attention=True, num_decoder_layers=1)

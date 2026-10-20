@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Dict, List, Literal, Optional, Tuple, Type
+from typing import Any, List, Literal, Optional, Tuple, Type
 from importlib import import_module
 
 import torch
@@ -253,7 +253,6 @@ class GPPredictor(BasePredictor):
 
 def setup_gp_predictor(
     cfg: DictConfig,
-    field_extent: Dict,
     obs_vars: List[str],
     transforms: Tuple[Transform, Transform],
     project_index_coords: Callable[[torch.Tensor], torch.Tensor] | None = None,
@@ -287,9 +286,7 @@ def setup_gp_predictor(
 
     pre_oat_cfg = None
     if bool(model_cfg.get("use_pre_oat", False)):
-        global_encoder_cfg, topo_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(
-            cfg, field_extent
-        )
+        global_encoder_cfg, topo_cfg, nwp_topo_fusion_cfg = setup_backbone_cfgs(cfg)
         # output_head=None: the GP likelihood is the predictive distribution.
         pre_oat_cfg = UninformedOATConfig(
             global_encoder=global_encoder_cfg,

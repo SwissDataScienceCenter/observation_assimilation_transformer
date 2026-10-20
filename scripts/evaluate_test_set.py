@@ -30,15 +30,15 @@ import torch
 from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.paths import checkpoint_root
+from oat.plotting_module import OATPlotter
 from oat.predictor_module.checkpoint_utils import (
     _DEFAULT_REGISTRY,
     load_checkpoint,
     resolve_checkpoint,
 )
 from scripts.plotter_utils import (
-    is_field_path,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "data/results"
@@ -84,7 +84,7 @@ def _sibling_checkpoint(dataset: str) -> str:
     sentinels = (INTERPOLATOR_MODEL, COSMO_INTERPOLATOR_MODEL)
     for model, path in models.items():
         if model not in sentinels and path is not None:
-            return str(path)
+            return str(checkpoint_root() / str(path))
     raise ValueError(
         f"No sibling checkpoint to borrow a data config from for the "
         f"interpolator on dataset={dataset!r}."
@@ -429,7 +429,7 @@ def main() -> None:
         dataset.times[time_indices[-1]],
     )
 
-    PlotterCls = select_plotter_cls(dataset)
+    PlotterCls = OATPlotter
     plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
@@ -447,12 +447,6 @@ def main() -> None:
 
     tm: dict[str, torch.Tensor] | None = None
     if args.long:
-        if not is_field_path(dataset):
-            raise SystemExit(
-                "--long requires a field-path dataset (stratification reads "
-                "the geo-bias field via dataset.roles()); legacy grid-path "
-                "datasets are not supported."
-            )
         from oat.plotting_module.stratification import (
             build_long_dataframe,
             collect_station_covariates,

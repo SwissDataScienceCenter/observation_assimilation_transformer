@@ -66,8 +66,8 @@ def nwp_latlon_grid_from_latlon(
     """Build a coarsened ERA5 NWP grid as (lat, lon) coordinates.
 
     Args:
-        ref_lats: 1-D latitude array, shape (H,) — e.g. dataset._ref_lats
-        ref_lons: 1-D longitude array, shape (W,) — e.g. dataset._ref_lons
+        ref_lats: 1-D latitude array, shape (H,) - latitudes of the ERA5 grid
+        ref_lons: 1-D longitude array, shape (W,) - longitudes of the ERA5 grid
         stride: spatial coarsening factor applied to both axes
 
     Returns:

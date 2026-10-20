@@ -19,6 +19,7 @@ from oat.data_module.transform import (
     NestedTransform,
 )
 from oat.model_module import model as M
+from oat.paths import data_root
 from oat.predictor_module.oat_predictor import OATPredictor
 
 D_MODEL = 16
@@ -67,8 +68,6 @@ def _backbone_cfgs() -> (
 ):
     global_encoder_cfg = M.GlobalEncoderConfig(
         in_channels=2,
-        field_extent_min=(0.0, 0.0),
-        field_extent_max=(1.0, 1.0),
         type="Point",
         out_channels=D_MODEL // 2,
         hidden_dims=(),
@@ -173,10 +172,11 @@ def test_temp_config_composes():
     assert list(cfg.dataset.obs_vars) == ["temperature"]
 
 
-_DATA_DIR = "/scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked"
+_DATA_DIR = str(data_root() / "cosmo-1e_rechunked")
 _DATA = os.path.join(_DATA_DIR, "nwp_extracted.zarr")
 
 
+@pytest.mark.requires_data
 @pytest.mark.skipif(not os.path.exists(_DATA), reason="COSMO data not present")
 def test_field_training_step_real_data_smoke():
     import logging
@@ -203,7 +203,7 @@ def test_field_training_step_real_data_smoke():
 
     logger = logging.getLogger("test_field_training_step_real_data_smoke")
     (
-        dataset,
+        _dataset,
         _n_train,
         train_loader,
         _val_loader,
@@ -214,8 +214,7 @@ def test_field_training_step_real_data_smoke():
 
     batch = next(iter(train_loader))
 
-    field_extent = {k: v.tolist() for k, v in dataset.nwp_extent.items()}
-    oat_model_cfg = setup_oat_cfg(cfg, field_extent, logger)
+    oat_model_cfg = setup_oat_cfg(cfg, logger)
     predictor = setup_oat_predictor(
         oat_model_cfg,
         estimated_total_step=1,

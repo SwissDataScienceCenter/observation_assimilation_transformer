@@ -18,10 +18,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Leak check
+        # Standard library only, so it runs before the long install.
+        run: python3 -m release.leak_check
 
       - name: Free disk space
         run: |
-          # The dependency set is large (torch, torch-geometric, cartopy, monai).
+          # The dependency set is large (torch, torch-geometric, cartopy).
           # Remove preinstalled toolchains not used by this project to avoid
           # "No space left on device" during poetry install.
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -47,7 +53,6 @@ jobs:
           poetry install --with dev
 
       - name: Run tests
+        # The tests that need the real datasets skip, because CI has no data.
         run: |
-          # The OOTG baseline tests depend on the gridded-tnp submodule (and its
-          # extra runtime deps), which isn't installed in CI. Run them locally.
-          poetry run pytest --cov=oat --cov-report=term --ignore=test/oat_test/baselines
+          poetry run pytest --cov=oat --cov-report=term

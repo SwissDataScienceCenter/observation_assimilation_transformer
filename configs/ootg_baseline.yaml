@@ -39,3 +39,7 @@ trainer:
   check_val_every_n_epoch: 2
   limit_train_batches: 10000
   limit_val_batches: 1000
+
+paths:
+  data_root: ${oc.env:OAT_DATA_ROOT,data}
+  checkpoint_root: ${oc.env:OAT_CKPT_ROOT,checkpoints}

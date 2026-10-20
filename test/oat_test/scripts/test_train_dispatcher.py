@@ -1,6 +1,7 @@
 """The train dispatcher wires the flat-Field datasets + point-wise encoder models."""
 
 import os
+from pathlib import Path
 
 import pytest
 from hydra import compose, initialize_config_dir
@@ -9,35 +10,23 @@ from scripts.train import (
     DATASETS,
     MODEL_SPECS,
     build_overrides,
+    find_datasets,
     validate,
 )
 
 
-def test_datasets_are_selectable():
+def test_datasets_are_selectable() -> None:
     assert "cosmo_peakweather/temp_precip" in DATASETS
     assert "cosmo_peakweather/temp" in DATASETS
     assert "era5_meteostat/temp_precip" in DATASETS
 
 
-def test_oat_field_bundles_point_and_mlp_encoders():
-    assert "oat_field" in MODEL_SPECS
-    assert "uninformed_oat_field" in MODEL_SPECS
-    ov = build_overrides("oat_field", "cosmo_peakweather/temp_precip", "run", extra=[])
-    assert "model/global_encoder=point" in ov
-    assert "model/topographic_encoder=mlp" in ov
-    assert "dataset=cosmo_peakweather/temp_precip" in ov
+def test_no_field_presets_are_left() -> None:
+    assert not [name for name in MODEL_SPECS if name.endswith("_field")]
 
 
-def test_field_and_non_field_models_accept_the_same_dataset():
-    # Every non-legacy dataset is flat-Field-shaped now, so there is no
-    # dataset-naming split left to gate on: both the "_field" preset and the
-    # plain model accept the same dataset variant without raising.
-    validate("oat_field", "cosmo_peakweather/temp_precip")
-    validate("oat", "cosmo_peakweather/temp_precip")
-
-
-def test_dispatcher_overrides_compose_into_field_config():
-    ov = build_overrides("oat_field", "cosmo_peakweather/temp_precip", "run", extra=[])
+def test_oat_overrides_compose_into_point_and_mlp_encoders() -> None:
+    ov = build_overrides("oat", "cosmo_peakweather/temp_precip", "run", extra=[])
     cfg_dir = os.path.abspath("configs")
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):
         cfg = compose(config_name="config", overrides=ov)
@@ -50,44 +39,62 @@ def test_dispatcher_overrides_compose_into_field_config():
     )
 
 
-def test_gp_field_variants_present():
-    for name in ("gp_field", "deep_gp_field", "gp_oat_field", "deep_gp_oat_field"):
+def test_gp_variants_present() -> None:
+    for name in ("gp", "deep_gp", "gp_oat", "deep_gp_oat"):
         assert name in MODEL_SPECS
         assert MODEL_SPECS[name].univariate_only
-    for old_name in ("gp", "deep_gp", "gp_oat", "deep_gp_oat"):
-        assert old_name not in MODEL_SPECS
 
 
-def test_gp_field_bundles_mlp_topo_encoder():
-    ov = build_overrides("gp_field", "cosmo_peakweather/temp", "run", extra=[])
+def test_gp_bundles_mlp_topo_encoder() -> None:
+    ov = build_overrides("gp", "cosmo_peakweather/temp", "run", extra=[])
     assert "model/topographic_encoder=mlp" in ov
     assert "trainer.precision=64" in ov
     assert "dataset=cosmo_peakweather/temp" in ov
 
 
-def test_gp_oat_field_bundles_point_and_mlp_encoders():
-    ov = build_overrides("gp_oat_field", "cosmo_peakweather/temp", "run", extra=[])
+def test_gp_oat_bundles_point_and_mlp_encoders() -> None:
+    ov = build_overrides("gp_oat", "cosmo_peakweather/temp", "run", extra=[])
     assert "model/global_encoder=point" in ov
     assert "model/topographic_encoder=mlp" in ov
 
 
-def test_gp_field_model_requires_univariate_dataset():
+def test_gp_model_requires_univariate_dataset() -> None:
     with pytest.raises(SystemExit):
-        validate("gp_field", "cosmo_peakweather/temp_precip")
-    validate("gp_field", "cosmo_peakweather/temp")
+        validate("gp", "cosmo_peakweather/temp_precip")
+    validate("gp", "cosmo_peakweather/temp")
 
 
-def test_ootg_datasets_are_selectable():
+def test_ootg_datasets_are_selectable() -> None:
     assert "cosmo_peakweather/temp_ootg" in DATASETS
     assert "cosmo_peakweather/temp_precip_ootg" in DATASETS
     assert "era5_meteostat/temp_ootg" in DATASETS
     assert "era5_meteostat/temp_precip_ootg" in DATASETS
 
 
-def test_ootg_model_requires_ootg_dataset_variant():
+def test_ootg_model_requires_ootg_dataset_variant() -> None:
     with pytest.raises(SystemExit):
         validate("ootg", "cosmo_peakweather/temp")
     with pytest.raises(SystemExit):
         validate("ootg", "cosmo_peakweather/temp_precip")
     validate("ootg", "cosmo_peakweather/temp_ootg")
     validate("ootg", "cosmo_peakweather/temp_precip_ootg")
+
+
+def test_helper_files_are_not_datasets() -> None:
+    for helper in ("base", "settings", "catalog", "full_domain"):
+        assert f"cosmo_peakweather/{helper}" not in DATASETS
+    assert "cosmo_meteostat/temp_precip" in DATASETS
+
+
+def test_find_datasets_finds_new_variant_files(tmp_path: Path) -> None:
+    family = tmp_path / "fake"
+    family.mkdir()
+    (family / "mine.yaml").write_text("defaults:\n  - fake/settings@_here_\n")
+    (family / "base.yaml").write_text("nwp_vars: [a]\n")
+    assert find_datasets(tmp_path) == ("fake/mine",)
+
+
+def test_gp_model_checks_obs_vars_of_the_variant_file() -> None:
+    with pytest.raises(SystemExit):
+        validate("gp", "era5_meteostat/temp_precip")
+    validate("gp", "cosmo_peakweather/temp")

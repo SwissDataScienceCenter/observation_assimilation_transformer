@@ -10,7 +10,6 @@ from oat.model_module.model import (
     UninformedOATConfig,
 )
 
-FIELD_EXTENT = {"min": [2255500.0, 840500.0], "max": [2964500.0, 1479500.0]}
 NWP_VARS = ["T_2M", "U_10M", "V_10M"]
 
 
@@ -370,8 +369,6 @@ def make_pre_oat_config(d_model=16, n_topo=5, n_nwp=3):
             in_channels=n_nwp,
             out_channels=d_model // 2,
             hidden_dims=(8,),
-            field_extent_min=tuple(FIELD_EXTENT["min"]),
-            field_extent_max=tuple(FIELD_EXTENT["max"]),
         ),
         topographic_encoder=TopographicEncoderConfig(
             type="MLP",
@@ -463,7 +460,9 @@ def test_gp_geo_dim_shifts_feature_group_offsets():
     # default geo_dim == 3: nwp indices start at 3
     m3 = GPBaseline(GPBaselineConfig(geo_dim=3, **common))
     # geo_dim == 4 (ERA5 sphere): nwp indices shift to start at 4
-    m4 = GPBaseline(GPBaseline.__init__.__globals__["GPBaselineConfig"](geo_dim=4, **common))
+    m4 = GPBaseline(
+        GPBaseline.__init__.__globals__["GPBaselineConfig"](geo_dim=4, **common)
+    )
     # The stationary kernel is defined over geo indices; its ard width equals geo_dim.
     assert m3.config.geo_dim == 3
     assert m4.config.geo_dim == 4

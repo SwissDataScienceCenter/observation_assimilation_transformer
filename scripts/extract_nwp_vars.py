@@ -11,7 +11,7 @@ This is a one-time operation; submit as a SLURM job for large datasets.
 Usage:
     poetry run python -m scripts.extract_nwp_vars
     poetry run python -m scripts.extract_nwp_vars --vars T_2M U_10M V_10M \\
-        --output /scratch/mch/cdonner/data/obs_downscaling/raw/cosmo-1e_rechunked/nwp_extracted.zarr
+        --output <data_root>/cosmo-1e_rechunked/nwp_extracted.zarr
 """
 
 import argparse
@@ -21,14 +21,10 @@ import numpy as np
 import zarr
 from anemoi.datasets import open_dataset
 
-DEFAULT_INPUT = (
-    "/store_new/mch/msopr/ml/datasets/"
-    "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
-)
-DEFAULT_OUTPUT = (
-    "/scratch/mch/cdonner/data/obs_downscaling/raw/"
-    "cosmo-1e_rechunked/nwp_extracted.zarr"
-)
+from oat.paths import data_root
+
+DEFAULT_INPUT = str(data_root() / "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr")
+DEFAULT_OUTPUT = str(data_root() / "cosmo-1e_rechunked" / "nwp_extracted.zarr")
 DEFAULT_VARS = ["T_G", "T_2M", "U_10M", "V_10M"]  # T at 2m, U and V at 10m; adjust as needed
 
 

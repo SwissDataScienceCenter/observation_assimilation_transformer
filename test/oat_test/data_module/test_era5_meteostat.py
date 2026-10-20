@@ -8,15 +8,19 @@ from omegaconf import OmegaConf
 from oat.data_module.field import Field
 from oat.data_module.field_spec import parse_field_config, validate_field_config
 from oat.data_module.sources import SourceInfo
+from oat.paths import data_root
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 
 _settings_path = os.path.join(_REPO_ROOT, "configs/dataset/era5_meteostat/base.yaml")
-_TOPO_PATH = str(OmegaConf.load(_settings_path).topo_path)
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(_TOPO_PATH), reason="ERA5 topo data not present"
-)
+_TOPO_PATH = str(data_root() / "europe-static.zarr")
+pytestmark = [
+    pytest.mark.requires_data,
+    pytest.mark.skipif(
+        not os.path.exists(_TOPO_PATH), reason="ERA5 topo data not present"
+    ),
+]
 
 
 def _compose_dataset():
@@ -69,6 +73,7 @@ def _smoke_config():
     )
     return OmegaConf.merge(
         settings,
+        OmegaConf.create({"paths": {"data_root": str(data_root())}}),
         OmegaConf.create({"catalog": catalog}),
         OmegaConf.create(_FIELD_SCHEMA),
     )

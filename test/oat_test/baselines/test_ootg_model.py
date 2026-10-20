@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 
-_TNPDIR = Path(__file__).parents[4] / "deps" / "gridded-tnp"
+_TNPDIR = Path(__file__).parents[3] / "deps" / "gridded-tnp"
 if _TNPDIR.exists() and str(_TNPDIR) not in sys.path:
     sys.path.insert(0, str(_TNPDIR))
 

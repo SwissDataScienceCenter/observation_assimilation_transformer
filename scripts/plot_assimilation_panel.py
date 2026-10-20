@@ -29,18 +29,17 @@ from matplotlib.lines import Line2D
 from omegaconf import OmegaConf
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module import OATPlotter
 from oat.plotting_module.geo_overlays import _add_borders, build_domain_grid
-from oat.predictor_module.checkpoint_utils import load_checkpoint
+from oat.predictor_module.checkpoint_utils import load_checkpoint, resolve_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.plotter_utils import (
     load_plot_config,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 _PROJECT_ROOT = Path(__file__).parents[1]
 OUT_DIR = _PROJECT_ROOT / "data/figures"
-_CHECKPOINTS_YAML = _PROJECT_ROOT / "configs/checkpoints.yaml"
 
 
 def _load_units(dataset_name: str) -> dict[str, str]:
@@ -78,8 +77,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     args = _parse_args()
 
-    registry = OmegaConf.load(_CHECKPOINTS_YAML)
-    oat_ckpt = registry[args.dataset]["oat_temp_precip"]
+    oat_ckpt = resolve_checkpoint(args.dataset, "oat_temp_precip")
     predictor_oat, cfg = load_checkpoint(OATPredictor, oat_ckpt, map_location="cpu")
     predictor_oat = predictor_oat.eval()
 
@@ -101,7 +99,7 @@ def main() -> None:
         len(eval_indices),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
 
     if args.time is not None:
         time_idx = _resolve_time_idx(dataset, args.time)
@@ -118,7 +116,7 @@ def main() -> None:
     units = _load_units(args.dataset)
     logger.info("Variables (rows): %s at %s", variables, time_iso)
 
-    PlotterCls = select_plotter_cls(dataset)
+    PlotterCls = OATPlotter
     plotter = PlotterCls(
         predictor=predictor_oat,
         dataset=dataset,

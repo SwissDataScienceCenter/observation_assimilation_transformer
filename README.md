@@ -1,218 +1,120 @@
-# Python Project Template
+# Observation Assimilation Transformer (OAT)
 
-![Python Version](https://img.shields.io/badge/python-3.12-blue)
-![Black](https://img.shields.io/badge/black-24.0-000000)
-![Ruff](https://img.shields.io/badge/ruff-0.4.0-red)
-![mypy](https://img.shields.io/badge/mypy-1.8.0-blue)
+OAT makes probabilistic weather analysis fields at any location. It uses a coarse numerical weather prediction (NWP) field and sparse station observations. A transformer with geometry-aware sparse attention moves the information from the stations to the query locations. The output is a predictive distribution of temperature and precipitation.
 
-> NOTE: for uv use `uv pip install torch-cluster -f https://data.pyg.org/whl/torch-2.4.0+cu121.html`
+![OAT scheme](docs/oat_scheme.png)
 
-A production-ready Python project template with Dev Container support, pre-configured with:
+This repository holds the code of the paper "Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations" (Donner et al., 2026, submitted).
 
-- 🛠️ Black for code formatting
-- 🔍 Ruff for linting
-- ✅ mypy for static type checking
-- 💡 Pylance for intelligent code completion
-- 🐳 Docker-based development environment
+## Install
 
-## Table of Contents
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Project Structure](#project-structure)
-- [Development Workflow](#development-workflow)
-- [Tool Configuration](#tool-configuration)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
-
-## Features
-
-### Core Components
-- Python 3.12 base environment
-- VS Code Dev Container configuration
-- Pre-configured:
-  - Black 24.0 (code formatting)
-  - Ruff 0.4.0 (linting)
-  - mypy 1.8.0 (static typing)
-  - Pylance (type checking)
-
-### Workflow Automation
-- Auto-formatting on save
-- Auto-linting on save
-- Pre-configured VS Code settings
-- Isolated development environment
-
-### Standardized Structure
-```
-oat/
-├── .devcontainer/        # Dev Container configuration
-│   ├── devcontainer.json
-│   └── Dockerfile
-├── .vscode/              # VS Code settings
-│   └── settings.json
-├── data/                 # Datasets (raw & processed)
-├── notebooks/            # Jupyter notebooks
-├── src/                  # Source code
-│   └── oat/
-│       └── __init__.py   # Package initialization
-├── .gitignore            # Git ignore rules
-├── pyproject.toml        # Project config & dependencies
-└── README.md             # Project documentation
-```
-
-## Quick Start
-
-### 1. Prerequisites
-- [Git](https://git-scm.com/)
-- [Python 3.12+](https://python.org)
-- [VS Code](https://code.visualstudio.com/)
-- [Dev Containers Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-
-### 2. Create Project
-```bash
-# Install Cookiecutter
-pip install cookiecutter
-
-# Generate project
-cookiecutter https://github.com/christiando/cookiecutter-python-template
-```
-You'll be prompted for:
-- project_name: Your project's display name (e.g., "Data Analysis")
-- project_slug: Directory name (auto-generated, e.g., "data_analysis")
-- package_name: Python package name (defaults to project_slug)
-- python_version: Python version (default: 3.11)
-- Tool versions (Black, Ruff, mypy)
-- include_notebooks: Whether to include notebooks directory (y/n)
-
-### 3. Open and Setup
-```bash
-cd your-project-name
-code .
-```
-When VS Code opens:
-- Click "Reopen in Container" in the popup
-- Wait for container to build (2-5 minutes)
-- Install dependencies in terminal:
+You need Python 3.12 and [Poetry](https://python-poetry.org/) 2.x. A CUDA GPU is optional. Figures 8 and 9 (scaling benchmarks) need a CUDA GPU. Figures 4 and 7 run faster on a GPU.
 
 ```bash
-pip install -e .[dev]
+git clone https://github.com/SwissDataScienceCenter/observation_assimilation_transformer.git
+cd observation_assimilation_transformer
+git submodule update --init      # deps/gridded-tnp, for the Gridded TNP baseline
+poetry install --with dev
+poetry run pytest                # the tests that need real data skip
 ```
 
-## Development Workflow
+## Train a model
 
-### Standard Commands
+Get the data first (see [Download the checkpoints and the data](#download-the-checkpoints-and-the-data)).
+
+`scripts.train` starts a training run. It selects the entry point and the Hydra overrides for the model, and it gives the run a name. The run name is also the checkpoint folder and the W&B run name.
+
 ```bash
-# Run formatting
-black src/
-
-# Run linting
-ruff check src/
-
-# Run type checking
-mypy src/
-
-# Install in development mode
-pip install -e .
+poetry run python -m scripts.train --model oat --dataset era5_meteostat/temp_precip
 ```
 
-### VS Code Features
-- **Format on Save:** Automatically formats with Black
-- **Lint on Save:** Runs Ruff and fixes fixable issues
-- **Type Checking:** Real-time mypy feedback via Pylance
+- `--model`: `oat`, `uninformed_oat`, `gp`, `gp_oat`, `deep_gp`, `deep_gp_oat`, `ootg`.
+- `--dataset`: a dataset variant in `configs/dataset/<family>/`, for example `era5_meteostat/temp` or `cosmo_peakweather/temp_precip`. OOTG needs a variant whose name ends in `_ootg`. The GP models need a variant with one observed variable.
+- `--dry-run` shows the command and does not start it. `--submit` sends the run to SLURM.
 
-### Recommended Flow
-1. Explore ideas in `notebooks/`
-2. Refactor working code into `src/`
-3. Commit changes with:
-   ```bash
-   git add .
-   git commit -m "Descriptive message"
-   ```
+The checkpoints go to `$OAT_CKPT_ROOT` (default `checkpoints/`). The configs of the paper runs are next to each checkpoint (`config.yaml`).
 
-## Tool Configuration
+### Change the settings
 
-### Black (Formatting)
-Configure in `pyproject.toml`:
-```toml
-[tool.black]
-line-length = 88
-target-version = ['py311']
-```
+Add [Hydra overrides](https://hydra.cc/docs/advanced/override_grammar/basic/) at the end of the command:
 
-### Ruff (Linting)
-Configure in `pyproject.toml`:
-```toml
-[tool.ruff]
-select = ["E", "F", "W", "I", "B", "UP", "RUF"]
-ignore = []
-line-length = 88
-```
-
-### mypy (Type Checking)
-Configure in `pyproject.toml`:
-```toml
-[tool.mypy]
-python_version = "3.11"
-strict = true
-```
-
-## Troubleshooting
-
-### Common Issues
-- **Dev Container fails to build:**
-  - Ensure Docker is running
-  - Allocate at least 2GB RAM to Docker
-- **Formatting/linting not working:**
-  - Check extensions are installed: Ruff, Black Formatter
-  - Reinstall dependencies:
-    ```bash
-    pip install -e .[dev]
-    ```
-  - Reload VS Code (`Ctrl/Cmd+Shift+P > "Reload Window"`)
-- **Type checking errors:**
-  - Run manually to see errors:
-    ```bash
-    mypy src/
-    ```
-  - Add type annotations to resolve issues.
-
-## FAQ
-
-**Q: How do I update Python or tool versions?**
-A: Edit `cookiecutter.json` before generating projects, or update `pyproject.toml` after generation.
-
-**Q: Can I use this without VS Code?**
-A: Yes, but Dev Container and auto-formatting features won't be available. Run tools manually:
 ```bash
-black src/
-ruff check src/
-mypy src/
+poetry run python -m scripts.train --model oat --dataset era5_meteostat/temp \
+    predictor.lr=5e-4 trainer.max_epochs=50
 ```
 
-**Q: How do I add more dependencies?**
-A: Add to `pyproject.toml` under `[project.optional-dependencies]` or `dependencies`.
+The options are the files and keys in `configs/` (for example `configs/predictor/`). To train on other variables, add a dataset variant file to `configs/dataset/<family>/`. Its `defaults` list must have the entry `<family>/settings@_here_`, as in `configs/dataset/era5_meteostat/temp.yaml`. Then `--dataset <family>/<file name>` selects it.
 
-**Q: Can I use this for production projects?**
-A: Absolutely! The template enforces production-grade practices with strict type checking and linting.
+## Evaluate a model
 
-📌 **Pro Tip:** Use `Ctrl/Cmd+Shift+P > "Python: Select Interpreter"` to ensure you're using the Dev Container's Python environment.
+`configs/checkpoints.yaml` gives a name to each checkpoint. Evaluate a checkpoint on the test split with:
 
----
+```bash
+poetry run python -m scripts.evaluate_test_set --dataset era5_meteostat --model oat_temp_precip
+```
 
-This comprehensive README includes:
+The metrics go to `data/results/<run name>_metrics_test.csv` and `.summary.json`. To evaluate your own run, give the checkpoint path directly:
 
-1. **Badges** for quick version visibility
-2. **Table of Contents** for easy navigation
-3. **Visual Directory Structure** with ASCII tree
-4. **Step-by-Step Setup Instructions**
-5. **Workflow Recommendations**
-6. **Configuration Details** for all tools
-7. **Troubleshooting Guide**
-8. **FAQ Section**
+```bash
+poetry run python -m scripts.evaluate_test_set checkpoints/<group>/<run name>/<file>.ckpt
+```
 
-The document uses:
-- Consistent formatting
-- Clear section headers
-- Code blocks for commands/configs
-- Emoji for visual scanning
-- Practical examples
-- Pro tips for better usage
+The `config.yaml` of the run must be in the same folder as the `.ckpt` file. You can also add one line with the checkpoint path to `configs/checkpoints.yaml`.
+
+## Download the checkpoints and the data
+
+The paper checkpoints, the result files and the Europe dataset (ERA5 and Meteostat) are on Zenodo:
+
+| Record | DOI | Content | Licence |
+|---|---|---|---|
+| OAT checkpoints and results v1.0 | [10.5281/zenodo.23470442](https://doi.org/10.5281/zenodo.23470442) | the 18 paper checkpoints with their configs, the per-station result files | CC BY 4.0 |
+| OAT Europe dataset | [10.5281/zenodo.23470444](https://doi.org/10.5281/zenodo.23470444) | ERA5 (N320, 2019–2024, 1 h), static fields, Meteostat hourly observations, station quality | CC BY-NC 4.0 |
+
+```bash
+poetry run python -m scripts.download_artifacts --what all --dest .
+```
+
+The script checks each file and puts the files into `checkpoints/` and `data/`. These are the default folders. To use other folders, set `OAT_CKPT_ROOT` and `OAT_DATA_ROOT`.
+
+The checkpoint record is about 61 MB. The data record is about 13 GB (the ERA5 zarr is about 12 GB). The unpack needs about two times the size of the largest tar file as free disk space, because the tar file stays until it is unpacked.
+
+The result files go to `<dest>/data/results`. The scripts `build_results_table` and `evaluate_test_set` always use `<repo>/data/results`. With another `--dest`, give `--results-dir <dest>/data/results` to `build_results_table`. Or download the checkpoints record with `--dest .`.
+
+The Swiss dataset (COSMO-1E and PeakWeather as prepared for the paper) is not public. You cannot compute the Swiss rows of the results table again without MeteoSwiss data. The released result files give these rows.
+
+## Reproduce the paper
+
+Each paper figure and the results table has one script in `figures/`. For example:
+
+```bash
+poetry run bash figures/generate_table1.sh   # results table, figures/out/table1_*
+poetry run bash figures/generate_fig4.sh     # calibration (PIT) figure
+```
+
+When an input is missing, a script stops with a message that names the input. [REPRODUCE.md](REPRODUCE.md) lists all scripts, their inputs and their run times.
+
+To build the results table from the released result files only, without evaluation:
+
+```bash
+poetry run python -m scripts.build_results_table --results-dir data/results
+```
+
+## Citation
+
+If you use this code, please cite the paper. GitHub shows the citation from [CITATION.cff](CITATION.cff).
+
+```bibtex
+@article{donner2026oat,
+  title   = {Observation Assimilation Transformer: Probabilistic Weather Analysis
+             from Sparse Station Observations},
+  author  = {Donner, Christian and Cattaneo, Michele and Samarin, Maxim and
+             Zanetta, Francesco and Llor{\'e}ns Jover, Ic{\'i}ar and
+             Aznar Siguan, Gabriela and Volpi, Michele},
+  year    = {2026},
+  note    = {Submitted}
+}
+```
+
+## Licence
+
+The code is under the MIT licence, see [LICENSE](LICENSE). The Zenodo records have their own licences (see the table above).

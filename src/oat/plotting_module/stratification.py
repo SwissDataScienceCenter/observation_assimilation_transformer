@@ -96,8 +96,6 @@ def _station_elevation(dataset: Any) -> NDArray:
     Field datasets (post-#116) hold per-station statics in ``fields``, not on
     a ``station_geo`` attribute -- pull the elevation channel straight from
     the geo-bias field of one sample (its values don't vary across time).
-    Legacy (grid-path) datasets are not supported here; see
-    ``select_plotter_cls`` / ``evaluate_test_set.py`` for the field-path gate.
     """
     geo_name = dataset.roles()["geo_bias"]
     geo_field = dataset.field_config.fields[geo_name]

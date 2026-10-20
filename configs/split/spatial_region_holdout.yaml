@@ -4,7 +4,7 @@
 # context_fraction: 0.8
 # val_station_fraction: 0.2
 # seed: 42
-# source: /scratch/mch/cdonner/meteostats_dataset/data/processed/station_quality.parquet, /scratch/mch/cdonner/meteostats_dataset/data/processed/hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet
+# source: station_quality.parquet, hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet
 #
 defaults:
   - default

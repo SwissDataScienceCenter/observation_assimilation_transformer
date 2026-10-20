@@ -1,4 +1,4 @@
-"""Field-native train/eval split wrappers mirroring legacy/data_split.py semantics."""
+"""Field-native train/eval split wrappers."""
 
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ def create_splits(
     seed: int | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
-    """Field-native mirror of legacy.data_split.create_splits (same semantics).
+    """Create field-native splits.
 
     ``test_start_date``/``test_end_date`` (inclusive) pin the test window to
     fixed dates and override ``test_days``. Train/val use only the times

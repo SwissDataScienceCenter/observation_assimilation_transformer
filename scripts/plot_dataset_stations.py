@@ -27,39 +27,28 @@ import cartopy.feature as cfeature
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import OmegaConf
+from hydra import compose, initialize_config_dir
+from omegaconf import DictConfig, OmegaConf
 
-from oat.data_module.legacy.cosmo_peakweather_dataset import CosmoPeakWeatherDataset
-from oat.data_module.legacy.data_split import create_splits
-from oat.data_module.legacy.era5_meteostat_dataset import ERA5MeteostatDataset
+from oat.data_module.data_split import create_splits
+from oat.data_module.setup import _instantiate_dataset
 from oat.plotting_module.geo_overlays import _add_borders
 
-_CFG_DIR = Path(__file__).parent.parent / "configs" / "dataset"
+_CFG_DIR = Path(__file__).resolve().parent.parent / "configs"
 _NE_STYLE = dict(edgecolor="black", linewidth=0.4, facecolor="none", zorder=3)
 _MS = 1.5      # marker size
 _MLW = 0.1  # marker edge linewidth
+# Switzerland panel box (LV95 m): min (x, y), max (x, y). This box is the
+# extent of the paper figure. It is the area of the old COSMO reference grid.
+_COSMO_BOX_LV95 = ((2255500.0, 840500.0), (2964500.0, 1479500.0))
 
 
-def _load_cosmo_cfg() -> OmegaConf:
-    cfg_dir = _CFG_DIR / "cosmo_peakweather"
-    cfg = OmegaConf.merge(
-        OmegaConf.load(cfg_dir / "base.yaml"),
-        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "legacy" / "temp_precip.yaml").items()
-                          if k != "defaults"}),
-    )
-    cfg.catalog = OmegaConf.load(cfg_dir / "catalog.yaml")
-    return cfg
-
-
-def _load_era5_cfg() -> OmegaConf:
-    cfg_dir = _CFG_DIR / "era5_meteostat"
-    cfg = OmegaConf.merge(
-        OmegaConf.load(cfg_dir / "base.yaml"),
-        OmegaConf.create({k: v for k, v in OmegaConf.load(cfg_dir / "legacy" / "temp_precip.yaml").items()
-                          if k != "defaults"}),
-    )
-    cfg.catalog = OmegaConf.load(cfg_dir / "catalog.yaml")
-    return cfg
+def _load_cfg(family: str) -> DictConfig:
+    """Compose the root config with the ``<family>/temp_precip`` dataset."""
+    with initialize_config_dir(config_dir=str(_CFG_DIR), version_base="1.3"):
+        return compose(
+            config_name="config", overrides=[f"dataset={family}/temp_precip"]
+        )
 
 
 def _markers(ax, coords, train_idx, val_idx, test_idx, *, transform=None):
@@ -159,12 +148,13 @@ def main() -> None:
 
     # ── Load datasets & compute splits ───────────────────────────────────────
     print("Loading CosmoPeakWeather dataset …")
-    cosmo_ds = CosmoPeakWeatherDataset(_load_cosmo_cfg())
+    cosmo_ds = _instantiate_dataset(_load_cfg("cosmo_peakweather"))
     cosmo_train, cosmo_val, cosmo_test = create_splits(cosmo_ds, seed=args.seed)["station_indices"]
     cosmo_coords = cosmo_ds.station_coords.numpy()  # (N, 2): easting, northing  [m LV95]
 
     print("Loading ERA5-Meteostat dataset …")
-    era5_ds = ERA5MeteostatDataset(_load_era5_cfg())
+    era5_cfg = _load_cfg("era5_meteostat")
+    era5_ds = _instantiate_dataset(era5_cfg)
     era5_train, era5_val, era5_test = create_splits(era5_ds, seed=args.seed)["station_indices"]
     era5_coords = era5_ds.station_coords.numpy()    # (N, 2): longitude, latitude  [° WGS84]
 
@@ -175,14 +165,13 @@ def main() -> None:
         )
 
     # ── COSMO domain bounds (LV95 m) ──────────────────────────────────────────
-    cx0 = float(cosmo_ds.nwp_extent["min"][0]); cx1 = float(cosmo_ds.nwp_extent["max"][0])
-    cy0 = float(cosmo_ds.nwp_extent["min"][1]); cy1 = float(cosmo_ds.nwp_extent["max"][1])
+    (cx0, cy0), (cx1, cy1) = _COSMO_BOX_LV95
     c_pad_x = (cx1 - cx0) * 0.04
     c_pad_y = (cy1 - cy0) * 0.04
 
     # ── ERA5 domain bounds (WGS84) ────────────────────────────────────────────
-    ex0 = float(era5_ds._ref_lons.min()); ex1 = float(era5_ds._ref_lons.max())
-    ey0 = float(era5_ds._ref_lats.min()); ey1 = float(era5_ds._ref_lats.max())
+    ex0 = float(era5_cfg.dataset.nwp_lon_min); ex1 = float(era5_cfg.dataset.nwp_lon_max)
+    ey0 = float(era5_cfg.dataset.nwp_lat_min); ey1 = float(era5_cfg.dataset.nwp_lat_max)
 
     # ── Figure: plain axes (left) + cartopy axes (middle[, right]) ───────────
     proj = ccrs.LambertConformal(central_longitude=10.0, central_latitude=52.0)

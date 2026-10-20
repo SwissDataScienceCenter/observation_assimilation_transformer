@@ -26,12 +26,12 @@ import numpy as np
 import pandas as pd
 
 from oat.data_module.setup import setup_data_and_transform
+from oat.plotting_module import OATPlotter
 from oat.predictor_module.checkpoint_utils import load_checkpoint
 from oat.predictor_module.oat_predictor import OATPredictor
 from scripts.plotter_utils import (
     load_plot_config,
     maybe_build_nwp_baseline,
-    select_plotter_cls,
 )
 
 _PROJECT_ROOT = Path(__file__).parents[1]
@@ -195,7 +195,7 @@ def main() -> None:
     )
     logger.info("Plotting %s at %s", var, snap_time_iso)
 
-    PlotterCls = select_plotter_cls(dataset)
+    PlotterCls = OATPlotter
     plotter = PlotterCls(
         predictor=predictor,
         dataset=dataset,
@@ -206,7 +206,7 @@ def main() -> None:
         plot_config=load_plot_config(dataset),
     )
 
-    nwp_predictor = maybe_build_nwp_baseline(dataset, logger, required=True)
+    nwp_predictor = maybe_build_nwp_baseline(dataset, logger)
 
     ckpt_tag = Path(args.checkpoint).parent.name
     fig = plotter.plot_domain_overview(

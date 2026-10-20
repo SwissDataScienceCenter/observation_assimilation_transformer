@@ -5,7 +5,9 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf, DictConfig
 
-_DEFAULT_REGISTRY = Path(__file__).parents[3] / "configs" / "checkpoints.yaml"
+from oat.paths import REGISTRY_PATH, checkpoint_root
+
+_DEFAULT_REGISTRY = REGISTRY_PATH
 
 # Maps substrings of model_cls to the predictor class that loads them.
 _MODEL_CLS_TO_PREDICTOR = {
@@ -18,6 +20,7 @@ _DEFAULT_PREDICTOR = "oat.predictor_module.oat_predictor.OATPredictor"
 def _predictor_cls_from_config(cfg: DictConfig) -> Type[pl.LightningModule]:
     """Infer predictor class from cfg.model.model_cls."""
     import importlib
+
     model_cls_str = cfg.model.model_cls
     target = _DEFAULT_PREDICTOR
     for fragment, predictor_path in _MODEL_CLS_TO_PREDICTOR.items():
@@ -107,7 +110,6 @@ def _load_gp_predictor(
 
     predictor = setup_gp_predictor(
         cfg=cfg,
-        field_extent={k: v.tolist() for k, v in dataset.nwp_extent.items()},
         obs_vars=list(dataset.config.obs_vars),
         transforms=(input_transform, output_transform),
         project_index_coords=resolve_index_projection(dataset),
@@ -122,7 +124,10 @@ def resolve_checkpoint(
     model: str,
     registry_path: str | Path | None = None,
 ) -> str:
-    """Return the checkpoint path for (dataset, model) from configs/checkpoints.yaml."""
+    """Return the checkpoint path for (dataset, model) from the registry.
+
+    Relative registry values are below oat.paths.checkpoint_root().
+    """
     path = Path(registry_path) if registry_path is not None else _DEFAULT_REGISTRY
     registry = OmegaConf.load(path)
     try:
@@ -135,7 +140,11 @@ def resolve_checkpoint(
         raise ValueError(
             f"Checkpoint for dataset={dataset!r}, model={model!r} is not set (null) in {path}"
         )
-    return str(value)
+    if value == model:
+        # Sentinel entry (for example ``interpolator``): no checkpoint file.
+        return str(value)
+    # A relative value is below the checkpoint root. An absolute value stays.
+    return str(checkpoint_root() / str(value))
 
 
 def load_checkpoint(

@@ -29,21 +29,11 @@ def _search_coords(group: dict[str, torch.Tensor]) -> torch.Tensor:
 
 @dataclass
 class GlobalEncoderConfig:
-    """Configuration for global encoder (Eq. 1)."""
+    """Configuration for the point global encoder (Eq. 1)."""
 
     in_channels: int  # data dependent
-    field_extent_min: Tuple[float, float]  # = (2255500., 840500.)    # data dependent
-    field_extent_max: Tuple[float, float]  # = (2964500., 1479500.)   # data dependent
-    type: str = "UNet"
+    type: str = "Point"
     out_channels: int = 32
-    spatial_dims: int = 2
-    patch_size: int = 2
-    window_size: int = 7
-    channels: Tuple[int, ...] = (16, 32, 64, 128)
-    strides: Tuple[int, ...] = (1, 1, 1)
-    num_res_units: int = 2
-    kernel_size: int = 3
-    num_blocks: int = 4
     hidden_dims: Tuple[int, ...] = (32,)
     act_fn: str = "GELU"
     use_layernorm: bool = False
@@ -52,16 +42,13 @@ class GlobalEncoderConfig:
 
 @dataclass
 class TopographicEncoderConfig:
-    """Configuration for topographic encoder (Eq. 4-5)."""
+    """Configuration for the MLP topographic encoder (Eq. 4-5)."""
 
     in_channels: int  # data dependent
     out_channels: int = 64
-    n_layers: int = 3
-    initial_hw: Tuple[int, int] = (32, 32)
-    kernel_sizes: int = 3
     act_fn: str = "GELU"
     use_batchnorm: bool = True
-    type: str = "CNN"
+    type: str = "MLP"
     hidden_dims: tuple[int, ...] = ()
     use_layernorm: bool = False
 
@@ -222,17 +209,7 @@ class UninformedOATConfig:
 def build_topographic_encoder(
     tc: TopographicEncoderConfig,
 ) -> topographic_encoder.TopographyEncoder:
-    """Dispatch to CNN (grid patches) or MLP (flat field values) by ``tc.type``."""
-    if getattr(tc, "type", "CNN") == "CNN":
-        return topographic_encoder.CNNTopographyEncoder(
-            in_channels=tc.in_channels,
-            out_channels=tc.out_channels,
-            n_layers=tc.n_layers,
-            initial_hw=tc.initial_hw,
-            kernel_sizes=tc.kernel_sizes,
-            act_fn=tc.act_fn,
-            use_batchnorm=tc.use_batchnorm,
-        )
+    """Build the MLP topographic encoder. Raise ValueError for other types."""
     if tc.type == "MLP":
         return topographic_encoder.MLPTopographyEncoder(
             in_channels=tc.in_channels,
@@ -301,63 +278,7 @@ class UninformedOAT(nn.Module):
         return self.output_head
 
     def _init_global_encoder(self, config):
-        if config.global_encoder.type == "UNet":
-            return global_encoder.UNetGlobalEncoder(
-                unet_params={
-                    "in_channels": config.global_encoder.in_channels,
-                    "out_channels": config.global_encoder.out_channels,
-                    "spatial_dims": config.global_encoder.spatial_dims,
-                    "channels": config.global_encoder.channels,
-                    "strides": config.global_encoder.strides,
-                    "num_res_units": config.global_encoder.num_res_units,
-                },
-                field_extent={
-                    "min": torch.tensor(config.global_encoder.field_extent_min),
-                    "max": torch.tensor(config.global_encoder.field_extent_max),
-                },
-            )
-        elif config.global_encoder.type == "SwinUNETR":
-            return global_encoder.SwinUNETRGlobalEncoder(
-                swin_unetr_params={
-                    "in_channels": config.global_encoder.in_channels,
-                    "out_channels": config.global_encoder.out_channels,
-                    "spatial_dims": config.global_encoder.spatial_dims,
-                    "patch_size": config.global_encoder.patch_size,
-                    "window_size": config.global_encoder.window_size,
-                },
-                field_extent={
-                    "min": torch.tensor(config.global_encoder.field_extent_min),
-                    "max": torch.tensor(config.global_encoder.field_extent_max),
-                },
-            )
-        elif config.global_encoder.type == "MLP":
-            return global_encoder.MLPGlobalEncoder(
-                mlp_params={
-                    "in_channels": config.global_encoder.in_channels,
-                    "out_channels": config.global_encoder.out_channels,
-                    "hidden_dims": config.global_encoder.hidden_dims,
-                    "act_fn": config.global_encoder.act_fn,
-                },
-                field_extent={
-                    "min": torch.tensor(config.global_encoder.field_extent_min),
-                    "max": torch.tensor(config.global_encoder.field_extent_max),
-                },
-            )
-        elif config.global_encoder.type == "ResNetCNN":
-            self.global_encoder = global_encoder.ResNetCNNGlobalEncoder(
-                resnet_cnn_params={
-                    "in_channels": config.global_encoder.in_channels,
-                    "out_channels": config.global_encoder.out_channels,
-                    "kernel_size": config.global_encoder.kernel_size,
-                    "num_blocks": config.global_encoder.num_blocks,
-                    "act_fn": config.global_encoder.act_fn,
-                },
-                field_extent={
-                    "min": torch.tensor(config.global_encoder.field_extent_min),
-                    "max": torch.tensor(config.global_encoder.field_extent_max),
-                },
-            )
-        elif config.global_encoder.type == "Point":
+        if config.global_encoder.type == "Point":
             return global_encoder.PointGlobalEncoder(
                 mlp_params={
                     "in_channels": config.global_encoder.in_channels,
@@ -368,9 +289,9 @@ class UninformedOAT(nn.Module):
                     "use_batchnorm": config.global_encoder.use_batchnorm,
                 },
             )
-
         raise ValueError(
-            f"Unsupported global encoder type: {config.global_encoder.type}. Supported types are 'UNet', 'SwinUNETR', 'MLP', 'ResNetCNN', and 'Point'."
+            f"Unsupported global encoder type: {config.global_encoder.type}. "
+            "The only supported type is 'Point'."
         )
 
     def _init_topographic_encoder(self, config):
@@ -398,12 +319,12 @@ class UninformedOAT(nn.Module):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
-                'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
+                'topo': (B, N_q, C_topo) - topographic values at the points
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
@@ -445,12 +366,12 @@ class UninformedOAT(nn.Module):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
-                'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
+                'topo': (B, N_q, C_topo) - topographic values at the points
                 'obs': (B, N_q, C_y) - ground truth observations
                 'mask_obs': (B, N_q, C_y) - observation mask
                 'geo': (B, N_q, D) - query coordinates
@@ -645,19 +566,20 @@ class OAT(UninformedOAT):
 
         Args:
             global_data: {
-                'nwp': (B, C, H_lr, W_lr) - NWP fields
                 'time_emb': (B, D_time) - time embeddings
             }
             observation_data: {
                 'coords': (B, N_kv, 2) - station coordinates
-                'topo': (B, N_kv, C_topo, H_hr, W_hr) - topographic patches
+                'global_tokens': (B, N_kv, C_nwp) - NWP values at the points
+                'topo': (B, N_kv, C_topo) - topographic values at the points
                 'geo': (B, N_kv, D) - station coordinates
                 'obs': (B, N_kv, C_y) - observations
                 'mask_obs': (B, N_kv, C_y) - observation mask
             }
             query_data: {
                 'coords': (B, N_q, 2) - query coordinates
-                'topo': (B, N_q, C_topo, H_hr, W_hr) - topographic patches
+                'global_tokens': (B, N_q, C_nwp) - NWP values at the points
+                'topo': (B, N_q, C_topo) - topographic values at the points
                 'geo': (B, N_q, D) - query coordinates
             }
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.

@@ -1,4 +1,4 @@
 run_name_prefix: "oat_training"
 project: "oat"
 group: "debugging"
-entity: "sdsc-mch"
+entity: ${oc.env:WANDB_ENTITY,null}  # the team sets WANDB_ENTITY in the shell profile

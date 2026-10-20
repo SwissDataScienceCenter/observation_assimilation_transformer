@@ -22,3 +22,7 @@ logging:
 
 paths:
   run_root: ${hydra:run.dir}
+  # Data and checkpoint roots. Set OAT_DATA_ROOT and OAT_CKPT_ROOT, or use
+  # ./data and ./checkpoints below the working directory (the repository root).
+  data_root: ${oc.env:OAT_DATA_ROOT,data}
+  checkpoint_root: ${oc.env:OAT_CKPT_ROOT,checkpoints}
