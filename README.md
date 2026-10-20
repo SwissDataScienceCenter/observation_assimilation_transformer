@@ -43,7 +43,7 @@ poetry run python -m scripts.train --model oat --dataset era5_meteostat/temp \
     predictor.lr=5e-4 trainer.max_epochs=50 model/masking=radius
 ```
 
-The options are the files and keys in `configs/` (for example `configs/model/masking/`). To train on other variables, add a dataset variant file to `configs/dataset/<family>/`. Its `defaults` list must start with `<family>/settings@_here_`, as in `configs/dataset/era5_meteostat/temp.yaml`. Then `--dataset <family>/<file name>` selects it.
+The options are the files and keys in `configs/` (for example `configs/model/masking/`). To train on other variables, add a dataset variant file to `configs/dataset/<family>/`. Its `defaults` list must have the entry `<family>/settings@_here_`, as in `configs/dataset/era5_meteostat/temp.yaml`. Then `--dataset <family>/<file name>` selects it.
 
 ## Evaluate a model
 
