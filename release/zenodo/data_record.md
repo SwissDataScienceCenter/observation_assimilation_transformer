@@ -70,12 +70,11 @@ The script unpacks the files into `data/` and checks each file against
   with `anemoi.datasets.open_dataset`. The values are not changed. The
   statistics (mean, standard deviation, minimum, maximum) are computed over
   2019 to 2024.
-- Licence: [LEGAL] Copernicus licence. The source anemoi dataset gives the
-  licence CC BY 4.0 and the attribution "ECMWF". The data was copied from MARS
-  in 2026. Attribution text: "Contains modified Copernicus Climate Change
-  Service information [2026]. Neither the European Commission nor ECMWF is
-  responsible for any use that may be made of the Copernicus information or
-  data it contains."
+- Licence: CC BY 4.0 (Copernicus licence). The source anemoi dataset gives
+  the attribution "ECMWF". The data was copied from MARS in 2026. Attribution
+  text: "Contains modified Copernicus Climate Change Service information
+  [2026]. Neither the European Commission nor ECMWF is responsible for any use
+  that may be made of the Copernicus information or data it contains."
 
 ### Static fields
 
