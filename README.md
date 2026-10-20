@@ -40,10 +40,10 @@ Add [Hydra overrides](https://hydra.cc/docs/advanced/override_grammar/basic/) at
 
 ```bash
 poetry run python -m scripts.train --model oat --dataset era5_meteostat/temp \
-    predictor.lr=5e-4 trainer.max_epochs=50 model/masking=radius
+    predictor.lr=5e-4 trainer.max_epochs=50
 ```
 
-The options are the files and keys in `configs/` (for example `configs/model/masking/`). To train on other variables, add a dataset variant file to `configs/dataset/<family>/`. Its `defaults` list must have the entry `<family>/settings@_here_`, as in `configs/dataset/era5_meteostat/temp.yaml`. Then `--dataset <family>/<file name>` selects it.
+The options are the files and keys in `configs/` (for example `configs/predictor/`). To train on other variables, add a dataset variant file to `configs/dataset/<family>/`. Its `defaults` list must have the entry `<family>/settings@_here_`, as in `configs/dataset/era5_meteostat/temp.yaml`. Then `--dataset <family>/<file name>` selects it.
 
 ## Evaluate a model
 
@@ -53,7 +53,13 @@ The options are the files and keys in `configs/` (for example `configs/model/mas
 poetry run python -m scripts.evaluate_test_set --dataset era5_meteostat --model oat_temp_precip
 ```
 
-The metrics go to `data/results/<run name>_metrics_test.csv` and `.summary.json`. To evaluate your own run, add one line with its checkpoint path to `configs/checkpoints.yaml`.
+The metrics go to `data/results/<run name>_metrics_test.csv` and `.summary.json`. To evaluate your own run, give the checkpoint path directly:
+
+```bash
+poetry run python -m scripts.evaluate_test_set checkpoints/<group>/<run name>/<file>.ckpt
+```
+
+The `config.yaml` of the run must be in the same folder as the `.ckpt` file. You can also add one line with the checkpoint path to `configs/checkpoints.yaml`.
 
 ## Download the checkpoints and the data
 
