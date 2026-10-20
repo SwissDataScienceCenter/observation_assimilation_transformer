@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Figure 1 (fig:oat): the panels of the OAT scheme.
-# The script makes the panels only. The final layout was put together by hand.
+# Figure 1 (fig:oat): the data panel (left half) of the OAT scheme.
+# The architecture diagram (right half) was drawn by hand.
 # Needs: the Swiss data (the crop to Switzerland is enough).
-# Panel a uses the zoom image of the panel script, not the full-domain image.
-# Output: figures/out/fig1_{a,b,c,d,e}.pdf
+# The panel uses the zoom image of the panel script, not the full-domain image.
+# Output: figures/out/fig1_a.pdf
 source "$(dirname "$0")/_lib.sh"
 
 need_swiss
-for panel in a_real b_real c_innovation d_real e_real; do
-    run python -m "scripts.plots.oat_scheme.plot_oat_panel_${panel}"
-    src="oat_panel_${panel}"
-    [[ "$panel" == a_real ]] && src="oat_panel_a_zoom"
-    run cp "data/figures/${src}.pdf" "$OUT_DIR/fig1_${panel%%_*}.pdf"
-done
+run python -m scripts.plots.oat_scheme.plot_oat_panel_a_real
+run cp data/figures/oat_panel_a_zoom.pdf "$OUT_DIR/fig1_a.pdf"
