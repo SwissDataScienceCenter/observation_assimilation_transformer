@@ -21,7 +21,12 @@ from pyproj import Transformer
 
 from oat.paths import data_root
 
-from ._shared import canonical_queries, canonical_queries_grid
+from ._shared import (
+    T2M_NORM_MEAN,
+    T2M_NORM_STD,
+    canonical_queries,
+    canonical_queries_grid,
+)
 
 # ---------------------------------------------------------------------------
 # Paths  (identical to plot_oat_panel_a_real.py)
@@ -223,9 +228,9 @@ def plot_panel_b_zoom(
 
     t2m_crop, x_nwp_z, y_nwp_z = load_t2m_zoom(t2m_nwp, x_nwp, y_nwp)
 
-    # Normalise using global statistics (same as panel A)
-    mu = float(np.nanmean(t2m_nwp))
-    sigma = float(np.nanstd(t2m_nwp))
+    # Normalise with the fixed full-domain statistics (see _shared.py)
+    mu = T2M_NORM_MEAN
+    sigma = T2M_NORM_STD
     t2m_norm_crop = np.clip((t2m_crop - mu) / max(sigma, 1e-6) * 1.5, *FIELD_VLIM)
 
     # Bilinearly interpolate NWP to topo grid (smooth prior)

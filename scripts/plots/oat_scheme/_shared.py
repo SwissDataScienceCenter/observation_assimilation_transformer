@@ -53,6 +53,12 @@ STEP_ZOOM = 2
 ZOOM_CENTER = (2_637_000.0, 1_163_000.0)
 ZOOM_HALF_KM = 25_000.0
 
+# Fixed T_2M statistics to normalize the zoom field of panels B and E.
+# Source: the full-domain T_2M on the 640 x 710 reference grid at TIME_IDX 5000.
+# Fixed values make sure that the figure does not change on the Swiss crop.
+T2M_NORM_MEAN = 279.1194763183594
+T2M_NORM_STD = 4.081511974334717
+
 
 def zoom_bounds() -> tuple[float, float, float, float]:
     cx, cy = ZOOM_CENTER

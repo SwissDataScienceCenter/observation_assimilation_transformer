@@ -5,6 +5,7 @@ from omegaconf import OmegaConf
 from release.scrub_checkpoints import (
     ScrubError,
     check_no_leak,
+    dataset_base,
     scrub_all,
     scrub_ckpt,
     scrub_config,
@@ -118,3 +119,24 @@ def test_scrub_all_fails_on_absolute_registry_value(tmp_path):
     reg.write_text("era5_meteostat:\n  oat_temp_precip: /abs/run/best.ckpt\n")
     with pytest.raises(ScrubError, match="absolute"):
         scrub_all(reg, tmp_path / "src", tmp_path / "stage", tmp_path / "res")
+
+
+def _raw(cfg):
+    """Return the config as a dict with its interpolations left as text."""
+    return OmegaConf.to_container(cfg, resolve=False)
+
+
+def test_dataset_base_gives_full_domain_paths_to_swiss_ootg():
+    base = _raw(dataset_base("cosmo_peakweather", ootg=True))
+    assert "cosmo-1e_full_domain/nwp_extracted.zarr" in base["nwp_extracted_path"]
+    assert "cosmo-1e_full_domain/" in base["nwp_path"]
+
+
+def test_dataset_base_keeps_default_paths_for_other_runs():
+    assert (
+        "full_domain"
+        not in _raw(dataset_base("cosmo_peakweather", ootg=False))["nwp_path"]
+    )
+    assert (
+        "full_domain" not in _raw(dataset_base("era5_meteostat", ootg=True))["nwp_path"]
+    )

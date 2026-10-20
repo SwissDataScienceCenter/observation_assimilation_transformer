@@ -1,4 +1,4 @@
-nwp_path: "${paths.data_root}/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+nwp_path: "${paths.data_root}/cosmo-1e_full_domain/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
 topo_path: "${paths.data_root}/europe-static.zarr"
 obs_path: "${paths.data_root}/hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet"
 station_meta_path: "${paths.data_root}/station_quality.parquet"

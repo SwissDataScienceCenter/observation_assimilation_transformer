@@ -18,8 +18,15 @@ EUROPE = [
     "hourly_2019_2025_temp_prcp_wspd_wpgt_rhum.parquet",
     "station_quality.parquet",
 ]
-SWISS = ["cosmo-1e_rechunked", "peakweather"]
-COSMO_E1 = "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr"
+SWISS = [
+    "cosmo-1e_rechunked",
+    "peakweather",
+    "mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr",
+]
+FULL = [
+    "cosmo-1e_full_domain/mch-co1e-an-archive-0p01-2019-2024-1h-v1-pl13.zarr",
+    "cosmo-1e_full_domain/nwp_extracted.zarr",
+]
 
 
 def _script(name):
@@ -32,7 +39,7 @@ def _roots(tmp_path, data=(), ckpts=False, bench=False):
     for p in roots.values():
         p.mkdir()
     for name in data:
-        (roots["data"] / name).mkdir()
+        (roots["data"] / name).mkdir(parents=True)
     if ckpts:
         reg = yaml.safe_load((REPO / "configs" / "checkpoints.yaml").read_text())
         for models in reg.values():
@@ -103,7 +110,7 @@ def test_missing_inputs_stop_before_python(name, tmp_path):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_dry_run_with_all_inputs(name, tmp_path):
-    roots = _roots(tmp_path, [*EUROPE, *SWISS, COSMO_E1], ckpts=True, bench=True)
+    roots = _roots(tmp_path, [*EUROPE, *SWISS, *FULL], ckpts=True, bench=True)
     result = _run(name, roots)
     assert result.returncode == 0, result.stderr
     commands = _commands(result.stderr)
@@ -125,7 +132,8 @@ def test_mixed_figures_make_the_europe_part_first(name, tmp_path):
 def test_swiss_figures_stop_without_meteoswiss_data(name, tmp_path):
     result = _run(name, _roots(tmp_path, EUROPE, ckpts=True))
     assert result.returncode == 1
-    assert "MeteoSwiss" in result.stderr
+    word = "full COSMO-1E domain" if name == "fig6" else "MeteoSwiss"
+    assert word in result.stderr
     assert not _commands(result.stderr)
 
 
@@ -136,6 +144,39 @@ def test_table1_uses_result_files_without_swiss_data(tmp_path):
     evaluated = {c[c.index("--dataset") + 1] for c in commands if "--dataset" in c}
     assert evaluated == {"era5_meteostat"}
     assert commands[-1][2] == "scripts.build_results_table"
+
+
+def test_table1_without_full_domain_skips_swiss_ootg_and_cosmo_interpolator(tmp_path):
+    result = _run("table1", _roots(tmp_path, [*EUROPE, *SWISS], ckpts=True))
+    assert result.returncode == 0, result.stderr
+    cmds = _commands(result.stderr)
+    swiss = [c[c.index("--model") + 1] for c in cmds if "cosmo_peakweather" in c]
+    assert "oat_temp_precip" in swiss and "interpolator" in swiss
+    assert "ootg_temp_precip" not in swiss
+    assert not [c for c in cmds if "cosmo_interpolator" in c]
+    assert "full COSMO-1E domain" in result.stderr
+
+
+def test_table1_with_full_domain_runs_swiss_ootg(tmp_path):
+    result = _run("table1", _roots(tmp_path, [*EUROPE, *SWISS, *FULL], ckpts=True))
+    assert result.returncode == 0, result.stderr
+    cmds = _commands(result.stderr)
+    assert any("ootg_temp_precip" in c and "cosmo_peakweather" in c for c in cmds)
+    assert any("cosmo_interpolator" in c for c in cmds)
+
+
+def test_fig6_stops_without_full_domain(tmp_path):
+    result = _run("fig6", _roots(tmp_path, [*EUROPE, *SWISS], ckpts=True))
+    assert result.returncode == 1
+    assert "full COSMO-1E domain" in result.stderr
+    assert not _commands(result.stderr)
+
+
+def test_fig1_runs_on_the_swiss_crop_and_copies_the_zoom(tmp_path):
+    result = _run("fig1", _roots(tmp_path, SWISS))
+    assert result.returncode == 0, result.stderr
+    assert "oat_panel_a_zoom.pdf" in result.stderr
+    assert "oat_panel_a_real.pdf" not in result.stderr
 
 
 def test_figA2_needs_the_figA1_runs(tmp_path):
@@ -166,7 +207,7 @@ class _Parsed(Exception):
 def test_every_command_matches_its_argparse_parser(tmp_path, monkeypatch):
     commands = []
     for name in NAMES:
-        roots = _roots(tmp_path / name, [*EUROPE, *SWISS, COSMO_E1], True, True)
+        roots = _roots(tmp_path / name, [*EUROPE, *SWISS, *FULL], True, True)
         commands += _commands(_run(name, roots).stderr)
     unique = {tuple(c[2:]) for c in commands if len(c) > 3}
     assert unique
