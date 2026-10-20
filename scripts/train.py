@@ -10,6 +10,10 @@ Usage:
     python -m scripts.train --model ootg --dataset cosmo_peakweather/temp_ootg --submit
     python -m scripts.train --model oat --dataset cosmo_peakweather/temp \
         trainer.max_epochs=1
+
+Each file configs/dataset/<family>/<variant>.yaml is a dataset variant when its
+defaults list has the entry "<family>/settings@_here_". To make a new variant
+selectable, add such a file.
 """
 
 import argparse
@@ -19,20 +23,34 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-DATASET_FAMILIES = ("era5_meteostat", "cosmo_peakweather")
-# Each family ships these dataset variants at the top level of its config dir.
-DATASET_VARIANTS = (
-    "temp",
-    "precip",
-    "temp_precip",
-    "temp_ootg",
-    "temp_precip_ootg",
-)
-DATASETS = tuple(
-    f"{family}/{variant}" for family in DATASET_FAMILIES for variant in DATASET_VARIANTS
-)
-UNIVARIATE_VARIANTS = ("temp","precip")
+from omegaconf import OmegaConf
+
+CONFIG_DIR = Path(__file__).parents[1] / "configs" / "dataset"
+
+
+def _load(path: Path) -> dict[str, Any]:
+    """Read a YAML config file as a plain dict, without resolving defaults."""
+    return OmegaConf.to_container(OmegaConf.load(path))  # type: ignore[return-value]
+
+
+def find_datasets(config_dir: Path) -> tuple[str, ...]:
+    """Return every dataset variant as '<family>/<variant>', sorted.
+
+    A file is a variant when its defaults list has '<family>/settings@_here_'.
+    """
+    found = []
+    for path in sorted(config_dir.glob("*/*.yaml")):
+        family = path.parent.name
+        defaults = _load(path).get("defaults", [])
+        if f"{family}/settings@_here_" in defaults:
+            found.append(f"{family}/{path.stem}")
+    return tuple(found)
+
+
+DATASETS = find_datasets(CONFIG_DIR)
 
 
 @dataclass(frozen=True)
@@ -120,10 +138,12 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
 
 def validate(model: str, dataset: str) -> None:
     _, variant = dataset.split("/", 1)
-    if MODEL_SPECS[model].univariate_only and variant not in UNIVARIATE_VARIANTS:
+    obs_vars = _load(CONFIG_DIR / f"{dataset}.yaml").get("obs_vars", [])
+    if MODEL_SPECS[model].univariate_only and len(obs_vars) > 1:
         raise SystemExit(
             f"Model '{model}' is univariate-only (see gp_baseline.py); dataset variant "
-            f"'{variant}' is multivariate. Use one of {UNIVARIATE_VARIANTS} instead."
+            f"'{variant}' has {len(obs_vars)} observed variables. "
+            f"Use a variant with one observed variable instead."
         )
     if model == "ootg" and not variant.endswith("_ootg"):
         raise SystemExit(
