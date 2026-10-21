@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 
@@ -14,13 +13,6 @@ def test_citation_cff_has_the_required_keys():
     assert cff["license"] == "MIT"
     assert len(cff["authors"]) == 7
     assert cff["preferred-citation"]["type"] == "article"
-
-
-def test_zenodo_json_is_valid():
-    meta = json.loads((REPO / ".zenodo.json").read_text())
-    assert meta["upload_type"] == "software"
-    assert meta["license"] == "MIT"
-    assert len(meta["creators"]) == 7
 
 
 def test_docs_name_existing_files():

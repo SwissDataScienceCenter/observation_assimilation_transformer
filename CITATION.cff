@@ -32,7 +32,9 @@ preferred-citation:
   title: "Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations"
   authors: *authors
   year: 2026
-  notes: "Submitted"
+  journal: "arXiv preprint"
+  doi: 10.48550/arXiv.2610.28327
+  url: "https://arxiv.org/abs/2610.28327"
 references:
   - type: data
     title: "OAT checkpoints and results v1.0"

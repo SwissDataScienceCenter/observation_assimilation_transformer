@@ -4,11 +4,11 @@ OAT makes probabilistic weather analysis fields at any location. It uses a coars
 
 ![OAT scheme](docs/oat_scheme.png)
 
-This repository holds the code of the paper "Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations" (Donner et al., 2026, submitted).
+This repository holds the code of the paper "Observation Assimilation Transformer: Probabilistic Weather Analysis from Sparse Station Observations" (Donner et al., 2026, [arXiv:2610.28327](https://arxiv.org/abs/2610.28327)).
 
 ## Install
 
-You need Python 3.12 and [Poetry](https://python-poetry.org/) 2.x. A CUDA GPU is optional. Figures 8 and 9 (scaling benchmarks) need a CUDA GPU. Figures 4 and 7 run faster on a GPU.
+You need Python 3.12 and [Poetry](https://python-poetry.org/) 2.x. A CUDA GPU is optional. Figures A1 and A2 (scaling benchmarks) need a CUDA GPU. Figures 4 and 7 run faster on a GPU.
 
 ```bash
 git clone https://github.com/SwissDataScienceCenter/observation_assimilation_transformer.git
@@ -105,13 +105,18 @@ If you use this code, please cite the paper. GitHub shows the citation from [CIT
 
 ```bibtex
 @article{donner2026oat,
-  title   = {Observation Assimilation Transformer: Probabilistic Weather Analysis
-             from Sparse Station Observations},
-  author  = {Donner, Christian and Cattaneo, Michele and Samarin, Maxim and
-             Zanetta, Francesco and Llor{\'e}ns Jover, Ic{\'i}ar and
-             Aznar Siguan, Gabriela and Volpi, Michele},
-  year    = {2026},
-  note    = {Submitted}
+  title         = {Observation Assimilation Transformer: Probabilistic Weather Analysis
+                   from Sparse Station Observations},
+  author        = {Donner, Christian and Cattaneo, Michele and Samarin, Maxim and
+                   Zanetta, Francesco and Llor{\'e}ns Jover, Ic{\'i}ar and
+                   Aznar Siguan, Gabriela and Volpi, Michele},
+  journal       = {arXiv preprint arXiv:2610.28327},
+  year          = {2026},
+  eprint        = {2610.28327},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  doi           = {10.48550/arXiv.2610.28327},
+  url           = {https://arxiv.org/abs/2610.28327}
 }
 ```
 
