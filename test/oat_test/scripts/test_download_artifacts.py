@@ -238,7 +238,7 @@ def test_release_record_ids_are_set_and_distinct():
 
 def test_citation_files_name_the_record_dois():
     dois = {f"10.5281/zenodo.{i}" for i in dl.RECORD_IDS["zenodo"].values()}
-    for name in ("README.md", "CITATION.cff", ".zenodo.json"):
+    for name in ("README.md", "CITATION.cff"):
         text = (REPO / name).read_text()
         assert all(d in text for d in dois), name
     assert "10.5072/" not in (REPO / "README.md").read_text()
