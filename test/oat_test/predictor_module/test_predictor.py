@@ -616,3 +616,33 @@ def test_setup_oat_cfg_without_observation_embedding_key():
         cfg.model.pop("observation_embedding", None)
     oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
     assert oat_cfg.observation_embedding is None
+
+
+def test_nan_at_masked_obs_gives_finite_gradients_in_innovation_mode(
+    batch_fixture, transform_fixture, model_cfg_fixture
+):
+    model_cfg_fixture.output_head.observation_assimilation_as = "innovation"
+    model_cfg_fixture.observation_embedding = ObservationEmbeddingConfig(
+        n_vars=len(OBS_VARS), d_embed=4, hidden_channels=8
+    )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
+    batch = pred._normalize_batch(batch_fixture)
+    obs_data = batch["observation_data"]
+    obs_data["mask_obs"][:, 0, 1] = 0.0
+    obs_data["obs"][:, 0, 1] = float("nan")
+    _, _, loss, _, _ = pred.forward(batch, return_loss_and_targets=True)
+    loss.backward()
+    assert torch.isfinite(loss)
+    for name, p in pred.model.named_parameters():
+        if p.grad is not None:
+            assert torch.isfinite(p.grad).all(), name
+
+
+def test_setup_oat_cfg_with_empty_observation_embedding_uses_defaults():
+    cfg = _compose_cfg([])
+    with open_dict(cfg.model):
+        cfg.model.observation_embedding = {}
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding == ObservationEmbeddingConfig(
+        n_vars=len(cfg.dataset.obs_vars)
+    )

@@ -651,7 +651,7 @@ def setup_oat_cfg(
             out_channels=d_model)
 
     observation_embedding_cfg = None
-    if model_cfg.get("observation_embedding", None):
+    if model_cfg.get("observation_embedding", None) is not None:
         logger.info("Observation embedding enabled.")
         observation_embedding_cfg = model.ObservationEmbeddingConfig(
             **model_cfg.observation_embedding, n_vars=n_obs_vars

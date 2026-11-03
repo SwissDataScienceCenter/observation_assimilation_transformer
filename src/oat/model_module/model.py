@@ -744,9 +744,16 @@ class OAT(UninformedOAT):
         )
 
         # Step 2: Compute innovation at stations (Eq. 8-12)
+        obs = observation_data["obs"]
+        if hasattr(self, "obs_embedding"):
+            # Set masked values to 0 before the innovation, so a NaN at a masked
+            # entry gives no NaN gradient in the innovation computation.
+            obs = torch.where(
+                observation_data["mask_obs"] > 0.5, obs, torch.zeros_like(obs)
+            )
         innovation = self.output_head.compute_innovation(
             uninformed_kv_token,
-            observation_data["obs"],
+            obs,
             mask=observation_data["mask_obs"] if self.mask_innovations else None,
         )
         if hasattr(self, "obs_embedding"):
