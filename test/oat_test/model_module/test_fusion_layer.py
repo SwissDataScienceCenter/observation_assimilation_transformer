@@ -1,5 +1,5 @@
 from oat.model_module import GatedLinearUnitFusionLayer
-from oat.model_module.fusion_layer import LearnableGating
+from oat.model_module.fusion_layer import LearnableGating, ObservationEmbedding
 
 import torch
 import pytest
@@ -97,3 +97,53 @@ def test_learnable_gating(n_layers: int, out_channels: int) -> None:
     assert len(gate.ffnn) == n_layers * 2 # consider activation layers
     
     assert gate_out.max().item() <= 1.0 and gate_out.min().item() >= 0.0, "Output of LearnableGating should be in the range [0, 1]"
+
+
+def test_observation_embedding_shape() -> None:
+    emb = ObservationEmbedding(n_vars=3, d_embed=4, hidden_channels=8)
+    out = emb(torch.randn(2, 5, 3), torch.ones(2, 5, 3))
+    assert out.shape == (2, 5, 12)
+    assert emb.out_channels == 12
+
+
+def test_masked_value_has_no_effect() -> None:
+    torch.manual_seed(0)
+    emb = ObservationEmbedding(n_vars=2, d_embed=4)
+    mask = torch.tensor([[1.0, 0.0]])
+    a = emb(torch.tensor([[0.3, 0.0]]), mask)
+    b = emb(torch.tensor([[0.3, 123.0]]), mask)
+    assert torch.equal(a, b)
+
+
+def test_missing_differs_from_observed_zero() -> None:
+    torch.manual_seed(0)
+    emb = ObservationEmbedding(n_vars=2, d_embed=4)
+    obs = torch.zeros(1, 2)
+    missing = emb(obs, torch.tensor([[1.0, 0.0]]))
+    observed_zero = emb(obs, torch.ones(1, 2))
+    assert not torch.allclose(missing[..., 4:], observed_zero[..., 4:])
+    assert torch.equal(missing[..., 4:], emb.missing_token[1].expand(1, 4))
+
+
+def test_variables_are_embedded_independently() -> None:
+    torch.manual_seed(0)
+    emb = ObservationEmbedding(n_vars=2, d_embed=4)
+    mask = torch.ones(1, 2)
+    a = emb(torch.tensor([[0.3, 1.0]]), mask)
+    b = emb(torch.tensor([[0.3, -5.0]]), mask)
+    assert torch.equal(a[..., :4], b[..., :4])
+
+
+def test_all_missing_uses_tokens_only() -> None:
+    emb = ObservationEmbedding(n_vars=2, d_embed=4)
+    out = emb(torch.randn(3, 2), torch.zeros(3, 2))
+    assert torch.equal(out, emb.missing_token.reshape(1, 8).expand(3, 8))
+
+
+def test_nan_at_masked_entry_is_safe() -> None:
+    emb = ObservationEmbedding(n_vars=2, d_embed=4)
+    obs = torch.tensor([[0.5, float("nan")]], requires_grad=True)
+    out = emb(obs, torch.tensor([[1.0, 0.0]]))
+    out.sum().backward()
+    assert torch.isfinite(out).all()
+    assert all(torch.isfinite(p.grad).all() for p in emb.parameters())

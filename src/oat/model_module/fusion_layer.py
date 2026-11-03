@@ -316,3 +316,52 @@ class LearnableGating(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.ffnn(x)
+
+class ObservationEmbedding(nn.Module):
+    """Embed each observation variable, with a learned token for missing values.
+
+    Each variable v has its own MLP ``1 -> hidden_channels -> d_embed``. Where the
+    mask is 0, the layer uses the learned vector ``missing_token[v]`` instead of
+    the MLP output. Thus a missing value is never the same as an observed value,
+    and the value at a masked entry has no effect (it can also be NaN).
+
+    Args:
+        n_vars: Number of observation variables V.
+        d_embed: Embedding size for each variable.
+        hidden_channels: Hidden size of each per-variable MLP.
+        activation: Activation name for ``get_activation``.
+
+    Shapes:
+        obs, mask: [..., V]. ``mask > 0.5`` means observed.
+        output: [..., V * d_embed], variables in input order.
+    """
+
+    def __init__(
+        self,
+        n_vars: int,
+        d_embed: int = 8,
+        hidden_channels: int = 16,
+        activation: str = "GELU",
+    ) -> None:
+        super().__init__()
+        self.n_vars = n_vars
+        self.d_embed = d_embed
+        self.out_channels = n_vars * d_embed
+        lin1 = [nn.Linear(1, hidden_channels) for _ in range(n_vars)]
+        lin2 = [nn.Linear(hidden_channels, d_embed) for _ in range(n_vars)]
+        self.w1 = nn.Parameter(torch.stack([m.weight[:, 0] for m in lin1]))
+        self.b1 = nn.Parameter(torch.stack([m.bias for m in lin1]))
+        self.w2 = nn.Parameter(torch.stack([m.weight.T for m in lin2]))
+        self.b2 = nn.Parameter(torch.stack([m.bias for m in lin2]))
+        self.act = get_activation(activation)
+        self.missing_token = nn.Parameter(torch.randn(n_vars, d_embed) * 0.02)
+
+    def forward(self, obs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        observed = (mask > 0.5).unsqueeze(-1)  # [..., V, 1]
+        # Set masked inputs to 0 before the MLP, so NaN values give no NaN gradient.
+        obs_v = obs.unsqueeze(-1)
+        y = torch.where(observed, obs_v, torch.zeros_like(obs_v))
+        h = self.act(y * self.w1 + self.b1)  # [..., V, H]
+        e = torch.einsum("...vh,vhd->...vd", h, self.w2) + self.b2  # [..., V, D]
+        e = torch.where(observed, e, self.missing_token)
+        return e.flatten(-2)
