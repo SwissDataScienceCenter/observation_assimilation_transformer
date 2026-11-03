@@ -7,6 +7,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
+from omegaconf import open_dict
 from oat_test.conftest import FIELD_ROLES, OBS_VARS
 from torch.distributions import constraints
 
@@ -222,6 +223,7 @@ def test_default_hydra_config(transform_fixture):
 
     assert isinstance(oat_cfg, OATConfig)
     assert oat_cfg.output_head.in_features == cfg.model.d_model
+    assert oat_cfg.observation_embedding is None
     assert oat_cfg.output_head.variable_to_distribution == dict(
         cfg.dataset.obs_variable_to_distribution
     )
@@ -578,3 +580,39 @@ def test_missing_obs_differs_from_observed_zero_only_with_embedding(
     else:
         # Current zero-fill behaviour: "missing" equals "observed 0".
         assert torch.equal(outputs[0], outputs[1])
+
+
+def _compose_cfg(overrides: list[str]):
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_hydra_config_with_observation_embedding(transform_fixture):
+    input_transform, output_transform = transform_fixture
+    cfg = _compose_cfg(["model/observation_embedding=default"])
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding == ObservationEmbeddingConfig(
+        n_vars=len(cfg.dataset.obs_vars),
+        d_embed=8,
+        hidden_channels=16,
+        activation="GELU",
+    )
+    pred = OATPredictor(
+        oat_model_cfg=oat_cfg,
+        input_transform=input_transform,
+        output_transform=output_transform,
+        output_var_names=cfg.dataset.obs_vars,
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+    assert isinstance(pred.model.obs_embedding, ObservationEmbedding)
+
+
+def test_setup_oat_cfg_without_observation_embedding_key():
+    # Copy an old checkpoint config, which has no observation_embedding key.
+    cfg = _compose_cfg([])
+    with open_dict(cfg.model):
+        cfg.model.pop("observation_embedding", None)
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding is None
