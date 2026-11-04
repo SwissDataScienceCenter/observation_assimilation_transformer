@@ -368,7 +368,10 @@ class ObservationEmbedding(nn.Module):
         # Set masked inputs to 0 before the MLP, so NaN values give no NaN gradient.
         obs_v = obs.unsqueeze(-1)
         y = torch.where(observed, obs_v, torch.zeros_like(obs_v))
+         #  Scale each variable's weights by its scalar value, add bias, activate.
         h = self.act(y * self.w1 + self.b1)  # [..., V, H]
+        # Per-variable second layer: e[..., v, :] = h[..., v, :] @ w2[v]  (no mixing across variables)
         e = torch.einsum("...vh,vhd->...vd", h, self.w2) + self.b2  # [..., V, D]
+        # Insert missing token where not observed
         e = torch.where(observed, e, self.missing_token)
         return e.flatten(-2)
