@@ -18,6 +18,7 @@ from oat.model_module import (
     output_head,
     transformer,
     masking,
+    query_noise,
 )
 
 
@@ -153,6 +154,18 @@ class OutputHeadConfig:
 
 
 @dataclass
+class QueryNoiseConfig:
+    """Settings of the optional noise field and sample head."""
+
+    length_scales_km: Tuple[float, ...]
+    km_per_unit: float
+    channels_per_scale: int = 4
+    num_frequencies: int = 128
+    mlp_hidden_layers: int = 2
+    train_members: int = 8
+
+
+@dataclass
 class OATConfig:
     """Complete OAT model configuration."""
 
@@ -168,6 +181,7 @@ class OATConfig:
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
     mask_innovations: bool = True
+    query_noise: QueryNoiseConfig | None = None
 
     @classmethod
     def default(cls) -> "OATConfig":
@@ -571,6 +585,32 @@ class OAT(UninformedOAT):
                 activation=config.learnable_gating.activation,
             )
 
+        if config.query_noise is not None:
+            qn = config.query_noise
+            if qn.train_members < 2:
+                raise ValueError("query_noise.train_members must be 2 or more.")
+            if (
+                config.output_head.observation_assimilation_as == "innovation"
+                and config.pre_oat_loss_weight <= 0
+            ):
+                raise ValueError(
+                    "query_noise with innovation needs pre_oat_loss_weight > 0. "
+                    "Nothing else trains the head that gives the innovation."
+                )
+            self.train_members = qn.train_members
+            self.noise_field = query_noise.RFFNoiseField(
+                length_scales_km=qn.length_scales_km,
+                km_per_unit=qn.km_per_unit,
+                channels_per_scale=qn.channels_per_scale,
+                num_frequencies=qn.num_frequencies,
+            )
+            self.sample_head = query_noise.SampleHead(
+                in_features=d_model,
+                noise_channels=self.noise_field.num_channels,
+                output_head=self.output_head,
+                mlp_hidden_layers=qn.mlp_hidden_layers,
+            )
+
     @property
     def pre_oat_loss_weight(self) -> float:
         return float(self._pre_oat_loss_weight.item())
@@ -587,6 +627,7 @@ class OAT(UninformedOAT):
         num_samples: int | None = None,
         differentiable_samples: bool = False,
         return_pre_oat_output: bool = False,
+        noise_draw: query_noise.NoiseFieldDraw | None = None,
     ) -> Dict[str, Any]:
         """
         Forward pass through OAT model.
@@ -612,24 +653,35 @@ class OAT(UninformedOAT):
             num_samples: Number of samples to draw from output distribution. If None, uses default from config.
             differentiable_samples: Whether to sample with a reparametrization
             return_pre_oat_output: If True, also returns output before final output head for analysis.
+            noise_draw: Noise draw for the sample head. Its member count sets the
+                number of samples. Only used when query noise is on.
 
         Returns:
             Predictions at query locations: (B, N_q, C_y) or dict with distribution params
         """
 
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
-        out = self.output_head(oat_out)
-
-        with torch.no_grad():
+        if hasattr(self, "sample_head"):
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(
-                x=None,
-                pred_dist=out,
-                num_samples=num_samples,
-                differentiable=differentiable_samples,
-            )
-        out["samples"] = samples
+            with torch.set_grad_enabled(differentiable_samples):
+                samples = self._noise_samples(
+                    oat_out, query_data, num_samples, noise_draw
+                )
+            out = {"samples": samples}
+        else:
+            out = self.output_head(oat_out)
+
+            with torch.no_grad():
+                if num_samples is None:
+                    num_samples = self.num_samples
+                samples = self.output_head.sample(
+                    x=None,
+                    pred_dist=out,
+                    num_samples=num_samples,
+                    differentiable=differentiable_samples,
+                )
+            out["samples"] = samples
 
         if return_pre_oat_output:
             pre_oat_output = self.output_head(pre_oat_out)
@@ -674,9 +726,16 @@ class OAT(UninformedOAT):
         """
 
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
-        out, per_var_losses, loss = self.output_head.loss(
-            oat_out, target_obs, target_mask_obs
-        )
+        if hasattr(self, "sample_head"):
+            members = self._noise_samples(oat_out, query_data, self.train_members, None)
+            per_var_losses, loss = self.sample_head.loss(
+                members, target_obs, target_mask_obs
+            )
+            out = {}
+        else:
+            out, per_var_losses, loss = self.output_head.loss(
+                oat_out, target_obs, target_mask_obs
+            )
         if self.pre_oat_loss_weight > 0:
             _, pre_per_var_losses, pre_loss = self.output_head.loss(
                 pre_oat_out, target_obs, target_mask_obs
@@ -692,12 +751,15 @@ class OAT(UninformedOAT):
         with torch.no_grad():
             if num_samples is None:
                 num_samples = self.num_samples
-            samples = self.output_head.sample(
-                x=None,
-                pred_dist=out,
-                num_samples=num_samples,
-                differentiable=differentiable_samples,
-            )
+            if hasattr(self, "sample_head"):
+                samples = self._noise_samples(oat_out, query_data, num_samples, None)
+            else:
+                samples = self.output_head.sample(
+                    x=None,
+                    pred_dist=out,
+                    num_samples=num_samples,
+                    differentiable=differentiable_samples,
+                )
 
         if return_pre_oat_output:
             with torch.no_grad():
@@ -716,6 +778,27 @@ class OAT(UninformedOAT):
         out["samples"] = samples
 
         return out, per_var_losses, loss
+
+    def _noise_samples(
+        self,
+        features: torch.Tensor,
+        query_data: Dict[str, torch.Tensor],
+        num_members: int,
+        noise_draw: query_noise.NoiseFieldDraw | None,
+    ) -> torch.Tensor:
+        """Get sample head output [B, N_q, M, V] for a noise draw."""
+        coords = _search_coords(query_data)
+        if noise_draw is None:
+            noise_draw = self.noise_field.draw(
+                coords.shape[0],
+                num_members,
+                coords.shape[-1],
+                coords.device,
+                coords.dtype,
+            )
+        eps = noise_draw.evaluate(coords)
+        samples: torch.Tensor = self.sample_head(features, eps)
+        return samples
 
     def _forward(
         self,

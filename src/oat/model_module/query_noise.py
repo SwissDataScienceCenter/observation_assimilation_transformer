@@ -10,7 +10,6 @@ from torch import Tensor, nn
 from oat.data_module.support import _to_bounds
 from oat.model_module.activations import get_activation
 from oat.model_module.output_head import OutputHead
-from oat.predictor_module.functional_metrics import mc_crps
 
 
 @dataclass
@@ -193,6 +192,9 @@ class SampleHead(nn.Module):
         Returns:
             Detached loss for each variable, and the total loss.
         """
+        # Import here: oat.predictor_module imports model.py, which imports this file.
+        from oat.predictor_module.functional_metrics import mc_crps
+
         valid = mask > 0.5
         safe_target = torch.where(valid, target, torch.zeros_like(target))
         score = mc_crps(safe_target, members, mask=None, aggregation="none")
