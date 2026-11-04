@@ -436,6 +436,11 @@ class OATPredictor(BasePredictor):
                 return self.output_transform.inverse(y_hat['pre_oat_output']['samples'])
             return self.output_transform.inverse(y_hat['samples'])
         elif return_as == 'distribution':
+            if hasattr(self.model, "sample_head"):
+                raise ValueError(
+                    "return_as='distribution' is not available when query noise "
+                    "is on: the final output has samples only."
+                )
             y_hat = self(batch, return_loss_and_targets=False)
             y_hat.pop('samples')
             y_hat.pop('pre_oat_output', None)
@@ -657,6 +662,16 @@ def setup_oat_cfg(
             **model_cfg.observation_embedding, n_vars=n_obs_vars
         )
 
+    query_noise_cfg = None
+    if model_cfg.get("query_noise", None) is not None:
+        logger.info("Query noise enabled.")
+        query_noise_cfg = model.QueryNoiseConfig(
+            **{
+                **model_cfg.query_noise,
+                "length_scales_km": tuple(model_cfg.query_noise.length_scales_km),
+            }
+        )
+
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
@@ -667,6 +682,7 @@ def setup_oat_cfg(
         output_head=output_head_cfg,
         learnable_gating=learnable_gating_cfg,
         observation_embedding=observation_embedding_cfg,
+        query_noise=query_noise_cfg,
         num_samples=model_cfg.num_samples,
         pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
         mask_innovations=model_cfg.mask_innovations

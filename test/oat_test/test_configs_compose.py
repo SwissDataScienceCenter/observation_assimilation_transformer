@@ -53,3 +53,20 @@ def test_removed_encoder_option_is_gone(override):
     with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.3"):
         with pytest.raises(Exception, match="Could not find"):
             compose(config_name="config", overrides=[override])
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        "cosmo_peakweather/temp_precip",
+        "era5_meteostat/temp_precip",
+        "cosmo_meteostat/temp_precip",
+    ],
+)
+def test_query_noise_composes_and_resolves_km_per_unit(dataset):
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=["model/query_noise=rff", f"dataset={dataset}"],
+        )
+    assert cfg.model.query_noise.km_per_unit in (0.001, 6371.0)

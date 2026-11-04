@@ -41,3 +41,4 @@ clear_cache: false
 dtype: float32
 
 data_points_for_stats: 4096
+index_coord_km_per_unit: 0.001 # km per index coordinate unit (LV95 metres)

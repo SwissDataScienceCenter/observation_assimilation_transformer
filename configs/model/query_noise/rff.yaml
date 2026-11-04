@@ -1,0 +1,7 @@
+# Coherent field samples at query points (see docs/adr/0001-implicit-generator-for-spatial-dependence.md).
+length_scales_km: [2, 8, 32, 128, 512]
+km_per_unit: ${dataset.index_coord_km_per_unit}
+channels_per_scale: 4
+num_frequencies: 128
+mlp_hidden_layers: 2
+train_members: 8
