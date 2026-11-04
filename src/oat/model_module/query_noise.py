@@ -46,7 +46,17 @@ class NoiseFieldDraw:
 
         Returns:
             Noise values, shape [B, N, M, C].
+
+        Raises:
+            ValueError: If the batch size or coordinate dimension of the
+                coordinates does not match the draw.
         """
+        if coords.shape[0] != self.batch_size or coords.shape[-1] != self.coord_dim:
+            raise ValueError(
+                f"Coordinates have shape {tuple(coords.shape)}. "
+                f"The draw needs batch size {self.batch_size} "
+                f"and coordinate dimension {self.coord_dim}."
+            )
         num_freq = self.omega.shape[3]
         scale = math.sqrt(2.0 / num_freq)
         members = []

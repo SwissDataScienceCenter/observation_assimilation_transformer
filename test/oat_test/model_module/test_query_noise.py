@@ -61,9 +61,12 @@ def test_km_per_unit_scaling():
     assert torch.allclose(e_m, e_km, atol=1e-8)
 
 
-@pytest.mark.parametrize("bad", ["batch", "dim"])
+@pytest.mark.parametrize("bad", ["batch", "dim", "broadcast_batch"])
 def test_evaluate_rejects_mismatched_coords(bad):
-    d = _field().draw(2, 3, 2, torch.device("cpu"), torch.float32)
-    coords = torch.randn(3, 4, 2) if bad == "batch" else torch.randn(2, 4, 3)
-    with pytest.raises(RuntimeError):
+    batch = 1 if bad == "broadcast_batch" else 2
+    d = _field().draw(batch, 3, 2, torch.device("cpu"), torch.float32)
+    coords = torch.randn(3, 4, 3 if bad == "dim" else 2)
+    if bad == "dim":
+        coords = torch.randn(2, 4, 3)
+    with pytest.raises(ValueError):
         d.evaluate(coords)
