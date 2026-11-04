@@ -235,30 +235,52 @@ def variogram_score(
     Returns:
         [B, V] scores. NaN where no valid pair has a nonzero weight.
     """
-    B, S, M, _ = y_hat.shape
+    S = y_hat.shape[1]
     upper = torch.triu(torch.ones(S, S, dtype=torch.bool, device=y_hat.device), 1)
     w_pair = (weights * upper)[..., None]  # [S, S, 1]
     valid = mask > 0.5
-    scores = []
-    for b in range(B):
-        y_b = torch.where(valid[b], y_target[b], torch.zeros_like(y_target[b]))
-        obs_v = (y_b[:, None] - y_b[None]).abs() ** p  # [S, S, V]
-        ens_v = torch.zeros_like(obs_v)
-        for m in range(M):
-            x = y_hat[b, :, m]  # [S, V]
-            ens_v = ens_v + (x[:, None] - x[None]).abs() ** p
-        ens_v = ens_v / M
-        pair = valid[b][:, None] & valid[b][None]  # [S, S, V]
-        w_b = torch.where(pair, w_pair, torch.zeros_like(obs_v))
-        w_sum = w_b.sum(dim=(0, 1))  # [V]
-        num = torch.where(
-            w_b > 0, w_b * (obs_v - ens_v) ** 2, torch.zeros_like(obs_v)
-        ).sum(dim=(0, 1))
-        scores.append(
-            torch.where(
-                w_sum > 0,
-                num / w_sum.clamp(min=1e-30),
-                torch.full_like(num, float("nan")),
-            )
-        )
-    return torch.stack(scores)
+    return torch.stack(
+        [
+            _variogram_score_step(y_target[b], y_hat[b], valid[b], w_pair, p)
+            for b in range(y_hat.shape[0])
+        ]
+    )
+
+
+def _variogram_score_step(
+    y_target: torch.Tensor,
+    y_hat: torch.Tensor,
+    valid: torch.Tensor,
+    w_pair: torch.Tensor,
+    p: float,
+) -> torch.Tensor:
+    """Variogram score for one time step (see ``variogram_score``).
+
+    Args:
+        y_target: [S, V] observations. Entries with valid False can be NaN.
+        y_hat: [S, M, V] ensemble members.
+        valid: [S, V] bool, True for a valid observation.
+        w_pair: [S, S, 1] pair weights, 0 on and below the diagonal.
+        p: Order of the score.
+
+    Returns:
+        [V] scores. NaN where no valid pair has a nonzero weight.
+    """
+    M = y_hat.shape[1]
+    y = torch.where(valid, y_target, torch.zeros_like(y_target))
+    obs_v = (y[:, None] - y[None]).abs() ** p  # [S, S, V]
+    # Loop over the members, so that the peak memory stays at [S, S, V].
+    ens_v = torch.zeros_like(obs_v)
+    for m in range(M):
+        x = y_hat[:, m]  # [S, V]
+        ens_v = ens_v + (x[:, None] - x[None]).abs() ** p
+    ens_v = ens_v / M
+    pair = valid[:, None] & valid[None]  # [S, S, V]
+    w = torch.where(pair, w_pair, torch.zeros_like(obs_v))
+    w_sum = w.sum(dim=(0, 1))  # [V]
+    num = torch.where(w > 0, w * (obs_v - ens_v) ** 2, torch.zeros_like(obs_v)).sum(
+        dim=(0, 1)
+    )
+    return torch.where(
+        w_sum > 0, num / w_sum.clamp(min=1e-30), torch.full_like(num, float("nan"))
+    )
