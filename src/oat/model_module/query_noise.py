@@ -7,6 +7,11 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor, nn
 
+from oat.data_module.support import _to_bounds
+from oat.model_module.activations import get_activation
+from oat.model_module.output_head import OutputHead
+from oat.predictor_module.functional_metrics import mc_crps
+
 
 @dataclass
 class NoiseFieldDraw:
@@ -116,3 +121,88 @@ class RFFNoiseField(nn.Module):
         length = self.length_scales.to(device=device, dtype=dtype)
         omega = xi / length.view(1, 1, -1, 1, 1)
         return NoiseFieldDraw(omega=omega, phase=phase, amplitude=amplitude)
+
+
+class SampleHead(nn.Module):
+    """MLP head that maps a query feature and a noise vector to one sample.
+
+    The model trains this head with the fair ensemble CRPS.
+    The input is the concatenation [h ; eps]. The head copies h for each member.
+    The output for variable v is z_v, or lb + ST-ReLU(z_v - lb) if the support of
+    v has a finite lower bound lb. ST-ReLU gives exact zeros in the forward pass
+    and a gradient of 1 in the backward pass.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        noise_channels: int,
+        output_head: OutputHead,
+        mlp_hidden_layers: int = 2,
+    ) -> None:
+        super().__init__()
+        names = list(output_head.variable_to_distribution)
+        self.variable_names = names
+        lower = [
+            _to_bounds(output_head.distribution_mappers[v].support).lower_bound
+            for v in names
+        ]
+        self.register_buffer("lower_bounds", torch.tensor(lower), persistent=False)
+        self.register_buffer(
+            "loss_scaling",
+            torch.as_tensor(output_head.loss_scaling, dtype=torch.float32).clone(),
+            persistent=False,
+        )
+        # Same loop as MLPTopographyEncoder and PointGlobalEncoder. Keep the copy
+        # until a shared build_mlp helper exists.
+        layers: list[nn.Module] = []
+        width = in_features + noise_channels
+        for _ in range(mlp_hidden_layers):
+            layers += [nn.Linear(width, in_features), get_activation("GELU")]
+            width = in_features
+        layers.append(nn.Linear(width, len(names)))
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, h: Tensor, eps: Tensor) -> Tensor:
+        """Get samples.
+
+        Args:
+            h: Query features, shape [B, N, F].
+            eps: Noise, shape [B, N, M, C].
+
+        Returns:
+            Samples, shape [B, N, M, V].
+        """
+        h_exp = h.unsqueeze(2).expand(-1, -1, eps.shape[2], -1)
+        z = self.mlp(torch.cat([h_exp, eps], dim=-1))
+        lb = self.lower_bounds.to(z.dtype)
+        shifted = z - lb
+        st_relu = shifted + (shifted.clamp(min=0.0) - shifted).detach()
+        return torch.where(torch.isfinite(lb), lb + st_relu, z)
+
+    def loss(
+        self, members: Tensor, target: Tensor, mask: Tensor
+    ) -> tuple[dict[str, Tensor], Tensor]:
+        """Get the fair ensemble CRPS, normalized for each sample.
+
+        Args:
+            members: Samples, shape [B, N, M, V].
+            target: Targets, shape [B, N, V]. Masked entries can be NaN.
+            mask: Valid entries, shape [B, N, V].
+
+        Returns:
+            Detached loss for each variable, and the total loss.
+        """
+        valid = mask > 0.5
+        safe_target = torch.where(valid, target, torch.zeros_like(target))
+        score = mc_crps(safe_target, members, mask=None, aggregation="none")
+        score = torch.where(valid, score, torch.zeros_like(score))
+        per_var: dict[str, Tensor] = {}
+        total = torch.zeros((), device=members.device, dtype=members.dtype)
+        for i, name in enumerate(self.variable_names):
+            loss_v = OutputHead.loss_normalization_per_sample(
+                score[..., i : i + 1], mask[..., i : i + 1]
+            ) * self.loss_scaling[i].to(members.dtype)
+            per_var[name] = loss_v.detach()
+            total = total + loss_v
+        return per_var, total

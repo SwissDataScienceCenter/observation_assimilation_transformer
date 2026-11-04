@@ -3,7 +3,9 @@ import math
 import pytest
 import torch
 
-from oat.model_module.query_noise import RFFNoiseField
+from oat.model_module.output_head import OutputHead
+from oat.model_module.query_noise import RFFNoiseField, SampleHead
+from oat.predictor_module.functional_metrics import mc_crps
 
 
 def _field(scales=(10.0,), km_per_unit=1.0, cps=4, K=128):
@@ -70,3 +72,49 @@ def test_evaluate_rejects_mismatched_coords(bad):
         coords = torch.randn(2, 4, 3)
     with pytest.raises(ValueError):
         d.evaluate(coords)
+
+
+def _head(dists=("normal", "zero_inflated_lognormal")):
+    v2d = {f"v{i}": d for i, d in enumerate(dists)}
+    return SampleHead(in_features=8, noise_channels=4, output_head=OutputHead(8, v2d))
+
+
+def test_sample_head_loss_matches_mc_crps():
+    torch.manual_seed(0)
+    head = _head(("normal",))
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 4))
+    target = torch.randn(2, 4, 1)
+    _, loss = head.loss(y, target, torch.ones(2, 4, 1))
+    assert torch.allclose(loss, mc_crps(target, y, aggregation="all"))
+
+
+def test_sample_head_shape_and_exact_zeros():
+    torch.manual_seed(0)
+    y = _head()(torch.randn(2, 5, 8), torch.randn(2, 5, 6, 4))
+    assert y.shape == (2, 5, 6, 2)
+    assert (y[..., 1] >= 0).all() and (y[..., 1] == 0).any()
+    assert (y[..., 0] < 0).any()
+
+
+def test_straight_through_relu_gives_gradient_for_dry_member():
+    head = _head(("zero_inflated_lognormal",))
+    h = torch.randn(1, 1, 8, requires_grad=True)
+    with torch.no_grad():
+        head.mlp[-1].bias.fill_(-100.0)
+    y = head(h, torch.randn(1, 1, 4, 4))
+    _, loss = head.loss(y, torch.full((1, 1, 1), 2.0), torch.ones(1, 1, 1))
+    loss.backward()
+    assert h.grad.abs().sum() > 0
+
+
+def test_masked_nan_target_gives_finite_loss():
+    head = _head(("normal",))
+    y = head(torch.randn(1, 3, 8), torch.randn(1, 3, 4, 4))
+    target = torch.tensor([[[1.0], [float("nan")], [0.5]]])
+    mask = torch.tensor([[[1.0], [0.0], [1.0]]])
+    per_var, loss = head.loss(y, target, mask)
+    assert torch.isfinite(loss) and set(per_var) == {"v0"}
+
+
+def test_sample_head_does_not_store_output_head():
+    assert not any("output_head" in k for k in _head().state_dict())
