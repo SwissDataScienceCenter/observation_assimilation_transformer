@@ -923,13 +923,21 @@ class OATPlotter:
         import logging
         from itertools import batched
 
-        from oat.predictor_module.functional_metrics import mc_crps, point_mae
+        from oat.predictor_module.functional_metrics import (
+            mc_crps,
+            point_mae,
+            variogram_score,
+            variogram_weights,
+        )
 
         logger = logging.getLogger(__name__)
 
         eval_coords = torch.stack(
             [self.dataset.station_coords[s] for s in eval_station_indices]
         )  # [S, 2]
+        vs_weights = variogram_weights(
+            self.dataset.project_index_coords(eval_coords).to(self.device)
+        )  # [S, S]
 
         S = len(eval_station_indices)
         V = self.dataset.obs_tensor.shape[-1]
@@ -937,6 +945,8 @@ class OATPlotter:
         mae_sum = torch.zeros(S, V, device=self.device)
         mask_count = torch.zeros(S, V, device=self.device)
         nonfinite_count = torch.zeros(S, V, device=self.device)
+        vs_sum = torch.zeros(V, device=self.device)
+        vs_count = torch.zeros(V, device=self.device)
         ref_crps_sum = (
             torch.zeros(S, V, device=self.device) if reference is not None else None
         )
@@ -1005,6 +1015,10 @@ class OATPlotter:
             # Only masked entries change: bad data with mask 1 stays visible.
             y_obs_b = y_obs_b.masked_fill(mask_b == 0, 0.0)
 
+            vs_b = variogram_score(y_obs_b, y_hat_b, mask_b, vs_weights)  # [B, V]
+            vs_sum += torch.nansum(vs_b, dim=0)
+            vs_count += torch.isfinite(vs_b).sum(dim=0)
+
             count_b = mask_b.sum(dim=0)  # [S, V]
             crps_sum += (
                 mc_crps(y_obs_b, y_hat_b, mask_b, aggregation="station") * count_b
@@ -1056,6 +1070,11 @@ class OATPlotter:
             # observation at all. Non-zero here means the model produced
             # bad output, silently averaged out of the metrics above.
             "n_nonfinite": nonfinite_count,
+            # Variogram score [V]: mean over time steps with a valid score.
+            "vs": (vs_sum / vs_count.clamp(min=1)).masked_fill(
+                vs_count == 0, float("nan")
+            ),
+            "vs_count": vs_count,
         }
 
         if reference is not None:

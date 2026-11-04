@@ -9,6 +9,7 @@ from scripts.evaluate_test_set import (
     COSMO_INTERPOLATOR_MODEL,
     INTERPOLATOR_MODEL,
     _base_tag,
+    _build_summary,
     _ckpt_tag,
     _compose_cosmo_interpolator_cfg,
     _cosmo_interpolator_dataset_is_valid,
@@ -187,3 +188,22 @@ def test_holdout_split_error_allows_other_models():
     assert _holdout_split_error("oat_temp_precip", None) is None
     assert _holdout_split_error(INTERPOLATOR_MODEL, None) is None
     assert _holdout_split_error(None, None) is None
+
+
+def test_build_summary_includes_vs():
+    metrics = {
+        **_base_metrics(),
+        "vs": torch.tensor([0.5]),
+        "vs_count": torch.tensor([7.0]),
+    }
+    summary = _build_summary(metrics, ["prcp"])
+    assert summary["vs"] == {"prcp": 0.5}
+    assert summary["vs_count"] == {"prcp": 7}
+    assert isinstance(summary["vs_count"]["prcp"], int)
+
+
+def test_build_summary_without_vs_is_unchanged():
+    summary = _build_summary(_base_metrics(), ["prcp"])
+    assert "vs" not in summary
+    assert "vs_count" not in summary
+    assert set(summary) == {"crps", "mae", "crps_global", "mae_global"}

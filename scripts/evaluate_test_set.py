@@ -301,6 +301,12 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
         )
         logger.info(f"{key:<14}{vals}   (global {metrics[global_key].item():.4f})")
 
+    if "vs" in metrics:
+        vals = "".join(
+            f"{metrics['vs'][i].item():>{col_w}.4f}" for i in range(len(var_names))
+        )
+        logger.info(f"{'vs':<14}{vals}")
+
     if "n_nonfinite" in metrics:
         n_bad = int(metrics["n_nonfinite"].sum().item())
         n_stations_hit = int((metrics["n_nonfinite"] > 0).any(dim=-1).sum().item())
@@ -314,6 +320,37 @@ def _print_summary(metrics: dict, var_names: list[str], logger: logging.Logger) 
                 n_bad,
                 n_stations_hit,
             )
+
+
+def _build_summary(metrics: dict, var_names: list[str]) -> dict:
+    """Build the dict for the .summary.json file."""
+    summary: dict = {}
+    for key in ("crps", "mae", "crpss"):
+        global_key = f"{key}_global"
+        if global_key not in metrics:
+            continue
+        summary[global_key] = metrics[global_key].item()
+        per_var = {
+            var: torch.nanmean(metrics[key][:, vi]).item()
+            for vi, var in enumerate(var_names)
+        }
+        summary[key] = per_var
+    if "n_nonfinite" in metrics:
+        # Count, not an error metric: sum (not nanmean) per variable, plus
+        # the grand total, so a non-zero value can't get lost/averaged away.
+        summary["n_nonfinite_total"] = int(metrics["n_nonfinite"].sum().item())
+        summary["n_nonfinite"] = {
+            var: int(metrics["n_nonfinite"][:, vi].sum().item())
+            for vi, var in enumerate(var_names)
+        }
+    if "vs" in metrics:
+        summary["vs"] = {
+            var: metrics["vs"][vi].item() for vi, var in enumerate(var_names)
+        }
+        summary["vs_count"] = {
+            var: int(metrics["vs_count"][vi].item()) for vi, var in enumerate(var_names)
+        }
+    return summary
 
 
 def _aggregate_station_time(tm: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -511,25 +548,7 @@ def main() -> None:
     pd.DataFrame(rows).to_csv(out_path, index=False)
     logger.info("Saved → %s", out_path)
 
-    summary: dict = {}
-    for key in ("crps", "mae", "crpss"):
-        global_key = f"{key}_global"
-        if global_key not in metrics:
-            continue
-        summary[global_key] = metrics[global_key].item()
-        per_var = {
-            var: torch.nanmean(metrics[key][:, vi]).item()
-            for vi, var in enumerate(var_names)
-        }
-        summary[key] = per_var
-    if "n_nonfinite" in metrics:
-        # Count, not an error metric: sum (not nanmean) per variable, plus
-        # the grand total, so a non-zero value can't get lost/averaged away.
-        summary["n_nonfinite_total"] = int(metrics["n_nonfinite"].sum().item())
-        summary["n_nonfinite"] = {
-            var: int(metrics["n_nonfinite"][:, vi].sum().item())
-            for vi, var in enumerate(var_names)
-        }
+    summary = _build_summary(metrics, var_names)
     summary_path = out_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Saved summary → %s", summary_path)
