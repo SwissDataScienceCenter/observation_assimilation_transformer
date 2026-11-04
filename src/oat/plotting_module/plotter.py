@@ -919,6 +919,9 @@ class OATPlotter:
             Dict with keys "crps", "mae", "crps_global", "mae_global", and
             optionally "crpss", "crpss_global" when *reference* is given.
             Shapes: per-station tensors are [n_eval_stations, n_vars]; globals are scalars.
+            "vs" [V] is the mean variogram score for each variable. "vs_count" [V]
+            is the number of finite scores. "n_nonfinite" is the number of
+            non-finite values that the function removed.
         """
         import logging
         from itertools import batched
@@ -1016,7 +1019,7 @@ class OATPlotter:
             y_obs_b = y_obs_b.masked_fill(mask_b == 0, 0.0)
 
             vs_b = variogram_score(y_obs_b, y_hat_b, mask_b, vs_weights)  # [B, V]
-            vs_sum += torch.nansum(vs_b, dim=0)
+            vs_sum += torch.where(torch.isfinite(vs_b), vs_b, 0).sum(dim=0)
             vs_count += torch.isfinite(vs_b).sum(dim=0)
 
             count_b = mask_b.sum(dim=0)  # [S, V]

@@ -1228,7 +1228,6 @@ def test_compute_station_metrics_variogram_score():
     dataset.station_coords = torch.tensor(
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [2.0, 2.0], [3.0, 1.0]]
     )
-    dataset.project_index_coords.side_effect = lambda c: c
     plotter = OATPlotter(
         predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
     )

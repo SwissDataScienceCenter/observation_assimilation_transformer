@@ -193,6 +193,7 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
     # score = first_term - 0.5 * second_term
     # return (score * valid_locations).sum() / valid_locations.sum()
 
+
 def variogram_weights(coords: torch.Tensor) -> torch.Tensor:
     """Pair weights w_ij = 1 / d_ij for the variogram score.
 

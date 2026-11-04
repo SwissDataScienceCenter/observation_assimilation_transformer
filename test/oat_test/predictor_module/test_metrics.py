@@ -1,4 +1,8 @@
-from oat.predictor_module.functional_metrics import METRICS
+from oat.predictor_module.functional_metrics import (
+    METRICS,
+    variogram_score,
+    variogram_weights,
+)
 
 import torch
 import pytest
@@ -58,14 +62,9 @@ def test_point_mae_with_expanded_samples_matches_contiguous():
     )
 
 
-from oat.predictor_module.functional_metrics import (  # noqa: E402
-    variogram_score,
-    variogram_weights,
-)
-
-
 def test_variogram_weights_lv95_precision():
-    # float32 torch.cdist gives 0.0 for this pair (checked 2026-11-04); float64 must give 500 m
+    # float32 torch.cdist gives 0.0 for this pair (checked 2026-11-04).
+    # float64 must give 500 m.
     c = torch.tensor(
         [[2.6e6, 1.2e6], [2.6e6 + 500.0, 1.2e6], [2.7e6, 1.3e6]], dtype=torch.float32
     )
