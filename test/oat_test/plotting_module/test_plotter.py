@@ -65,6 +65,7 @@ def _make_dataset(
 ):
     ds = MagicMock()
     ds.station_coords = torch.zeros(n_stations, 2)
+    ds.project_index_coords.side_effect = lambda c: c
     ds.obs_tensor = torch.zeros(n_times, n_stations, n_vars)
     ds.obs_mask_tensor = torch.ones(n_times, n_stations, n_vars)
     ds.times = pd.date_range("2022-01-01", periods=n_times, freq="h", tz="UTC")
@@ -1220,6 +1221,30 @@ def test_plot_domain_overview_first_panel_uses_configured_cmap():
     plt.close(fig)
 
 
+def test_compute_station_metrics_variogram_score():
+    n_eval, n_samples, n_vars, n_times = 3, 10, 2, 4
+    predictor = _make_predictor(N_q=n_eval, n_samples=n_samples, n_vars=n_vars)
+    dataset = _make_dataset(n_stations=5, n_times=n_times, n_vars=n_vars)
+    dataset.station_coords = torch.tensor(
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [2.0, 2.0], [3.0, 1.0]]
+    )
+    plotter = OATPlotter(
+        predictor, dataset, obs_station_indices=[0, 1], n_samples=n_samples
+    )
+    torch.manual_seed(0)
+    samples = torch.randn(n_eval, n_samples, n_vars)
+    with patch.object(plotter, "_run_inference", return_value=samples):
+        result = plotter.compute_station_metrics(
+            time_indices=list(range(n_times)),
+            eval_station_indices=[2, 3, 4],
+            batch_size=2,
+        )
+    assert result["vs"].shape == (n_vars,)
+    assert result["vs_count"].shape == (n_vars,)
+    assert torch.equal(result["vs_count"], torch.full((n_vars,), float(n_times)))
+    assert torch.isfinite(result["vs"]).all()
+
+
 def test_compute_station_metrics_returns_expected_keys():
     n_eval = 2
     n_samples = 10
@@ -1242,6 +1267,8 @@ def test_compute_station_metrics_returns_expected_keys():
         "crps_global",
         "mae_global",
         "n_nonfinite",
+        "vs",
+        "vs_count",
     }
     assert result["crps"].shape == (n_eval, n_vars)
     assert result["mae"].shape == (n_eval, n_vars)

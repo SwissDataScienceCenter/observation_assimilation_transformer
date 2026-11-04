@@ -192,3 +192,95 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
     # valid_locations = (mask.sum(dim=-1) > 0).float()
     # score = first_term - 0.5 * second_term
     # return (score * valid_locations).sum() / valid_locations.sum()
+
+
+def variogram_weights(coords: torch.Tensor) -> torch.Tensor:
+    """Pair weights w_ij = 1 / d_ij for the variogram score.
+
+    Args:
+        coords: [S, D] station coordinates.
+
+    Returns:
+        [S, S] weights (dtype of coords). The weight is 0 on the diagonal and
+        for pairs with d_ij = 0.
+    """
+    # Float64 is necessary: float32 cdist gives 0.0 for LV95 stations 500 m apart.
+    c = coords.double()
+    d = torch.cdist(c, c)
+    return torch.where(d > 0, 1.0 / d, torch.zeros_like(d)).to(coords.dtype)
+
+
+def variogram_score(
+    y_target: torch.Tensor,
+    y_hat: torch.Tensor,
+    mask: torch.Tensor,
+    weights: torch.Tensor,
+    p: float = 0.5,
+) -> torch.Tensor:
+    """Variogram score of order p for each batch element and variable.
+
+    VS_p = sum_{i<j} w_ij * (|y_i - y_j|^p - mean_m |x_i,m - x_j,m|^p)^2,
+    with w_ij normalized over the valid pairs. A pair is valid when both
+    stations have mask 1. Lower is better.
+
+    Reference: Scheuerer and Hamill (2015), Mon. Wea. Rev. 143, 1321-1334.
+
+    Args:
+        y_target: [B, S, V] observations. Masked entries can be NaN.
+        y_hat: [B, S, M, V] ensemble members.
+        mask: [B, S, V] float mask, 1 for a valid observation.
+        weights: [S, S] pair weights from ``variogram_weights``.
+        p: Order of the score.
+
+    Returns:
+        [B, V] scores. NaN where no valid pair has a nonzero weight.
+    """
+    S = y_hat.shape[1]
+    upper = torch.triu(torch.ones(S, S, dtype=torch.bool, device=y_hat.device), 1)
+    w_pair = (weights * upper)[..., None]  # [S, S, 1]
+    valid = mask > 0.5
+    return torch.stack(
+        [
+            _variogram_score_step(y_target[b], y_hat[b], valid[b], w_pair, p)
+            for b in range(y_hat.shape[0])
+        ]
+    )
+
+
+def _variogram_score_step(
+    y_target: torch.Tensor,
+    y_hat: torch.Tensor,
+    valid: torch.Tensor,
+    w_pair: torch.Tensor,
+    p: float,
+) -> torch.Tensor:
+    """Variogram score for one time step (see ``variogram_score``).
+
+    Args:
+        y_target: [S, V] observations. Entries with valid False can be NaN.
+        y_hat: [S, M, V] ensemble members.
+        valid: [S, V] bool, True for a valid observation.
+        w_pair: [S, S, 1] pair weights, 0 on and below the diagonal.
+        p: Order of the score.
+
+    Returns:
+        [V] scores. NaN where no valid pair has a nonzero weight.
+    """
+    M = y_hat.shape[1]
+    y = torch.where(valid, y_target, torch.zeros_like(y_target))
+    obs_v = (y[:, None] - y[None]).abs() ** p  # [S, S, V]
+    # Loop over the members, so that the peak memory stays at [S, S, V].
+    ens_v = torch.zeros_like(obs_v)
+    for m in range(M):
+        x = y_hat[:, m]  # [S, V]
+        ens_v = ens_v + (x[:, None] - x[None]).abs() ** p
+    ens_v = ens_v / M
+    pair = valid[:, None] & valid[None]  # [S, S, V]
+    w = torch.where(pair, w_pair, torch.zeros_like(obs_v))
+    w_sum = w.sum(dim=(0, 1))  # [V]
+    num = torch.where(w > 0, w * (obs_v - ens_v) ** 2, torch.zeros_like(obs_v)).sum(
+        dim=(0, 1)
+    )
+    return torch.where(
+        w_sum > 0, num / w_sum.clamp(min=1e-30), torch.full_like(num, float("nan"))
+    )
