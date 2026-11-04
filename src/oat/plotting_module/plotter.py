@@ -501,8 +501,9 @@ class OATPlotter:
         center: tuple[float, float],
         extent: float = 5.0,
         resolution: float = 0.1,
-        plot_type: Literal["mean", "std"] = "mean",
+        plot_type: Literal["mean", "std", "member"] = "mean",
         show_stations: bool = True,
+        member_index: int = 0,
     ) -> Any:
         """Plot a spatial field at a single timestep.
 
@@ -517,19 +518,26 @@ class OATPlotter:
             center: Grid center as (x, y) in the dataset's coordinate frame.
             extent: Half-extent of the grid in coordinate units (default 5.0).
             resolution: Grid spacing in coordinate units (default 0.1).
-            plot_type: "mean" or "std" of the predictive distribution.
+            plot_type: "mean" or "std" of the predictive distribution, or
+                "member" for one single sample. "member" uses the same color
+                scale as "mean".
             show_stations: If True, overlay all dataset stations as scatter
                 markers, distinguishing observed (in context, mask==1) from
                 not observed.
+            member_index: Index of the sample to show when plot_type is
+                "member". Other plot types ignore it.
 
         Returns:
             The QuadMesh returned by ``ax.pcolormesh``.
 
         Raises:
-            ValueError: If plot_type is not "mean" or "std".
+            ValueError: If plot_type is not "mean", "std" or "member", or if
+                member_index is not smaller than the number of samples.
         """
-        if plot_type not in ("mean", "std"):
-            raise ValueError(f"plot_type must be 'mean' or 'std', got {plot_type!r}.")
+        if plot_type not in ("mean", "std", "member"):
+            raise ValueError(
+                f"plot_type must be 'mean', 'std' or 'member', got {plot_type!r}."
+            )
 
         var_idx = self.predictor.var_to_indx[var]
         var_cfg = self._get_var_plot_config(var)
@@ -546,16 +554,24 @@ class OATPlotter:
         samples = self._run_inference(time_idx, query_coords)
         var_samples = samples[:, :, var_idx]  # [N_q, n_samples]
 
-        if plot_type == "mean":
+        if plot_type == "member":
+            if not 0 <= member_index < var_samples.shape[1]:
+                raise ValueError(
+                    f"member_index must be in [0, {var_samples.shape[1]}), "
+                    f"got {member_index}."
+                )
+            field = var_samples[:, member_index].detach().cpu().numpy()
+        elif plot_type == "mean":
             field = var_samples.mean(dim=1).detach().cpu().numpy()
         else:
             field = var_samples.std(dim=1).detach().cpu().numpy()
 
         field = field.reshape(y_grid.shape)
 
-        cmap = var_cfg.get("cmap", "viridis") if plot_type == "mean" else None
-        vmin = var_cfg.get("vmin") if plot_type == "mean" else None
-        vmax = var_cfg.get("vmax") if plot_type == "mean" else None
+        in_data_units = plot_type in ("mean", "member")
+        cmap = var_cfg.get("cmap", "viridis") if in_data_units else None
+        vmin = var_cfg.get("vmin") if in_data_units else None
+        vmax = var_cfg.get("vmax") if in_data_units else None
         mesh = ax.pcolormesh(
             xs, ys, field, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto"
         )
@@ -595,7 +611,7 @@ class OATPlotter:
                     sq_x.append(sx)
                     sq_y.append(sy)
 
-            if plot_type == "mean" and obs_vals:
+            if in_data_units and obs_vals:
                 obs_colors = mesh.cmap(mesh.norm(np.array(obs_vals)))
             else:
                 obs_colors = "white"
