@@ -7,13 +7,15 @@ import pytest
 import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
-from oat_test.conftest import FIELD_ROLES
+from omegaconf import open_dict
+from oat_test.conftest import FIELD_ROLES, OBS_VARS
 from torch.distributions import constraints
 
 from oat.data_module.support import VariableSupport
 from oat.data_module.transform import IdentityTransform
 from oat.model_module.distributions import _ALL_DISTRIBUTIONS
-from oat.model_module.model import OATConfig
+from oat.model_module.fusion_layer import ObservationEmbedding
+from oat.model_module.model import ObservationEmbeddingConfig, OATConfig
 from oat.predictor_module import OATPredictor
 from scripts.train_model import setup_oat_cfg
 
@@ -221,6 +223,7 @@ def test_default_hydra_config(transform_fixture):
 
     assert isinstance(oat_cfg, OATConfig)
     assert oat_cfg.output_head.in_features == cfg.model.d_model
+    assert oat_cfg.observation_embedding is None
     assert oat_cfg.output_head.variable_to_distribution == dict(
         cfg.dataset.obs_variable_to_distribution
     )
@@ -508,3 +511,138 @@ def test_predict_step_pre_oat_raises_for_uninformed(
     )
     with pytest.raises(ValueError, match="pre_oat"):
         pred.predict_step(batch_fixture, batch_idx=0, n_samples=3, stage="pre_oat")
+
+
+def _make_oat_predictor(model_cfg, transform_fixture) -> OATPredictor:
+    input_transform, output_transform = transform_fixture
+    return OATPredictor(
+        field_roles=FIELD_ROLES,
+        oat_model_cfg=model_cfg,
+        input_transform=input_transform,
+        output_transform=output_transform,
+        output_var_names=list(model_cfg.output_head.variable_to_distribution.keys()),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+
+@pytest.mark.parametrize("assim_as", ["innovation", "target"])
+def test_predictor_train_step_with_observation_embedding(
+    batch_fixture, transform_fixture, model_cfg_fixture, assim_as
+):
+    model_cfg_fixture.output_head.observation_assimilation_as = assim_as
+    model_cfg_fixture.observation_embedding = ObservationEmbeddingConfig(
+        n_vars=len(OBS_VARS), d_embed=4, hidden_channels=8
+    )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
+    assert isinstance(pred.model.obs_embedding, ObservationEmbedding)
+
+    batch = pred._normalize_batch(batch_fixture)
+    # Partial observation: var_1 missing at half of the context stations.
+    n_ctx = batch["observation_data"]["mask_obs"].shape[1]
+    batch["observation_data"]["mask_obs"][:, : n_ctx // 2, 1] = 0.0
+    _, _, loss, _, _ = pred.forward(batch, return_loss_and_targets=True)
+    loss.backward()
+    assert torch.isfinite(loss)
+    grad = pred.model.obs_embedding.missing_token.grad
+    assert grad is not None and grad[1].abs().sum() > 0  # token of var_1 is used
+    assert grad[0].abs().sum() == 0  # var_0 is never missing
+
+
+@pytest.mark.parametrize("use_embedding", [False, True])
+def test_missing_obs_differs_from_observed_zero_only_with_embedding(
+    batch_fixture, transform_fixture, model_cfg_fixture, use_embedding
+):
+    model_cfg_fixture.output_head.observation_assimilation_as = "target"
+    model_cfg_fixture.learnable_gating = None
+    if use_embedding:
+        model_cfg_fixture.observation_embedding = ObservationEmbeddingConfig(
+            n_vars=len(OBS_VARS), d_embed=4, hidden_channels=8
+        )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture).eval()
+    batch = pred._normalize_batch(batch_fixture)
+    obs_data = batch["observation_data"]
+    obs_data["obs"][..., 1] = 0.0
+
+    outputs = []
+    for mask_value in (1.0, 0.0):
+        obs_data["mask_obs"][..., 1] = mask_value
+        with torch.no_grad():
+            out, _ = pred.model._forward(
+                global_data=batch["global_data"],
+                observation_data=obs_data,
+                query_data=batch["query_data"],
+            )
+        outputs.append(out)
+
+    if use_embedding:
+        assert not torch.allclose(outputs[0], outputs[1])
+    else:
+        # Current zero-fill behaviour: "missing" equals "observed 0".
+        assert torch.equal(outputs[0], outputs[1])
+
+
+def _compose_cfg(overrides: list[str]):
+    config_dir = str(Path(__file__).resolve().parents[3] / "configs")
+    with initialize_config_dir(config_dir=config_dir, version_base="1.3"):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_hydra_config_with_observation_embedding(transform_fixture):
+    input_transform, output_transform = transform_fixture
+    cfg = _compose_cfg(["model/observation_embedding=default"])
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding == ObservationEmbeddingConfig(
+        n_vars=len(cfg.dataset.obs_vars),
+        d_embed=8,
+        hidden_channels=16,
+        activation="GELU",
+    )
+    pred = OATPredictor(
+        oat_model_cfg=oat_cfg,
+        input_transform=input_transform,
+        output_transform=output_transform,
+        output_var_names=cfg.dataset.obs_vars,
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+    assert isinstance(pred.model.obs_embedding, ObservationEmbedding)
+
+
+def test_setup_oat_cfg_without_observation_embedding_key():
+    # Copy an old checkpoint config, which has no observation_embedding key.
+    cfg = _compose_cfg([])
+    with open_dict(cfg.model):
+        cfg.model.pop("observation_embedding", None)
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding is None
+
+
+def test_nan_at_masked_obs_gives_finite_gradients_in_innovation_mode(
+    batch_fixture, transform_fixture, model_cfg_fixture
+):
+    model_cfg_fixture.output_head.observation_assimilation_as = "innovation"
+    model_cfg_fixture.observation_embedding = ObservationEmbeddingConfig(
+        n_vars=len(OBS_VARS), d_embed=4, hidden_channels=8
+    )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
+    batch = pred._normalize_batch(batch_fixture)
+    obs_data = batch["observation_data"]
+    obs_data["mask_obs"][:, 0, 1] = 0.0
+    obs_data["obs"][:, 0, 1] = float("nan")
+    _, _, loss, _, _ = pred.forward(batch, return_loss_and_targets=True)
+    loss.backward()
+    assert torch.isfinite(loss)
+    for name, p in pred.model.named_parameters():
+        if p.grad is not None:
+            assert torch.isfinite(p.grad).all(), name
+
+
+def test_setup_oat_cfg_with_empty_observation_embedding_uses_defaults():
+    cfg = _compose_cfg([])
+    with open_dict(cfg.model):
+        cfg.model.observation_embedding = {}
+    oat_cfg = setup_oat_cfg(cfg, logging.getLogger(__name__))
+    assert oat_cfg.observation_embedding == ObservationEmbeddingConfig(
+        n_vars=len(cfg.dataset.obs_vars)
+    )

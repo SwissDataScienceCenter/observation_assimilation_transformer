@@ -650,6 +650,13 @@ def setup_oat_cfg(
             hidden_channels=d_model // 2,
             out_channels=d_model)
 
+    observation_embedding_cfg = None
+    if model_cfg.get("observation_embedding", None) is not None:
+        logger.info("Observation embedding enabled.")
+        observation_embedding_cfg = model.ObservationEmbeddingConfig(
+            **model_cfg.observation_embedding, n_vars=n_obs_vars
+        )
+
     oat_config = model.OATConfig(
         global_encoder=global_encoder_cfg,
         topographic_encoder=topography_encoder_cfg,
@@ -659,6 +666,7 @@ def setup_oat_cfg(
         transformer=transformer_cfg,
         output_head=output_head_cfg,
         learnable_gating=learnable_gating_cfg,
+        observation_embedding=observation_embedding_cfg,
         num_samples=model_cfg.num_samples,
         pre_oat_loss_weight=model_cfg.pre_oat_loss_weight,
         mask_innovations=model_cfg.mask_innovations

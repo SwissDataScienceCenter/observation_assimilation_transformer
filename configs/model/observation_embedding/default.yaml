@@ -1,0 +1,5 @@
+# Per-variable observation embedding with a learned missing token.
+# n_vars: set at runtime (number of obs variables)
+d_embed: 8
+hidden_channels: 16
+activation: GELU

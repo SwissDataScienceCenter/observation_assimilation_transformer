@@ -316,3 +316,62 @@ class LearnableGating(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.ffnn(x)
+
+class ObservationEmbedding(nn.Module):
+    """Embed each observation variable, with a learned token for missing values.
+
+    Each variable v has its own MLP ``1 -> hidden_channels -> d_embed``. Where the
+    mask is 0, the layer uses the learned vector ``missing_token[v]`` instead of
+    the MLP output. Thus a missing value is never the same as an observed value,
+    and the value at a masked entry has no effect (it can also be NaN).
+
+    Args:
+        n_vars: Number of observation variables V.
+        d_embed: Embedding size for each variable.
+        hidden_channels: Hidden size of each per-variable MLP.
+        activation: Activation name for ``get_activation``.
+
+    Shapes:
+        obs, mask: [..., V]. ``mask > 0.5`` means observed.
+        output: [..., V * d_embed], variables in input order.
+    """
+
+    def __init__(
+        self,
+        n_vars: int,
+        d_embed: int = 8,
+        hidden_channels: int = 16,
+        activation: str = "GELU",
+    ) -> None:
+        super().__init__()
+        self.n_vars = n_vars
+        self.d_embed = d_embed
+        self.out_channels = n_vars * d_embed
+        # One MLP for each variable, stacked on dim 0.
+        self.w1 = nn.Parameter(torch.empty(n_vars, hidden_channels))  # [V, H]
+        self.b1 = nn.Parameter(torch.empty(n_vars, hidden_channels))  # [V, H]
+        self.w2 = nn.Parameter(torch.empty(n_vars, hidden_channels, d_embed))
+        self.b2 = nn.Parameter(torch.empty(n_vars, d_embed))  # [V, D]
+        self.missing_token = nn.Parameter(torch.empty(n_vars, d_embed))  # [V, D]
+        self.act = get_activation(activation)
+
+        # nn.Linear default init: U(-1/sqrt(fan_in), 1/sqrt(fan_in)).
+        bound2 = hidden_channels**-0.5
+        nn.init.uniform_(self.w1, -1.0, 1.0)  # fan_in = 1
+        nn.init.uniform_(self.b1, -1.0, 1.0)
+        nn.init.uniform_(self.w2, -bound2, bound2)  # fan_in = hidden_channels
+        nn.init.uniform_(self.b2, -bound2, bound2)
+        nn.init.normal_(self.missing_token, std=0.02)
+
+    def forward(self, obs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        observed = (mask > 0.5).unsqueeze(-1)  # [..., V, 1]
+        # Set masked inputs to 0 before the MLP, so NaN values give no NaN gradient.
+        obs_v = obs.unsqueeze(-1)
+        y = torch.where(observed, obs_v, torch.zeros_like(obs_v))
+         #  Scale each variable's weights by its scalar value, add bias, activate.
+        h = self.act(y * self.w1 + self.b1)  # [..., V, H]
+        # Per-variable second layer: e[..., v, :] = h[..., v, :] @ w2[v]  (no mixing across variables)
+        e = torch.einsum("...vh,vhd->...vd", h, self.w2) + self.b2  # [..., V, D]
+        # Insert missing token where not observed
+        e = torch.where(observed, e, self.missing_token)
+        return e.flatten(-2)

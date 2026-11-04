@@ -100,6 +100,19 @@ class LearnableGatingConfig:
 
 
 @dataclass
+class ObservationEmbeddingConfig:
+    """Configuration for the per-variable observation embedding.
+
+    Each variable gets its own MLP. A learned token replaces masked values.
+    """
+
+    n_vars: int  # data-dependent, must be set explicitly
+    d_embed: int = 8
+    hidden_channels: int = 16
+    activation: str = "GELU"
+
+
+@dataclass
 class TransformerConfig:
     """Configuration for OAT transformer block (Eq. 17-25)."""
 
@@ -151,6 +164,7 @@ class OATConfig:
     masking: MaskingConfig
     output_head: OutputHeadConfig
     learnable_gating: LearnableGatingConfig | None = None
+    observation_embedding: ObservationEmbeddingConfig | None = None
     num_samples: int = 100
     pre_oat_loss_weight: float = 0.0
     mask_innovations: bool = True
@@ -450,6 +464,8 @@ class OAT(UninformedOAT):
     4. Fusion: Z = F([Znwp || Zξ], τ)  [Eq. 6-7]
     5. Innovation: δy = H(Z, y)  [Eq. 8-12]
     6. Station tokens: Skv = Fusion(Z, δy, τ)  [Eq. 16 - initial encoding]
+       (optional: δy is first embedded per variable, with a learned token
+       for missing values; see ObservationEmbedding)
     7. Station encoding + Attention: [Eq. 16-25]
        - Encoder self-attention refines Skv (this IS Encstation from Eq. 16)
        - Decoder cross-attention: Z̃ = Attn(Q=Zq, K=V=Skv)
@@ -496,10 +512,21 @@ class OAT(UninformedOAT):
         # Extract dimensions
         d_model = config.transformer.d_model
 
+        # Optional per-variable observation embedding with a learned missing token.
+        obs_channels = self.output_head.target_features
+        if config.observation_embedding is not None:
+            self.obs_embedding = fusion_layer.ObservationEmbedding(
+                n_vars=config.observation_embedding.n_vars,
+                d_embed=config.observation_embedding.d_embed,
+                hidden_channels=config.observation_embedding.hidden_channels,
+                activation=config.observation_embedding.activation,
+            )
+            obs_channels = self.obs_embedding.out_channels
+
         # Fusion layer 2: Uninformed token + Innovation → Initial station token
         # Note: Full station encoding (Eq. 16) completed by transformer encoder
         self.fusion_layer2 = fusion_layer.GatedLinearUnitFusionLayer(
-            in_channels=[d_model, self.output_head.target_features],
+            in_channels=[d_model, obs_channels],
             out_channels=config.innovation_fusion.out_channels,
             hidden_channels=config.innovation_fusion.hidden_channels,
             cond_dim=config.innovation_fusion.cond_dim,
@@ -717,11 +744,21 @@ class OAT(UninformedOAT):
         )
 
         # Step 2: Compute innovation at stations (Eq. 8-12)
+        obs = observation_data["obs"]
+        if hasattr(self, "obs_embedding"):
+            # Set masked values to 0 before the innovation, so a NaN at a masked
+            # entry gives no NaN gradient in the innovation computation.
+            obs = torch.where(
+                observation_data["mask_obs"] > 0.5, obs, torch.zeros_like(obs)
+            )
         innovation = self.output_head.compute_innovation(
             uninformed_kv_token,
-            observation_data["obs"],
+            obs,
             mask=observation_data["mask_obs"] if self.mask_innovations else None,
         )
+        if hasattr(self, "obs_embedding"):
+            # Replace masked values with the learned missing token of each variable.
+            innovation = self.obs_embedding(innovation, observation_data["mask_obs"])
 
         # Step 3: Create initial station tokens with innovation (Eq. 16 - fusion)
         # Note: Full station encoding happens in transformer encoder via self-attention
