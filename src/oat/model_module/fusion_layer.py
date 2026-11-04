@@ -347,14 +347,21 @@ class ObservationEmbedding(nn.Module):
         self.n_vars = n_vars
         self.d_embed = d_embed
         self.out_channels = n_vars * d_embed
-        lin1 = [nn.Linear(1, hidden_channels) for _ in range(n_vars)]
-        lin2 = [nn.Linear(hidden_channels, d_embed) for _ in range(n_vars)]
-        self.w1 = nn.Parameter(torch.stack([m.weight[:, 0] for m in lin1]))
-        self.b1 = nn.Parameter(torch.stack([m.bias for m in lin1]))
-        self.w2 = nn.Parameter(torch.stack([m.weight.T for m in lin2]))
-        self.b2 = nn.Parameter(torch.stack([m.bias for m in lin2]))
+        # One MLP for each variable, stacked on dim 0.
+        self.w1 = nn.Parameter(torch.empty(n_vars, hidden_channels))  # [V, H]
+        self.b1 = nn.Parameter(torch.empty(n_vars, hidden_channels))  # [V, H]
+        self.w2 = nn.Parameter(torch.empty(n_vars, hidden_channels, d_embed))
+        self.b2 = nn.Parameter(torch.empty(n_vars, d_embed))  # [V, D]
+        self.missing_token = nn.Parameter(torch.empty(n_vars, d_embed))  # [V, D]
         self.act = get_activation(activation)
-        self.missing_token = nn.Parameter(torch.randn(n_vars, d_embed) * 0.02)
+
+        # nn.Linear default init: U(-1/sqrt(fan_in), 1/sqrt(fan_in)).
+        bound2 = hidden_channels**-0.5
+        nn.init.uniform_(self.w1, -1.0, 1.0)  # fan_in = 1
+        nn.init.uniform_(self.b1, -1.0, 1.0)
+        nn.init.uniform_(self.w2, -bound2, bound2)  # fan_in = hidden_channels
+        nn.init.uniform_(self.b2, -bound2, bound2)
+        nn.init.normal_(self.missing_token, std=0.02)
 
     def forward(self, obs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         observed = (mask > 0.5).unsqueeze(-1)  # [..., V, 1]
