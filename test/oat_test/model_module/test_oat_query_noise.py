@@ -73,14 +73,16 @@ def test_noise_on_loss_finite_and_gradients_reach_head_and_decoder(
 ):
     cfg = _noise_on(model_cfg_fixture)
     model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
-    out, per_var, loss = model.forward_with_loss(
+    out, _, loss = model.forward_with_loss(
         batch["global_data"],
         batch["observation_data"],
         batch["query_data"],
         target,
         mask,
+        return_pre_oat_output=True,
     )
     assert torch.isfinite(loss)
+    assert "pre_oat_output" in out
     assert out["samples"].shape == (2, 5, cfg.num_samples, 2)
     loss.backward()
     for module in (model.sample_head, model.oat_block):

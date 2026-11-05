@@ -67,7 +67,7 @@ def test_km_per_unit_scaling():
 def test_evaluate_rejects_mismatched_coords(bad):
     batch = 1 if bad == "broadcast_batch" else 2
     d = _field().draw(batch, 3, 2, torch.device("cpu"), torch.float32)
-    coords = torch.randn(3, 4, 3 if bad == "dim" else 2)
+    coords = torch.randn(3, 4, 2)
     if bad == "dim":
         coords = torch.randn(2, 4, 3)
     with pytest.raises(ValueError):
@@ -114,6 +114,9 @@ def test_masked_nan_target_gives_finite_loss():
     mask = torch.tensor([[[1.0], [0.0], [1.0]]])
     per_var, loss = head.loss(y, target, mask)
     assert torch.isfinite(loss) and set(per_var) == {"v0"}
+    loss.backward()
+    grads = [p.grad for p in head.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
 
 
 def test_sample_head_does_not_store_output_head():
