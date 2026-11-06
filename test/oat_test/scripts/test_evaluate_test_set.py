@@ -15,6 +15,7 @@ from scripts.evaluate_test_set import (
     _cosmo_interpolator_dataset_is_valid,
     _exclude_context,
     _holdout_split_error,
+    _missing_runs,
     _override_split,
     _print_summary,
     _sibling_checkpoint,
@@ -207,3 +208,72 @@ def test_build_summary_without_vs_is_unchanged():
     assert "vs" not in summary
     assert "vs_count" not in summary
     assert set(summary) == {"crps", "mae", "crps_global", "mae_global"}
+
+
+def _registry_fixture(tmp_path):
+    """Make a small registry with two checkpoint files on disk."""
+    ckpt_root = tmp_path / "ckpts"
+    for rel in ("oat/run_a/best.ckpt", "oat/run_b/best.ckpt", "oat/run_h/best.ckpt"):
+        (ckpt_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (ckpt_root / rel).touch()
+    registry = {
+        "cosmo_peakweather": {
+            "interpolator": "interpolator",
+            "model_a": "oat/run_a/best.ckpt",
+            "model_b": "oat/run_b/best.ckpt",
+            "not_set": None,
+            "not_on_disk": "oat/run_x/best.ckpt",
+        },
+        "era5_meteostat": {
+            "oat_spatial_holdout_temp_precip": "oat/run_h/best.ckpt",
+            "cosmo_interpolator": "cosmo_interpolator",
+        },
+    }
+    out_dir = tmp_path / "results"
+    out_dir.mkdir()
+    return registry, ckpt_root, out_dir
+
+
+def test_missing_runs_skips_evaluated_null_and_absent_checkpoints(tmp_path):
+    registry, ckpt_root, out_dir = _registry_fixture(tmp_path)
+    (out_dir / "run_a_metrics_test.csv").touch()
+    runs = _missing_runs(
+        registry, ["cosmo_peakweather"], "test", False, out_dir, ckpt_root
+    )
+    assert runs == [
+        ("cosmo_peakweather", "interpolator", None),
+        ("cosmo_peakweather", "model_b", None),
+    ]
+
+
+def test_missing_runs_sets_holdout_split_for_holdout_models(tmp_path):
+    registry, ckpt_root, out_dir = _registry_fixture(tmp_path)
+    (out_dir / "cosmo_interpolator_era5_meteostat_metrics_test.csv").touch()
+    runs = _missing_runs(registry, None, "test", False, out_dir, ckpt_root)
+    holdout = [r for r in runs if r[0] == "era5_meteostat"]
+    assert holdout == [
+        ("era5_meteostat", "oat_spatial_holdout_temp_precip", "spatial_region_holdout"),
+        ("era5_meteostat", "cosmo_interpolator", "spatial_region_holdout"),
+    ]
+    (out_dir / "run_h_spatial_region_holdout_metrics_test.csv").touch()
+    (
+        out_dir / "cosmo_interpolator_era5_meteostat_spatial_region_holdout"
+        "_metrics_test.csv"
+    ).touch()
+    assert not [
+        r
+        for r in _missing_runs(registry, None, "test", False, out_dir, ckpt_root)
+        if r[0] == "era5_meteostat"
+    ]
+
+
+def test_missing_runs_uses_split_and_nocontext_in_file_name(tmp_path):
+    registry, ckpt_root, out_dir = _registry_fixture(tmp_path)
+    (out_dir / "run_a_metrics_test.csv").touch()
+    (out_dir / "run_b_nocontext_metrics_val.csv").touch()
+    runs = _missing_runs(
+        registry, ["cosmo_peakweather"], "val", True, out_dir, ckpt_root
+    )
+    models = [r[1] for r in runs]
+    assert "model_a" in models
+    assert "model_b" not in models

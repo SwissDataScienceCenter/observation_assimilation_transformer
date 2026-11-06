@@ -7,6 +7,11 @@
 #   bash scripts/submit_evaluate_test_set.sh --dataset cosmo_peakweather
 #   bash scripts/submit_evaluate_test_set.sh --dataset cosmo_peakweather --model oat_temp_precip
 #   bash scripts/submit_evaluate_test_set.sh --env uv
+#   bash scripts/submit_evaluate_test_set.sh --missing
+#   bash scripts/submit_evaluate_test_set.sh --missing --dataset era5_meteostat
+#
+# --missing submits jobs only for entries without a result CSV in data/results.
+# It also sets --split-config spatial_region_holdout for the holdout models.
 #
 # Any unknown flags (e.g. --split val, --n-samples 50) are forwarded to
 # evaluate_test_set.py for every submitted job.
@@ -17,6 +22,7 @@ REGISTRY="$PROJECT_ROOT/configs/checkpoints.yaml"
 FILTER_DATASET=""
 FILTER_MODEL=""
 ENV="poetry"
+MISSING=""
 EVAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -24,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --dataset) FILTER_DATASET="$2"; shift 2 ;;
         --model)   FILTER_MODEL="$2";   shift 2 ;;
         --env)     ENV="$2";            shift 2 ;;
+        --missing) MISSING=1;           shift ;;
         *)         EVAL_ARGS+=("$1");   shift ;;
     esac
 done
@@ -36,6 +43,19 @@ else
     echo "Unknown environment: $ENV" >&2; exit 1
 fi
 
+if [[ -n "$MISSING" ]]; then
+    if [[ -n "$FILTER_MODEL" ]]; then
+        echo "Do not use --missing with --model" >&2; exit 1
+    fi
+    # The other flags (for example --split val) change which result file counts.
+    PAIRS=$(cd "$PROJECT_ROOT" && "$VENV_PATH/bin/python" -m scripts.evaluate_test_set \
+        --list-missing ${FILTER_DATASET:+--dataset "$FILTER_DATASET"} "${EVAL_ARGS[@]}") \
+        || { echo "Could not list the missing runs" >&2; exit 1; }
+    if [[ -z "$PAIRS" ]]; then
+        echo "All registry entries have results. Nothing to submit." >&2
+        exit 0
+    fi
+else
 PAIRS=$(python3 - <<PYEOF
 import yaml
 with open("$REGISTRY") as f:
@@ -64,6 +84,7 @@ for dataset, models in (registry or {}).items():
         print(f"{dataset}\tinterpolator")
 PYEOF
 )
+fi
 
 if [[ -z "$PAIRS" ]]; then
     echo "No checkpoints to submit (check filters and null entries in $REGISTRY)" >&2
@@ -74,7 +95,8 @@ mkdir -p "$PROJECT_ROOT/slurm_logs/evaluation"
 
 EXTRA="${EVAL_ARGS[*]}"
 
-while IFS=$'\t' read -r dataset model; do
+while IFS=$'\t' read -r dataset model split_config; do
+    split_arg="${split_config:+--split-config '${split_config}'}"
     log_prefix="$PROJECT_ROOT/slurm_logs/evaluation/${dataset}_${model}"
     job_id=$(sbatch --parsable \
         --job-name="eval_${dataset}_${model}" \
@@ -86,6 +108,6 @@ while IFS=$'\t' read -r dataset model; do
         --time=02:00:00 \
         --output="${log_prefix}_%j.log" \
         --error="${log_prefix}_%j.err" \
-        --wrap="source '${VENV_PATH}/bin/activate' && cd '${PROJECT_ROOT}' && python -m scripts.evaluate_test_set --dataset '${dataset}' --model '${model}' ${EXTRA}")
+        --wrap="source '${VENV_PATH}/bin/activate' && cd '${PROJECT_ROOT}' && python -m scripts.evaluate_test_set --dataset '${dataset}' --model '${model}' ${split_arg} ${EXTRA}")
     echo "Submitted job ${job_id}: ${dataset} / ${model}"
 done <<< "$PAIRS"
