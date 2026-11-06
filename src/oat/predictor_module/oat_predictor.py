@@ -461,14 +461,21 @@ class OATPredictor(BasePredictor):
             self.log(f'{prefix}_loss_{var_name}', loss_val,
                      prog_bar=False, on_step=on_step, on_epoch=on_epoch)
 
-    def _log_loss_vs(self, y_hat: dict, prefix: str, on_step: bool, on_epoch: bool) -> None:
+    def _log_loss_vs(
+        self, y_hat: dict[str, Any], prefix: str, on_step: bool, on_epoch: bool
+    ) -> None:
         """
         Log the variogram score of each variable as `{prefix}_loss_vs_{var}`.
         The model returns `loss_vs` only when `vs_weight` is above zero.
         """
         for var_name, vs_val in y_hat.get("loss_vs", {}).items():
-            self.log(f"{prefix}_loss_vs_{var_name}", vs_val,
-                     prog_bar=False, on_step=on_step, on_epoch=on_epoch)
+            self.log(
+                f"{prefix}_loss_vs_{var_name}",
+                vs_val,
+                prog_bar=False,
+                on_step=on_step,
+                on_epoch=on_epoch,
+            )
 
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 

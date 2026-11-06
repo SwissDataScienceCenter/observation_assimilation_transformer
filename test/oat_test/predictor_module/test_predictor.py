@@ -692,7 +692,9 @@ def test_predict_step_distribution_raises_with_query_noise(
         pred.predict_step(batch_fixture, 0, return_as="distribution")
 
 
-def _logged_names_for_vs(batch_fixture, transform_fixture, model_cfg_fixture, vs_weight):
+def _logged_names_for_vs(
+    batch_fixture, transform_fixture, model_cfg_fixture, vs_weight
+):
     model_cfg_fixture.pre_oat_loss_weight = 0.1
     model_cfg_fixture.query_noise = QueryNoiseConfig(
         length_scales_km=(2.0, 8.0),
@@ -707,12 +709,10 @@ def _logged_names_for_vs(batch_fixture, transform_fixture, model_cfg_fixture, vs
     pred.log = MagicMock()
     pred.training_step(batch=batch_fixture, batch_idx=0)
     pred.validation_step(batch=batch_fixture, batch_idx=0)
-    return [
-        c.args[0] if c.args else c.kwargs["name"]
-        for c in pred.log.call_args_list
-    ], list(
-        model_cfg_fixture.output_head.variable_to_distribution.keys()
-    )
+    names = [
+        c.args[0] if c.args else c.kwargs["name"] for c in pred.log.call_args_list
+    ]
+    return names, list(model_cfg_fixture.output_head.variable_to_distribution)
 
 
 def test_train_and_val_step_log_vs_when_on(
