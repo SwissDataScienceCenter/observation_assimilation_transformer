@@ -662,6 +662,8 @@ def test_hydra_config_with_query_noise():
         num_frequencies=128,
         mlp_hidden_layers=2,
         train_members=8,
+        vs_weight=0.0,
+        vs_p=0.5,
     )
 
 

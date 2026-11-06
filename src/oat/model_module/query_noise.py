@@ -138,8 +138,12 @@ class SampleHead(nn.Module):
         noise_channels: int,
         output_head: OutputHead,
         mlp_hidden_layers: int = 2,
+        vs_weight: float = 0.0,
+        vs_p: float = 0.5,
     ) -> None:
         super().__init__()
+        self.vs_weight = vs_weight
+        self.vs_p = vs_p
         names = list(output_head.variable_to_distribution)
         self.variable_names = names
         lower = [
@@ -180,31 +184,62 @@ class SampleHead(nn.Module):
         return torch.where(torch.isfinite(lb), lb + st_relu, z)
 
     def loss(
-        self, members: Tensor, target: Tensor, mask: Tensor
-    ) -> tuple[dict[str, Tensor], Tensor]:
-        """Get the fair ensemble CRPS, normalized for each sample.
+        self,
+        members: Tensor,
+        target: Tensor,
+        mask: Tensor,
+        coords_km: Tensor | None = None,
+    ) -> tuple[dict[str, Tensor], Tensor, dict[str, Tensor]]:
+        """Get the fair ensemble CRPS plus the optional variogram score.
+
+        The CRPS is normalized for each sample. For each variable v, the loss is
+        (L_crps_v + vs_weight * L_vs_v) * loss_scaling_v.
 
         Args:
             members: Samples, shape [B, N, M, V].
             target: Targets, shape [B, N, V]. Masked entries can be NaN.
             mask: Valid entries, shape [B, N, V].
+            coords_km: Query coordinates in km, shape [B, N, D]. The model needs
+                them only if vs_weight is more than 0.
 
         Returns:
-            Detached loss for each variable, and the total loss.
+            Detached loss for each variable, the total loss, and the detached
+            variogram score L_vs_v for each variable. The last value is an empty
+            dict if vs_weight is 0.
         """
         # Import here: oat.predictor_module imports model.py, which imports this file.
-        from oat.predictor_module.functional_metrics import mc_crps
+        from oat.predictor_module.functional_metrics import (
+            fair_variogram_score,
+            mc_crps,
+        )
 
+        use_vs = self.vs_weight > 0
+        if use_vs and coords_km is None:
+            raise ValueError("coords_km is needed when vs_weight is more than 0.")
         valid = mask > 0.5
         safe_target = torch.where(valid, target, torch.zeros_like(target))
         score = mc_crps(safe_target, members, mask=None, aggregation="none")
         score = torch.where(valid, score, torch.zeros_like(score))
+        vs_score = has_pair = None
+        if use_vs:
+            assert coords_km is not None
+            vs_score, has_pair = fair_variogram_score(
+                target, members, mask, coords_km, p=self.vs_p
+            )
         per_var: dict[str, Tensor] = {}
+        vs_per_var: dict[str, Tensor] = {}
         total = torch.zeros((), device=members.device, dtype=members.dtype)
         for i, name in enumerate(self.variable_names):
             loss_v = OutputHead.loss_normalization_per_sample(
                 score[..., i : i + 1], mask[..., i : i + 1]
-            ) * self.loss_scaling[i].to(members.dtype)
+            )
+            if vs_score is not None and has_pair is not None:
+                # Mean over the samples that have a valid pair. 0 if none.
+                n_pair = has_pair[:, i].sum().clamp(min=1).to(vs_score.dtype)
+                vs_v = vs_score[:, i].sum() / n_pair
+                vs_per_var[name] = vs_v.detach()
+                loss_v = loss_v + self.vs_weight * vs_v
+            loss_v = loss_v * self.loss_scaling[i].to(members.dtype)
             per_var[name] = loss_v.detach()
             total = total + loss_v
-        return per_var, total
+        return per_var, total, vs_per_var
