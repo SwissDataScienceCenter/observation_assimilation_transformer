@@ -2,6 +2,7 @@ import logging
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 import pytorch_lightning as pl
@@ -689,3 +690,45 @@ def test_predict_step_distribution_raises_with_query_noise(
     pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
     with pytest.raises(ValueError, match="query noise"):
         pred.predict_step(batch_fixture, 0, return_as="distribution")
+
+
+def _logged_names_for_vs(batch_fixture, transform_fixture, model_cfg_fixture, vs_weight):
+    model_cfg_fixture.pre_oat_loss_weight = 0.1
+    model_cfg_fixture.query_noise = QueryNoiseConfig(
+        length_scales_km=(2.0, 8.0),
+        km_per_unit=1.0,
+        channels_per_scale=2,
+        num_frequencies=8,
+        mlp_hidden_layers=1,
+        train_members=2,
+        vs_weight=vs_weight,
+    )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
+    pred.log = MagicMock()
+    pred.training_step(batch=batch_fixture, batch_idx=0)
+    pred.validation_step(batch=batch_fixture, batch_idx=0)
+    return [
+        c.args[0] if c.args else c.kwargs["name"]
+        for c in pred.log.call_args_list
+    ], list(
+        model_cfg_fixture.output_head.variable_to_distribution.keys()
+    )
+
+
+def test_train_and_val_step_log_vs_when_on(
+    batch_fixture, transform_fixture, model_cfg_fixture
+):
+    names, var_names = _logged_names_for_vs(
+        batch_fixture, transform_fixture, model_cfg_fixture, 0.5
+    )
+    for var in var_names:
+        assert f"train_loss_vs_{var}" in names
+        assert f"val_loss_vs_{var}" in names
+    assert not any(n.startswith("test_") for n in names)
+
+
+def test_no_vs_logs_when_off(batch_fixture, transform_fixture, model_cfg_fixture):
+    names, _ = _logged_names_for_vs(
+        batch_fixture, transform_fixture, model_cfg_fixture, 0.0
+    )
+    assert not any("loss_vs" in n for n in names)
