@@ -1,5 +1,6 @@
 from oat.predictor_module.functional_metrics import (
     METRICS,
+    fair_variogram_score,
     variogram_score,
     variogram_weights,
 )
@@ -174,3 +175,170 @@ def test_variogram_score_prefers_correct_dependence():
     vs_a = variogram_score(truth, ens_a, mask, w)
     vs_b = variogram_score(truth, ens_b, mask, w)
     assert vs_a.mean() < vs_b.mean()
+
+
+def _g(d, p=0.5, eps=1e-3):
+    return (d**2 + eps**2) ** (p / 2) - eps**p
+
+
+def _fair_ref(y, x, coords, valid=None, dist_eps=1.0):
+    """Loop reference for one sample and one variable. y [S], x [S, M]."""
+    S, M = x.shape
+    num, den = 0.0, 0.0
+    for i in range(S):
+        for j in range(i + 1, S):
+            if valid is not None and not (valid[i] and valid[j]):
+                continue
+            dist = float(torch.dist(coords[i].double(), coords[j].double()))
+            w = 1.0 / (dist + dist_eps)
+            a = _g(y[i] - y[j])
+            e = [a - _g(x[i, m] - x[j, m]) for m in range(M)]
+            vs = sum(e[m] * e[k] for m in range(M) for k in range(M) if m != k)
+            num += w * float(vs) / (M * (M - 1))
+            den += w
+    return num / den
+
+
+def _corr_samples(pos, n, scale=2.0):
+    d = torch.cdist(pos, pos)
+    K = torch.exp(-d / scale) + 1e-6 * torch.eye(len(pos))
+    L = torch.linalg.cholesky(K)
+    return torch.randn(n, len(pos)) @ L.T
+
+
+def _line(S):
+    pos = torch.arange(S, dtype=torch.float32)[:, None]
+    return pos, torch.cat([pos, torch.zeros_like(pos)], dim=1)
+
+
+def test_fair_vs_matches_member_pair_loop():
+    torch.manual_seed(0)
+    y = torch.randn(1, 3, 1)
+    x = torch.randn(1, 3, 3, 1)
+    coords = torch.tensor([[[0.0, 0.0], [3.0, 4.0], [10.0, 0.0]]])
+    score, has_pair = fair_variogram_score(y, x, torch.ones(1, 3, 1), coords)
+    expected = _fair_ref(y[0, :, 0], x[0, :, :, 0], coords[0])
+    assert torch.allclose(score, torch.tensor([[expected]]), atol=1e-6)
+    assert has_pair.all()
+
+
+def test_fair_vs_unbiased_in_members():
+    torch.manual_seed(1)
+    pos, coords = _line(4)
+    n = 4000
+    y = _corr_samples(pos, n)[..., None]
+    c = coords[None].expand(n, -1, -1)
+    mask = torch.ones(n, 4, 1)
+
+    def members(M):
+        return torch.stack([_corr_samples(pos, n) for _ in range(M)], dim=2)[..., None]
+
+    f2, _ = fair_variogram_score(y, members(2), mask, c)
+    f64, _ = fair_variogram_score(y, members(64), mask, c)
+    se = (f2.std() ** 2 / n + f64.std() ** 2 / n) ** 0.5
+    assert abs(f2.mean() - f64.mean()) < 4 * se
+    x2 = members(2)
+    pw = (_g(y[:, :, None] - y[:, None]) - _g(x2[:, :, None] - x2[:, None]).mean(3))
+    assert pw.shape[0] == n  # plain form built from the same members
+    S = 4
+    up = torch.triu(torch.ones(S, S, dtype=torch.bool), 1)
+    om = 1.0 / (torch.cdist(coords, coords) + 1.0)
+    w = (om * up)[None, :, :, None]
+    plain = ((w * pw**2).sum((1, 2)) / w.sum()).mean()
+    assert plain > f64.mean()
+
+
+def test_fair_vs_prefers_correct_correlation():
+    torch.manual_seed(2)
+    S, n, M = 30, 500, 16
+    pos, coords = _line(S)
+    c = coords[None].expand(n, -1, -1)
+    mask = torch.ones(n, S, 1)
+    y = _corr_samples(pos, n)[..., None]
+    correct = torch.stack([_corr_samples(pos, n) for _ in range(M)], dim=2)[..., None]
+    indep = torch.randn(n, S, M, 1)
+    full = torch.randn(n, 1, M, 1).expand(n, S, M, 1)
+    sc, _ = fair_variogram_score(y, correct, mask, c)
+    si, _ = fair_variogram_score(y, indep, mask, c)
+    sf, _ = fair_variogram_score(y, full, mask, c)
+    assert sc.mean() < si.mean()
+    assert sc.mean() < sf.mean()
+
+
+def test_fair_vs_finite_gradient_for_equal_and_dry_members():
+    x = torch.zeros(2, 4, 3, 1, requires_grad=True)
+    coords = torch.rand(2, 4, 2) * 10
+    score, _ = fair_variogram_score(
+        torch.zeros(2, 4, 1), x, torch.ones(2, 4, 1), coords
+    )
+    assert torch.allclose(score, torch.zeros_like(score))
+    score.sum().backward()
+    assert torch.isfinite(x.grad).all()
+
+
+def test_fair_vs_coincident_stations():
+    torch.manual_seed(3)
+    y = torch.randn(1, 3, 1)
+    x = torch.randn(1, 3, 4, 1, requires_grad=True)
+    coords = torch.tensor([[[5.0, 5.0], [5.0, 5.0], [9.0, 5.0]]])
+    score, _ = fair_variogram_score(y, x, torch.ones(1, 3, 1), coords)
+    expected = _fair_ref(y[0, :, 0], x[0, :, :, 0].detach(), coords[0])
+    assert torch.isfinite(score).all()
+    assert torch.allclose(score, torch.tensor([[expected]]), atol=1e-6)
+    score.sum().backward()
+    assert torch.isfinite(x.grad).all()
+
+
+def test_fair_vs_masked_nan_station_equals_score_without_it():
+    torch.manual_seed(4)
+    y = torch.randn(1, 3, 1)
+    x = torch.randn(1, 3, 4, 1, requires_grad=True)
+    coords = torch.tensor([[[0.0, 0.0], [2.0, 0.0], [7.0, 1.0]]])
+    mask = torch.tensor([[[1.0], [0.0], [1.0]]])
+    y_nan = y.clone()
+    y_nan[0, 1, 0] = float("nan")
+    score, _ = fair_variogram_score(y_nan, x, mask, coords)
+    keep = [0, 2]
+    ref, _ = fair_variogram_score(
+        y[:, keep], x[:, keep], torch.ones(1, 2, 1), coords[:, keep]
+    )
+    assert torch.allclose(score, ref, atol=1e-6)
+    score.sum().backward()
+    assert torch.isfinite(x.grad).all()
+
+
+def test_fair_vs_no_valid_pair():
+    torch.manual_seed(5)
+    y = torch.randn(2, 3, 2)
+    x = torch.randn(2, 3, 3, 2, requires_grad=True)
+    coords = torch.rand(2, 3, 2) * 20
+    mask = torch.ones(2, 3, 2)
+    mask[0, 1:, 0] = 0.0
+    y[0, 1:, 0] = float("nan")
+    score, has_pair = fair_variogram_score(y, x, mask, coords)
+    assert not has_pair[0, 0]
+    assert score[0, 0] == 0
+    assert has_pair.sum() == 3
+    assert torch.isfinite(score).all()
+    score.sum().backward()
+    assert torch.isfinite(x.grad).all()
+    assert (x.grad[0, :, :, 0] == 0).all()
+
+
+def test_fair_vs_lv95_precision():
+    torch.manual_seed(6)
+    S, M = 30, 4
+    # Above 25 rows, float32 cdist uses the matmul path and loses metres.
+    coords_m = torch.rand(1, S, 2) * 1e5 + torch.tensor([2.6e6, 1.2e6])
+    coords_m[0, 1] = coords_m[0, 0] + torch.tensor([500.0, 0.0])
+    coords_km = coords_m * 0.001
+    bad = torch.cdist(coords_km[0], coords_km[0])[0, 1]
+    assert abs(bad.item() - 0.5) > 0.1  # float32 cdist is wrong for this pair
+    y = torch.randn(1, S, 1)
+    x = torch.randn(1, S, M, 1)
+    mask = torch.ones(1, S, 1)
+    s32, _ = fair_variogram_score(y, x, mask, coords_km)
+    s64, _ = fair_variogram_score(
+        y.double(), x.double(), mask.double(), coords_km.double()
+    )
+    assert torch.allclose(s32.double(), s64, atol=1e-6)

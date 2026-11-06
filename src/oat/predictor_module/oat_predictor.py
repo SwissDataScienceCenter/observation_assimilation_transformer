@@ -332,6 +332,7 @@ class OATPredictor(BasePredictor):
                                  prefix="train", 
                                  on_step=True, 
                                  on_epoch=True)
+        self._log_loss_vs(y_hat, prefix="train", on_step=True, on_epoch=True)
 
         with torch.no_grad():
 
@@ -366,6 +367,7 @@ class OATPredictor(BasePredictor):
         self._log_per_var_losses(per_var_losses=per_var_losses,
                                  prefix="val", 
                                  on_step=False, on_epoch=True)
+        self._log_loss_vs(y_hat, prefix="val", on_step=False, on_epoch=True)
             
         with torch.no_grad():
             y_hat_samples_unnorm, y_true_unnorm = self._unnormalize_pred_and_target(y_hat=y_hat,
@@ -458,6 +460,22 @@ class OATPredictor(BasePredictor):
         for var_name, loss_val in per_var_losses.items():
             self.log(f'{prefix}_loss_{var_name}', loss_val,
                      prog_bar=False, on_step=on_step, on_epoch=on_epoch)
+
+    def _log_loss_vs(
+        self, y_hat: dict[str, Any], prefix: str, on_step: bool, on_epoch: bool
+    ) -> None:
+        """
+        Log the variogram score of each variable as `{prefix}_loss_vs_{var}`.
+        The model returns `loss_vs` only when `vs_weight` is above zero.
+        """
+        for var_name, vs_val in y_hat.get("loss_vs", {}).items():
+            self.log(
+                f"{prefix}_loss_vs_{var_name}",
+                vs_val,
+                prog_bar=False,
+                on_step=on_step,
+                on_epoch=on_epoch,
+            )
 
     def _log_instant_metrics(self, y_hat_samples: torch.Tensor, 
                                         y_true: torch.Tensor, 

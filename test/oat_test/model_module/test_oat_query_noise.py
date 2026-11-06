@@ -118,3 +118,80 @@ def test_noise_config_validation(model_cfg_fixture, bad):
     assert cfg.output_head.observation_assimilation_as == "innovation"
     with pytest.raises(ValueError):
         OAT(cfg)
+
+
+def _loss(model, batch, target, mask):
+    return model.forward_with_loss(
+        batch["global_data"],
+        batch["observation_data"],
+        batch["query_data"],
+        target,
+        mask,
+    )
+
+
+def test_vs_weight_zero_gives_same_loss_and_state_dict(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(model_cfg_fixture)
+    torch.manual_seed(0)
+    m1, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    cfg0 = _noise_on(model_cfg_fixture, vs_weight=0.0)
+    torch.manual_seed(0)
+    m2, _, _, _ = _inputs(cfg0, batch_fixture, transform_fixture)
+    cfg5 = _noise_on(model_cfg_fixture, vs_weight=0.5)
+    m5, _, _, _ = _inputs(cfg5, batch_fixture, transform_fixture)
+    for m in (m1, m2):
+        m.eval()
+    assert list(m1.state_dict()) == list(m2.state_dict()) == list(m5.state_dict())
+    m2.load_state_dict(m1.state_dict())
+    members = torch.randn(2, 5, 4, 2)
+    for m in (m1, m2):
+        m._noise_samples = lambda *a, **k: members
+    out1, _, l1 = _loss(m1, batch, target, mask)
+    out2, _, l2 = _loss(m2, batch, target, mask)
+    assert torch.allclose(l1, l2)
+    assert "loss_vs" not in out1 and "loss_vs" not in out2
+
+
+def test_vs_term_is_inside_oat_part_of_blend(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(model_cfg_fixture, vs_weight=0.0)
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    model.eval()
+    members = torch.randn(2, 5, 4, 2).abs()
+    model._noise_samples = lambda *a, **k: members
+    with torch.no_grad():
+        model.sample_head.vs_weight = 0.0
+        _, _, l0 = _loss(model, batch, target, mask)
+        model.sample_head.vs_weight = 0.5
+        out, _, l1 = _loss(model, batch, target, mask)
+    scaling = model.sample_head.loss_scaling
+    expected = 0.9 * sum(
+        scaling[i] * 0.5 * out["loss_vs"][name]
+        for i, name in enumerate(model.sample_head.variable_names)
+    )
+    assert torch.allclose(l1 - l0, expected, atol=1e-5)
+
+
+def test_vs_on_gradients_and_logs(model_cfg_fixture, batch_fixture, transform_fixture):
+    cfg = _noise_on(model_cfg_fixture, vs_weight=0.5)
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    out, _, loss = _loss(model, batch, target, mask)
+    assert torch.isfinite(loss)
+    loss.backward()
+    for module in (model.sample_head, model.oat_block):
+        grads = [p.grad for p in module.parameters() if p.grad is not None]
+        assert any(g.abs().sum() > 0 for g in grads)
+    names = list(cfg.output_head.variable_to_distribution)
+    assert set(out["loss_vs"]) == set(names)
+    assert all(torch.isfinite(v) for v in out["loss_vs"].values())
+
+
+@pytest.mark.parametrize("kw", [{"vs_weight": -1.0}, {"vs_p": 0.0}])
+def test_vs_config_validation(model_cfg_fixture, kw):
+    model_cfg_fixture.query_noise = _qn_cfg(**kw)
+    model_cfg_fixture.pre_oat_loss_weight = 0.1
+    with pytest.raises(ValueError):
+        OAT(model_cfg_fixture)

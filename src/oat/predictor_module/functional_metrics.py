@@ -251,6 +251,68 @@ def variogram_score(
     )
 
 
+def fair_variogram_score(
+    y_target: torch.Tensor,
+    y_hat: torch.Tensor,
+    mask: torch.Tensor,
+    coords_km: torch.Tensor,
+    p: float = 0.5,
+    eps: float = 1e-3,
+    dist_eps_km: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fair variogram score of order p for training.
+
+    For each pair i < j, e_m = g(y_i - y_j) - g(x_i,m - x_j,m). The pair score
+    is the mean of e_m * e_m' over m != m'. This estimator has no bias from
+    the member count. The pair weights are 1 / (d_ij + dist_eps_km), with
+    d_ij in km. The weights are normalized over the valid pairs. A pair is
+    valid when both stations have mask 1.
+
+    Args:
+        y_target: [B, S, V] observations. Masked entries can be NaN.
+        y_hat: [B, S, M, V] members. M must be at least 2.
+        mask: [B, S, V] float mask, 1 for a valid observation.
+        coords_km: [B, S, D] station coordinates in km.
+        p: Order of the score.
+        eps: Smoothing constant of the safe power g.
+        dist_eps_km: Distance offset in km. It sets the largest weight.
+
+    Returns:
+        score: [B, V] scores. The value is 0 where has_pair is False.
+        has_pair: [B, V] bool, True where at least one valid pair exists.
+    """
+    _, S, M, _ = y_hat.shape
+    if M < 2:
+        raise ValueError(f"Need at least 2 members, got {M}.")
+    valid = mask > 0.5
+    y = torch.where(valid, y_target, torch.zeros_like(y_target))
+
+    def g(delta: torch.Tensor) -> torch.Tensor:
+        # Smooth at delta = 0, because ST-ReLU gives exact zeros for dry members.
+        out: torch.Tensor = (delta**2 + eps**2) ** (p / 2) - eps**p
+        return out
+
+    a = g(y[:, :, None] - y[:, None])  # [B, S, S, V]
+    d = g(y_hat[:, :, None] - y_hat[:, None])  # [B, S, S, M, V]
+    e = a[:, :, :, None] - d
+    pair_score = (e.sum(dim=3) ** 2 - (e**2).sum(dim=3)) / (M * (M - 1))
+
+    # Float64 is necessary for the distances. Float32 loses metres at LV95 size.
+    c = coords_km.double()
+    # The offset caps the weight of very close or coincident stations.
+    omega = (1.0 / (torch.cdist(c, c) + dist_eps_km)).to(y_hat.dtype)  # [B, S, S]
+    upper = torch.triu(torch.ones(S, S, dtype=torch.bool, device=y_hat.device), 1)
+    pair = valid[:, :, None] & valid[:, None] & upper[None, :, :, None]
+    w = torch.where(pair, omega[..., None], torch.zeros_like(pair_score))
+    den = w.sum(dim=(1, 2))  # [B, V]
+    num = torch.where(pair, w * pair_score, torch.zeros_like(pair_score)).sum(
+        dim=(1, 2)
+    )
+    has_pair = den > 0
+    score = torch.where(has_pair, num / den.clamp_min(1e-30), torch.zeros_like(num))
+    return score, has_pair
+
+
 def _variogram_score_step(
     y_target: torch.Tensor,
     y_hat: torch.Tensor,

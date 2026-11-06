@@ -163,6 +163,8 @@ class QueryNoiseConfig:
     num_frequencies: int = 128
     mlp_hidden_layers: int = 2
     train_members: int = 8
+    vs_weight: float = 0.0
+    vs_p: float = 0.5
 
 
 @dataclass
@@ -589,6 +591,10 @@ class OAT(UninformedOAT):
             qn = config.query_noise
             if qn.train_members < 2:
                 raise ValueError("query_noise.train_members must be 2 or more.")
+            if qn.vs_weight < 0:
+                raise ValueError("query_noise.vs_weight must be 0 or more.")
+            if qn.vs_p <= 0:
+                raise ValueError("query_noise.vs_p must be more than 0.")
             if (
                 config.output_head.observation_assimilation_as == "innovation"
                 and config.pre_oat_loss_weight <= 0
@@ -598,6 +604,8 @@ class OAT(UninformedOAT):
                     "Nothing else trains the head that gives the innovation."
                 )
             self.train_members = qn.train_members
+            # Plain float, not a buffer: no new state_dict key.
+            self.km_per_unit = float(qn.km_per_unit)
             self.noise_field = query_noise.RFFNoiseField(
                 length_scales_km=qn.length_scales_km,
                 km_per_unit=qn.km_per_unit,
@@ -609,6 +617,8 @@ class OAT(UninformedOAT):
                 noise_channels=self.noise_field.num_channels,
                 output_head=self.output_head,
                 mlp_hidden_layers=qn.mlp_hidden_layers,
+                vs_weight=qn.vs_weight,
+                vs_p=qn.vs_p,
             )
 
     @property
@@ -728,10 +738,13 @@ class OAT(UninformedOAT):
         oat_out, pre_oat_out = self._forward(global_data, observation_data, query_data)
         if hasattr(self, "sample_head"):
             members = self._noise_samples(oat_out, query_data, self.train_members, None)
-            per_var_losses, loss = self.sample_head.loss(
-                members, target_obs, target_mask_obs
+            coords_km = _search_coords(query_data) * self.km_per_unit
+            per_var_losses, loss, loss_vs = self.sample_head.loss(
+                members, target_obs, target_mask_obs, coords_km
             )
             out = {}
+            if loss_vs:
+                out["loss_vs"] = loss_vs
         else:
             out, per_var_losses, loss = self.output_head.loss(
                 oat_out, target_obs, target_mask_obs
