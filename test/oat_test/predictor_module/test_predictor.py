@@ -223,7 +223,7 @@ def test_default_hydra_config(transform_fixture):
 
     assert isinstance(oat_cfg, OATConfig)
     assert oat_cfg.output_head.in_features == cfg.model.d_model
-    assert oat_cfg.observation_embedding is None
+    assert oat_cfg.observation_embedding is not None
     assert oat_cfg.output_head.variable_to_distribution == dict(
         cfg.dataset.obs_variable_to_distribution
     )
