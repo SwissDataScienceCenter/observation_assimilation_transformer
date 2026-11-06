@@ -281,7 +281,7 @@ def fair_variogram_score(
         score: [B, V] scores. The value is 0 where has_pair is False.
         has_pair: [B, V] bool, True where at least one valid pair exists.
     """
-    B, S, M, V = y_hat.shape
+    _, S, M, _ = y_hat.shape
     if M < 2:
         raise ValueError(f"Need at least 2 members, got {M}.")
     valid = mask > 0.5

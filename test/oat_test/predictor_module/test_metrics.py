@@ -322,22 +322,23 @@ def test_fair_vs_no_valid_pair():
     assert torch.isfinite(score).all()
     score.sum().backward()
     assert torch.isfinite(x.grad).all()
+    assert (x.grad[0, :, :, 0] == 0).all()
 
 
-def test_fair_vs_distance_offset_and_lv95_precision():
+def test_fair_vs_lv95_precision():
     torch.manual_seed(6)
-    # A pair at 0.01 km and a pair at 0 km get almost the same weight.
-    w_close = 1.0 / (0.01 + 1.0)
-    w_same = 1.0 / (0.0 + 1.0)
-    assert abs(w_close - w_same) < 0.02
-    coords_m = torch.tensor(
-        [[[2.6e6, 1.2e6], [2.6e6 + 500, 1.2e6], [2.7e6, 1.3e6]]]
-    )
-    y = torch.randn(1, 3, 1)
-    x = torch.randn(1, 3, 4, 1)
-    mask = torch.ones(1, 3, 1)
-    s32, _ = fair_variogram_score(y, x, mask, coords_m * 0.001)
+    S, M = 30, 4
+    # Above 25 rows, float32 cdist uses the matmul path and loses metres.
+    coords_m = torch.rand(1, S, 2) * 1e5 + torch.tensor([2.6e6, 1.2e6])
+    coords_m[0, 1] = coords_m[0, 0] + torch.tensor([500.0, 0.0])
+    coords_km = coords_m * 0.001
+    bad = torch.cdist(coords_km[0], coords_km[0])[0, 1]
+    assert abs(bad.item() - 0.5) > 0.1  # float32 cdist is wrong for this pair
+    y = torch.randn(1, S, 1)
+    x = torch.randn(1, S, M, 1)
+    mask = torch.ones(1, S, 1)
+    s32, _ = fair_variogram_score(y, x, mask, coords_km)
     s64, _ = fair_variogram_score(
-        y.double(), x.double(), mask.double(), coords_m.double() * 0.001
+        y.double(), x.double(), mask.double(), coords_km.double()
     )
-    assert torch.allclose(s32.double(), s64, atol=1e-5)
+    assert torch.allclose(s32.double(), s64, atol=1e-6)
