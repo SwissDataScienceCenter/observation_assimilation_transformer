@@ -363,6 +363,46 @@ def test_plot_spatial_snapshot_invalid_plot_type():
     plt.close(fig)
 
 
+def test_plot_spatial_snapshot_member_uses_one_sample():
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    var_idx = plotter.predictor.var_to_indx["temp"]
+    fixed_samples = torch.zeros(25, 10, 2)
+    fixed_samples[:, 2, var_idx] = 7.0
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        mesh = plotter.plot_spatial_snapshot(
+            ax=ax,
+            var="temp",
+            time_idx=0,
+            center=(8.0, 47.0),
+            extent=0.4,
+            resolution=0.2,
+            plot_type="member",
+            member_index=2,
+        )
+    assert np.allclose(np.asarray(mesh.get_array()), 7.0)
+    plt.close(fig)
+
+
+def test_plot_spatial_snapshot_member_index_out_of_range_raises():
+    plotter = _spatial_plotter()
+    fig, ax = plt.subplots()
+    fixed_samples = torch.randn(25, 10, 2)
+    with patch.object(plotter, "_run_inference", return_value=fixed_samples):
+        with pytest.raises(ValueError, match="member_index"):
+            plotter.plot_spatial_snapshot(
+                ax=ax,
+                var="temp",
+                time_idx=0,
+                center=(8.0, 47.0),
+                extent=0.4,
+                resolution=0.2,
+                plot_type="member",
+                member_index=10,
+            )
+    plt.close(fig)
+
+
 def test_plot_spatial_snapshot_at_station_delegates_to_plot_spatial_snapshot():
     predictor = _make_predictor(N_q=25, n_samples=10)
     dataset = _make_dataset(n_stations=5, n_times=4)

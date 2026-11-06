@@ -7,7 +7,8 @@ defaults:
   - transformer: oat_block
   - output_head: default
   - learnable_gating: null
-  - observation_embedding: null
+  - observation_embedding: default
+  - query_noise: null
 
 model_cls: oat.model_module.model.OAT
 d_model: 32

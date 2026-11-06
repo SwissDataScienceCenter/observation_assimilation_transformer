@@ -127,7 +127,8 @@ class OutputHead(nn.Module):
             return output
         return torch.cat(output, dim=-1)
     
-    def loss_normalization_per_sample(self, loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def loss_normalization_per_sample(loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
         Compute normalization factor for loss per sample based on mask.
         

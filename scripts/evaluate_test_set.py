@@ -16,11 +16,16 @@ Options
 --device cpu|cuda     Torch device (default: cpu)
 --out PATH            Output CSV (default: data/results/<tag>_metrics_<split>.csv)
 --split-config NAME   Override cfg.split with configs/split/<NAME>.yaml
+--missing             Evaluate all registry entries without a result file
+                      (all datasets, or only --dataset)
+--list-missing        Only print the missing runs, one per line
 """
 
 import argparse
 import json
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -190,6 +195,107 @@ def _exclude_context(
     return [i for i in obs_indices if i not in ctx_positions]
 
 
+def _missing_runs(
+    registry: dict[Any, Any],
+    datasets: list[str] | None,
+    split: str,
+    exclude_context: bool,
+    out_dir: Path,
+    ckpt_root: Path,
+) -> list[tuple[str, str, str | None]]:
+    """Find registry entries that have no metrics CSV in ``out_dir``.
+
+    Returns ``(dataset, model, split_config)`` for each missing run.
+    Spatial-holdout models get the holdout split config, all others get None.
+    Entries that are null or have no checkpoint file on disk are skipped.
+    """
+    from scripts.build_results_table import (
+        SPATIAL_HOLDOUT_CHECKPOINT_KEYS,
+        SPATIAL_HOLDOUT_ONLY_SENTINELS,
+        SPATIAL_HOLDOUT_SPLIT_CONFIG,
+    )
+
+    logger = logging.getLogger(__name__)
+    holdout_models = SPATIAL_HOLDOUT_CHECKPOINT_KEYS | SPATIAL_HOLDOUT_ONLY_SENTINELS
+    runs = []
+    for dataset in datasets or list(registry):
+        for model, value in (registry.get(dataset) or {}).items():
+            if value is None:
+                continue
+            is_interpolator = value == model
+            checkpoint = None if is_interpolator else ckpt_root / str(value)
+            if checkpoint is not None and not checkpoint.exists():
+                logger.warning("Skip %s/%s: no file %s", dataset, model, checkpoint)
+                continue
+            split_config = (
+                SPATIAL_HOLDOUT_SPLIT_CONFIG if model in holdout_models else None
+            )
+            base_tag = _base_tag(
+                is_interpolator,
+                model,
+                dataset,
+                None if checkpoint is None else str(checkpoint),
+                split_config,
+            )
+            tag = _ckpt_tag(base_tag, exclude_context)
+            if not (out_dir / f"{tag}_metrics_{split}.csv").exists():
+                runs.append((dataset, model, split_config))
+    return runs
+
+
+def _run_missing(args: argparse.Namespace, logger: logging.Logger) -> None:
+    """Evaluate each registry entry that has no result file yet.
+
+    Each run is a separate process, so one failed run does not stop the others.
+    With --list-missing, print one ``dataset<TAB>model<TAB>split_config`` line
+    for each run and do not evaluate. submit_evaluate_test_set.sh uses this.
+    """
+    if args.checkpoint or args.model or args.split_config or args.out:
+        logger.error(
+            "--missing and --list-missing find the models themselves. Do not "
+            "use them with a checkpoint path, --model, --split-config or --out."
+        )
+        raise SystemExit(2)
+    registry = OmegaConf.to_container(OmegaConf.load(_DEFAULT_REGISTRY))
+    assert isinstance(registry, dict)
+    runs = _missing_runs(
+        registry,
+        [args.dataset] if args.dataset else None,
+        args.split,
+        args.exclude_context,
+        OUT_DIR,
+        checkpoint_root(),
+    )
+    logger.info("%d runs to evaluate: %s", len(runs), [f"{d}/{m}" for d, m, _ in runs])
+    if args.list_missing:
+        for dataset, model, split_config in runs:
+            print(f"{dataset}\t{model}\t{split_config or ''}")
+        return
+
+    forward = ["--split", args.split, "--n-samples", str(args.n_samples)]
+    forward += ["--device", args.device]
+    forward += ["--batch-timesteps", str(args.batch_timesteps)]
+    for flag in ("baseline", "long", "exclude_context"):
+        if getattr(args, flag):
+            forward.append("--" + flag.replace("_", "-"))
+    for flag in ("max_timesteps", "start_date", "end_date"):
+        if getattr(args, flag) is not None:
+            forward += ["--" + flag.replace("_", "-"), str(getattr(args, flag))]
+
+    failed = []
+    for dataset, model, split_config in runs:
+        cmd = [sys.executable, "-m", "scripts.evaluate_test_set"]
+        cmd += ["--dataset", dataset, "--model", model, *forward]
+        if split_config:
+            cmd += ["--split-config", split_config]
+        logger.info("+ %s", " ".join(cmd))
+        if subprocess.run(cmd, cwd=Path(__file__).parents[1]).returncode != 0:
+            failed.append(f"{dataset}/{model}")
+    if failed:
+        logger.error("%d runs failed: %s", len(failed), failed)
+        raise SystemExit(1)
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Aggregate test-set metrics for an OAT checkpoint."
@@ -279,6 +385,19 @@ def _parse_args() -> argparse.Namespace:
         "windows across NWP sources: with test_days it also moves the "
         "train/val cutoff. Set test_start_date/test_end_date in the split "
         "config instead (see configs/split/spatial_region_holdout.yaml).",
+    )
+    p.add_argument(
+        "--missing",
+        action="store_true",
+        help="Evaluate each entry of configs/checkpoints.yaml that has no "
+        "result CSV yet (all datasets, or only --dataset). The other "
+        "options go to each run.",
+    )
+    p.add_argument(
+        "--list-missing",
+        action="store_true",
+        help="Like --missing, but only print the missing runs as "
+        "dataset<TAB>model<TAB>split_config lines.",
     )
     return p.parse_args()
 
@@ -377,6 +496,10 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     args = _parse_args()
+
+    if args.missing or args.list_missing:
+        _run_missing(args, logger)
+        return
 
     holdout_error = _holdout_split_error(args.model, args.split_config)
     if holdout_error is not None:

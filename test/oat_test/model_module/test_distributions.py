@@ -16,6 +16,8 @@ from oat.model_module.distributions import (
     register_oat_distribution,
 )
 
+from oat.predictor_module.functional_metrics import mc_crps
+
 
 # ── check_if_valid_distribution ───────────────────────────────────────────────
 
@@ -708,3 +710,10 @@ def test_ziln_crps_vs_montecarlo():
 
 
 # TODO add the other CRPS tests for the other distributions, similar to the above test for ZILN
+
+def test_mc_crps_none_aggregation_matches_all():
+    torch.manual_seed(0)
+    y_hat, y = torch.randn(2, 5, 6, 3), torch.randn(2, 5, 3)
+    score = mc_crps(y, y_hat, aggregation="none")
+    assert score.shape == (2, 5, 3)
+    assert torch.allclose(score.mean(), mc_crps(y, y_hat, aggregation="all"))

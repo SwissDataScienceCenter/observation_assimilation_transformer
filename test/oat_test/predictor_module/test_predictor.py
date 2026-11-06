@@ -15,7 +15,11 @@ from oat.data_module.support import VariableSupport
 from oat.data_module.transform import IdentityTransform
 from oat.model_module.distributions import _ALL_DISTRIBUTIONS
 from oat.model_module.fusion_layer import ObservationEmbedding
-from oat.model_module.model import ObservationEmbeddingConfig, OATConfig
+from oat.model_module.model import (
+    ObservationEmbeddingConfig,
+    OATConfig,
+    QueryNoiseConfig,
+)
 from oat.predictor_module import OATPredictor
 from scripts.train_model import setup_oat_cfg
 
@@ -223,7 +227,7 @@ def test_default_hydra_config(transform_fixture):
 
     assert isinstance(oat_cfg, OATConfig)
     assert oat_cfg.output_head.in_features == cfg.model.d_model
-    assert oat_cfg.observation_embedding is None
+    assert oat_cfg.observation_embedding is not None
     assert oat_cfg.output_head.variable_to_distribution == dict(
         cfg.dataset.obs_variable_to_distribution
     )
@@ -646,3 +650,40 @@ def test_setup_oat_cfg_with_empty_observation_embedding_uses_defaults():
     assert oat_cfg.observation_embedding == ObservationEmbeddingConfig(
         n_vars=len(cfg.dataset.obs_vars)
     )
+
+
+def test_hydra_config_with_query_noise():
+    cfg = _compose_cfg(["model/query_noise=rff"])
+    qn = setup_oat_cfg(cfg, logging.getLogger(__name__)).query_noise
+    assert qn == QueryNoiseConfig(
+        length_scales_km=(2, 8, 32, 128, 512),
+        km_per_unit=cfg.dataset.index_coord_km_per_unit,
+        channels_per_scale=4,
+        num_frequencies=128,
+        mlp_hidden_layers=2,
+        train_members=8,
+    )
+
+
+def test_setup_oat_cfg_without_query_noise_key():
+    cfg = _compose_cfg([])
+    with open_dict(cfg.model):
+        cfg.model.pop("query_noise", None)
+    assert setup_oat_cfg(cfg, logging.getLogger(__name__)).query_noise is None
+
+
+def test_predict_step_distribution_raises_with_query_noise(
+    batch_fixture, transform_fixture, model_cfg_fixture
+):
+    model_cfg_fixture.pre_oat_loss_weight = 0.1
+    model_cfg_fixture.query_noise = QueryNoiseConfig(
+        length_scales_km=(2.0, 8.0),
+        km_per_unit=1.0,
+        channels_per_scale=2,
+        num_frequencies=8,
+        mlp_hidden_layers=1,
+        train_members=2,
+    )
+    pred = _make_oat_predictor(model_cfg_fixture, transform_fixture)
+    with pytest.raises(ValueError, match="query noise"):
+        pred.predict_step(batch_fixture, 0, return_as="distribution")

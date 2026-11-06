@@ -11,7 +11,12 @@
 # ``interpolator`` is weightless (no learnt params, no checkpoint); the sentinel
 # value ``interpolator`` maps to the interpolator_<dataset> result files.
 
+# Each dataset block has two parts:
+#   1. Paper: checkpoints that the figures/ and table scripts use. Do not change them.
+#   2. Other: experiments that are not in the paper. Add new runs here.
+
 cosmo_peakweather:
+  # --- Paper ---
   interpolator: interpolator
   oat_temp_precip: oat/oat_field_cosmo_peakweather-temp_precip_bn_20261006/best-model-epoch=105-val_loss=0.1946.ckpt
   oat_vanilla_temp_precip: oat/oat_field_cosmo_peakweather-temp_precip_20261007_job168391/best-model-epoch=124-val_loss=0.1944.ckpt
@@ -22,11 +27,21 @@ cosmo_peakweather:
   gp_oat_precip: gp_oat/gp_oat_field_cosmo_peakweather-precip_20260821_job5160230/best-model-epoch=20-val_crps_precipitation=0.0975.ckpt
   deep_gp_oat_temp: deep_gp_oat/deep_gp_oat_field_cosmo_peakweather-temp_20260821_job5160669/best-model-epoch=84-val_crps_temperature=0.8519.ckpt
   deep_gp_oat_precip: deep_gp_oat/deep_gp_oat_field_cosmo_peakweather-precip_20260821_job5160670/best-model-epoch=22-val_crps_precipitation=0.0857.ckpt
+
+  # --- Other: missing-observation handling ---
   zero_fill: oat/oat_zerofill_s42_cosmo_peakweather-temp_precip/best-model-epoch=132-val_loss=0.1845.ckpt
   mask_gate: oat/oat_maskgate_s42_cosmo_peakweather-temp_precip/best-model-epoch=144-val_loss=0.1864.ckpt
   missing_token: oat/oat_missingtoken_s42_cosmo_peakweather-temp_precip/best-model-epoch=138-val_loss=0.1826.ckpt
 
+  # --- Other: query noise ---
+  rff_field: oat/oat_cosmo_peakweather-temp_precip_20261104_job349724/best-model-epoch=72-val_loss=0.1867.ckpt
+  rff_field_obs_embedding: oat/oat_cosmo_peakweather-temp_precip_20261105_job353225/best-model-epoch=15-val_loss=0.1845.ckpt
+  rff_field_k16: oat/oat_cosmo_peakweather-temp_precip_20261105_job353226/best-model-epoch=72-val_loss=0.1802.ckpt
+  rff_field_no_2km: oat/oat_cosmo_peakweather-temp_precip_20261105_job353227/best-model-epoch=24-val_loss=0.1873.ckpt
+  no_query_noise: oat/oat_cosmo_peakweather-temp_precip_20261105_job353280/best-model-epoch=72-val_loss=0.1842.ckpt
+
 era5_meteostat:
+  # --- Paper ---
   interpolator: interpolator
   cosmo_interpolator: cosmo_interpolator
   oat_temp_precip: oat/oat_field_era5_meteostat-temp_precip_bn_20261006/best-model-epoch=479-val_loss=0.1908.ckpt
@@ -38,6 +53,15 @@ era5_meteostat:
   deep_gp_oat_precip: deep_gp_oat/deep_gp_oat_field_era5_meteostat-precip_20260824_job5175186/best-model-epoch=05-val_crps_prcp=0.0712.ckpt
   oat_spatial_holdout_temp_precip: oat/oat_era5_meteostat-temp_precip_20260923_job5379412/best-model-epoch=95-val_loss=0.1903.ckpt
   uninformed_spatial_holdout_temp_precip: uninformed_oat/uninformed_oat_era5_meteostat-temp_precip_20260923_job5380005/best-model-epoch=88-val_loss=0.2350.ckpt
+
+  # --- Other: missing-observation handling ---
   zero_fill: oat/oat_zerofill_s42_era5_meteostat-temp_precip/best-model-epoch=392-val_loss=0.1959.ckpt
   mask_gate: oat/oat_maskgate_s42_era5_meteostat-temp_precip/best-model-epoch=420-val_loss=0.1937.ckpt
   missing_token: oat/oat_missingtoken_s42_era5_meteostat-temp_precip/best-model-epoch=420-val_loss=0.1936.ckpt
+
+  # --- Other: query noise ---
+  rff_field: oat/oat_era5_meteostat-temp_precip_20261104_job349725/best-model-epoch=95-val_loss=0.1968.ckpt
+  rff_field_obs_embedding: oat/oat_era5_meteostat-temp_precip_20261105_job353228/best-model-epoch=97-val_loss=0.1949.ckpt
+  rff_field_k16: oat/oat_era5_meteostat-temp_precip_20261105_job353229/best-model-epoch=95-val_loss=0.1956.ckpt
+  rff_field_no_2km: oat/oat_era5_meteostat-temp_precip_20261105_job353236/best-model-epoch=95-val_loss=0.1967.ckpt
+  no_query_noise: oat/oat_era5_meteostat-temp_precip_20261105_job353276/best-model-epoch=98-val_loss=0.1962.ckpt

@@ -109,7 +109,7 @@ def point_mae(y_target, y_hat, mask=None, aggregation: Literal["all", "variable"
 
 @register_metric()
 def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Tensor] = None,
-            aggregation: Literal["all", "variable", "station"] = "all") -> torch.Tensor:
+            aggregation: Literal["all", "variable", "station", "none"] = "all") -> torch.Tensor:
     """
     Computes the Monte Carlo estimation of CRPS. 
     If aggregation = "all", this function computes the average CRPS 
@@ -122,6 +122,8 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
     If aggregation = "all", output is a 0-dimensional tensor containing the averaged
     metric.
     If aggregation = "variable", output is 1-dimensional, with one value per variable.
+    If aggregation = "none", output is the score for each element, shape
+    [batch,station,features]. The caller must apply the mask.
     """
     
     if mask is None:
@@ -154,6 +156,8 @@ def mc_crps(y_target: torch.Tensor, y_hat: torch.Tensor, mask: Optional[torch.Te
     
     score = first_term - 0.5 * second_term 
 
+    if aggregation == "none":
+        return score
     if aggregation == "variable":
         return score.sum(dim=(0,1)) / mask.sum(dim=(0,1))
     elif aggregation == "all":

@@ -23,3 +23,4 @@ end_date: null
 use_time_embedding: true
 dtype: float32
 data_points_for_stats: 4096
+index_coord_km_per_unit: 6371.0 # km per index coordinate unit (unit sphere, chordal)
