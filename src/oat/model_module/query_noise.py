@@ -144,10 +144,18 @@ class SampleHead(nn.Module):
         num_scales: int = 1,
         nugget_index: int = 0,
         mixture_init_logit: float = -4.0,
+        vs_warmup_epochs: int = 0,
+        vs_ramp_epochs: int = 0,
     ) -> None:
         super().__init__()
         self.vs_weight = vs_weight
         self.vs_p = vs_p
+        if vs_warmup_epochs < 0 or vs_ramp_epochs < 0:
+            raise ValueError("vs_warmup_epochs and vs_ramp_epochs must be 0 or more.")
+        self.vs_warmup_epochs = vs_warmup_epochs
+        self.vs_ramp_epochs = vs_ramp_epochs
+        # Plain float, not a buffer: no state_dict key. The predictor sets it.
+        self.epoch = 0.0
         if mixing not in ("channels", "scale_mixture"):
             raise ValueError(
                 f"mixing must be 'channels' or 'scale_mixture', not {mixing!r}."
@@ -190,6 +198,19 @@ class SampleHead(nn.Module):
             width = in_features
         layers.append(nn.Linear(width, len(names)))
         self.mlp = nn.Sequential(*layers)
+
+    def train_vs_weight(self) -> float:
+        """VS weight in training for the current epoch.
+
+        0 for epoch < vs_warmup_epochs. Then linear up to vs_weight over
+        vs_ramp_epochs. Then vs_weight.
+        """
+        done = self.epoch - self.vs_warmup_epochs
+        if done < 0:
+            return 0.0
+        if self.vs_ramp_epochs == 0:
+            return self.vs_weight
+        return self.vs_weight * min(1.0, (done + 1) / self.vs_ramp_epochs)
 
     @property
     def pi(self) -> Tensor | None:
@@ -248,7 +269,8 @@ class SampleHead(nn.Module):
         """Get the fair ensemble CRPS plus the optional variogram score.
 
         The CRPS is normalized for each sample. For each variable v, the loss is
-        (L_crps_v + vs_weight * L_vs_v) * loss_scaling_v.
+        (L_crps_v + w * L_vs_v) * loss_scaling_v. In training, w is
+        train_vs_weight(). In eval mode, w is vs_weight.
 
         Args:
             members: Samples, shape [B, N, M, V].
@@ -268,7 +290,9 @@ class SampleHead(nn.Module):
             mc_crps,
         )
 
-        use_vs = self.vs_weight > 0
+        # Validation and test always use the full weight.
+        weight = self.train_vs_weight() if self.training else self.vs_weight
+        use_vs = weight > 0
         if use_vs and coords_km is None:
             raise ValueError("coords_km is needed when vs_weight is more than 0.")
         valid = mask > 0.5
@@ -293,7 +317,7 @@ class SampleHead(nn.Module):
                 n_pair = has_pair[:, i].sum().clamp(min=1).to(vs_score.dtype)
                 vs_v = vs_score[:, i].sum() / n_pair
                 vs_per_var[name] = vs_v.detach()
-                loss_v = loss_v + self.vs_weight * vs_v
+                loss_v = loss_v + weight * vs_v
             loss_v = loss_v * self.loss_scaling[i].to(members.dtype)
             per_var[name] = loss_v.detach()
             total = total + loss_v

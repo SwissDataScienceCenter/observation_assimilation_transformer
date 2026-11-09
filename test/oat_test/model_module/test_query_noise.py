@@ -265,3 +265,43 @@ def test_mixture_delta_gets_gradient():
     y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 8))
     y.sum().backward()
     assert head.mixture_delta.grad is not None
+
+
+@pytest.mark.parametrize(
+    "epoch,expected",
+    [(0, 0.0), (9, 0.0), (10, 0.05), (14, 0.25), (19, 0.5), (30, 0.5)],
+)
+def test_train_vs_weight_schedule(epoch, expected):
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=10, vs_ramp_epochs=10)
+    head.epoch = float(epoch)
+    assert head.train_vs_weight() == pytest.approx(expected)
+
+
+def test_no_ramp_jumps_to_full_weight():
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=3)
+    head.epoch = 3.0
+    assert head.train_vs_weight() == 0.5
+
+
+def test_warmup_train_has_no_vs_eval_has_vs():
+    torch.manual_seed(0)
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=10)
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 4))
+    t, m, xy = torch.randn(2, 4, 1), torch.ones(2, 4, 1), torch.randn(2, 4, 2)
+    head.train()
+    _, _, vs_train = head.loss(y, t, m, xy)
+    head.eval()
+    _, _, vs_eval = head.loss(y, t, m, xy)
+    assert vs_train == {} and set(vs_eval) == {"v0"}
+
+
+def test_epoch_is_not_state():
+    head = _head(vs_warmup_epochs=2)
+    head.epoch = 5.0
+    assert "epoch" not in head.state_dict()
+
+
+@pytest.mark.parametrize("kw", [{"vs_warmup_epochs": -1}, {"vs_ramp_epochs": -1}])
+def test_negative_schedule_rejected(kw):
+    with pytest.raises(ValueError):
+        _head(**kw)
