@@ -190,3 +190,186 @@ def test_sample_head_vs_dry_members_finite_gradients():
     grads = [p.grad for p in head.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
     assert torch.isfinite(h.grad).all()
+
+
+def _mix_head(S=2, C=4, nugget_index=0, **kw):
+    v2d = {"v0": "normal"}
+    return SampleHead(
+        in_features=8,
+        noise_channels=S * C,
+        output_head=OutputHead(8, v2d),
+        mixing="scale_mixture",
+        num_scales=S,
+        nugget_index=nugget_index,
+        **kw,
+    )
+
+
+def test_mixture_init_pi_on_nugget():
+    head = _mix_head(S=5, nugget_index=0)
+    pi = head.pi
+    assert torch.allclose(pi.sum(), torch.tensor(1.0))
+    assert abs(pi[0].item() - 1 / (1 + 4 * math.exp(-4.0))) < 1e-6
+    assert torch.allclose(pi[1:], pi[1].expand(4))
+
+
+def test_mixture_output_has_C_channels_and_unit_variance():
+    torch.manual_seed(0)
+    head = _mix_head(S=3, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([0.0, 3.0, 4.0]))
+    out = head.mix_noise(torch.randn(1, 2000, 8, 12))
+    assert out.shape == (1, 2000, 8, 4)
+    assert abs(out.var().item() - 1.0) < 0.05
+
+
+def test_mixture_correlation_matches_mixture_kernel():
+    # The field and the head together: the head must group the channels of
+    # one length scale. Check each output channel, because a wrong grouping
+    # can give the correct mean over the channels.
+    torch.manual_seed(0)
+    field = RFFNoiseField((0.1, 20.0), 1.0, 4, 512)
+    head = _mix_head(S=2, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([0.0, 4.0]))  # pi = [0.5, 0.5]
+    coords = torch.tensor([[[0.0, 0.0], [10.0, 0.0]]]).expand(4000, 2, 2).contiguous()
+    draw = field.draw(4000, 1, 2, torch.device("cpu"), torch.float32)
+    mixed = head.mix_noise(draw.evaluate(coords))  # [4000, 2, 1, 4]
+    expected = 0.5 * math.exp(-(10.0**2) / (2 * 20.0**2))
+    for c in range(4):
+        a, b = mixed[:, 0, 0, c], mixed[:, 1, 0, c]
+        corr = torch.corrcoef(torch.stack([a, b]))[0, 1].item()
+        assert abs(corr - expected) < 0.08, (c, corr)
+
+
+def test_mixture_needs_matching_channels():
+    with pytest.raises(ValueError):
+        SampleHead(
+            in_features=8,
+            noise_channels=10,
+            output_head=OutputHead(8, {"v0": "normal"}),
+            mixing="scale_mixture",
+            num_scales=3,
+        )
+
+
+def test_channels_mode_has_no_new_state():
+    head = _head()
+    assert head.pi is None
+    assert not any("mixture" in k for k in head.state_dict())
+    eps = torch.randn(2, 3, 5, 4)
+    assert torch.equal(head.mix_noise(eps), eps)
+
+
+def test_mixture_delta_gets_gradient():
+    torch.manual_seed(0)
+    head = _mix_head(S=2, C=4)
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 8))
+    y.sum().backward()
+    assert head.mixture_delta.grad is not None
+
+
+@pytest.mark.parametrize(
+    "epoch,expected",
+    [(0, 0.0), (9, 0.0), (10, 0.05), (14, 0.25), (19, 0.5), (30, 0.5)],
+)
+def test_train_vs_weight_schedule(epoch, expected):
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=10, vs_ramp_epochs=10)
+    head.epoch = float(epoch)
+    assert head.train_vs_weight() == pytest.approx(expected)
+
+
+def test_no_ramp_jumps_to_full_weight():
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=3)
+    head.epoch = 3.0
+    assert head.train_vs_weight() == 0.5
+
+
+def test_warmup_train_has_no_vs_eval_has_vs():
+    torch.manual_seed(0)
+    head = _head(("normal",), vs_weight=0.5, vs_warmup_epochs=10)
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 4))
+    t, m, xy = torch.randn(2, 4, 1), torch.ones(2, 4, 1), torch.randn(2, 4, 2)
+    head.train()
+    _, _, vs_train = head.loss(y, t, m, xy)
+    head.eval()
+    _, _, vs_eval = head.loss(y, t, m, xy)
+    assert vs_train == {} and set(vs_eval) == {"v0"}
+
+
+def test_epoch_is_not_state():
+    head = _head(vs_warmup_epochs=2)
+    head.epoch = 5.0
+    assert "epoch" not in head.state_dict()
+
+
+@pytest.mark.parametrize("kw", [{"vs_warmup_epochs": -1}, {"vs_ramp_epochs": -1}])
+def test_negative_schedule_rejected(kw):
+    with pytest.raises(ValueError):
+        _head(**kw)
+
+
+def _pv_head(S=2, C=4, dists=("normal", "zero_inflated_lognormal"), **kw):
+    v2d = {f"v{i}": d for i, d in enumerate(dists)}
+    return SampleHead(
+        in_features=8,
+        noise_channels=S * C,
+        output_head=OutputHead(8, v2d),
+        mixing="scale_mixture",
+        num_scales=S,
+        per_variable=True,
+        **kw,
+    )
+
+
+def test_per_variable_pi_has_one_row_per_variable_at_nugget():
+    head = _pv_head(S=3, nugget_index=1)
+    pi = head.pi
+    assert pi.shape == (2, 3)
+    assert torch.allclose(pi.sum(dim=1), torch.ones(2))
+    assert (pi.argmax(dim=1) == 1).all()
+
+
+def test_per_variable_heads_are_independent():
+    torch.manual_seed(0)
+    head = _pv_head()
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 8))
+    assert y.shape == (2, 4, 5, 2)
+    y[..., 0].sum().backward()
+    assert head.mlps[0][0].weight.grad.abs().sum() > 0
+    grad_1 = head.mlps[1][0].weight.grad
+    assert grad_1 is None or grad_1.abs().sum() == 0
+    assert head.mixture_delta.grad[1].abs().sum() == 0
+    assert head.mixture_delta.grad[0].abs().sum() > 0
+
+
+def test_per_variable_mix_uses_its_own_pi():
+    torch.manual_seed(0)
+    head = _pv_head(S=2, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([[0.0, 0.0], [0.0, 8.0]]))
+    eps = torch.randn(1, 3, 2, 8)
+    expected_1 = eps.unflatten(-1, (2, 4)) * head.pi[1].sqrt().unsqueeze(-1)
+    assert torch.allclose(head.mix_noise(eps, variable=1), expected_1.sum(-2))
+    assert not torch.allclose(head.mix_noise(eps, variable=0), expected_1.sum(-2))
+
+
+def test_per_variable_keeps_exact_zeros():
+    torch.manual_seed(0)
+    y = _pv_head()(torch.randn(2, 5, 8), torch.randn(2, 5, 6, 8))
+    assert (y[..., 1] >= 0).all()
+
+
+def test_per_variable_without_mixture_reads_raw_channels():
+    head = SampleHead(
+        in_features=8,
+        noise_channels=4,
+        output_head=OutputHead(8, {"a": "normal", "b": "normal"}),
+        per_variable=True,
+    )
+    assert head.pi is None
+    assert head(torch.randn(2, 3, 8), torch.randn(2, 3, 5, 4)).shape == (2, 3, 5, 2)
+
+
+def test_shared_head_has_no_per_variable_keys():
+    assert not any(k.startswith("mlps.") for k in _head().state_dict())

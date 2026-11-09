@@ -165,6 +165,11 @@ class QueryNoiseConfig:
     train_members: int = 8
     vs_weight: float = 0.0
     vs_p: float = 0.5
+    mixing: str = "channels"
+    mixture_init_logit: float = -4.0
+    vs_warmup_epochs: int = 0
+    vs_ramp_epochs: int = 0
+    per_variable: bool = False
 
 
 @dataclass
@@ -595,6 +600,18 @@ class OAT(UninformedOAT):
                 raise ValueError("query_noise.vs_weight must be 0 or more.")
             if qn.vs_p <= 0:
                 raise ValueError("query_noise.vs_p must be more than 0.")
+            if any(length <= 0 for length in qn.length_scales_km):
+                raise ValueError("query_noise.length_scales_km must be more than 0.")
+            if qn.mixing == "scale_mixture" and min(qn.length_scales_km) > 1.0:
+                raise ValueError(
+                    "scale_mixture needs a nugget scale "
+                    "(a length scale of 1 km or less)."
+                )
+            scales = list(qn.length_scales_km)
+            if qn.mixing == "scale_mixture" and len(set(scales)) != len(scales):
+                # pi has one weight for each scale. Equal scales are not useful and
+                # give two pi logs with the same name.
+                raise ValueError("scale_mixture needs different length scales.")
             if (
                 config.output_head.observation_assimilation_as == "innovation"
                 and config.pre_oat_loss_weight <= 0
@@ -619,6 +636,17 @@ class OAT(UninformedOAT):
                 mlp_hidden_layers=qn.mlp_hidden_layers,
                 vs_weight=qn.vs_weight,
                 vs_p=qn.vs_p,
+                mixing=qn.mixing,
+                num_scales=len(qn.length_scales_km),
+                # The nugget is the smallest scale. The list can be unsorted.
+                nugget_index=min(
+                    range(len(qn.length_scales_km)),
+                    key=lambda i: qn.length_scales_km[i],
+                ),
+                mixture_init_logit=qn.mixture_init_logit,
+                vs_warmup_epochs=qn.vs_warmup_epochs,
+                vs_ramp_epochs=qn.vs_ramp_epochs,
+                per_variable=qn.per_variable,
             )
 
     @property

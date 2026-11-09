@@ -195,3 +195,136 @@ def test_vs_config_validation(model_cfg_fixture, kw):
     model_cfg_fixture.pre_oat_loss_weight = 0.1
     with pytest.raises(ValueError):
         OAT(model_cfg_fixture)
+
+
+def test_mixture_nugget_index_is_argmin(model_cfg_fixture):
+    cfg = _noise_on(
+        model_cfg_fixture, mixing="scale_mixture", length_scales_km=(2.0, 0.1, 8.0)
+    )
+    head = OAT(cfg).sample_head
+    assert head.pi.argmax().item() == 1
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"mixing": "scale_mixture"},  # (2, 8): no scale of 1 km or less
+        {"length_scales_km": (0.0, 2.0)},
+        {"mixing": "other"},
+        {"vs_warmup_epochs": -1},
+        # Two equal scales give two pi logs with the same name.
+        {"mixing": "scale_mixture", "length_scales_km": (0.1, 2.0, 2.0)},
+    ],
+)
+def test_mixture_config_validation(model_cfg_fixture, kw):
+    with pytest.raises(ValueError):
+        OAT(_noise_on(model_cfg_fixture, **kw))
+
+
+def test_default_mixing_keeps_state_dict_keys(model_cfg_fixture):
+    keys_default = list(OAT(_noise_on(model_cfg_fixture)).state_dict())
+    keys_channels = list(
+        OAT(_noise_on(model_cfg_fixture, mixing="channels")).state_dict()
+    )
+    assert keys_default == keys_channels
+    assert not any("mixture" in k for k in keys_default)
+
+
+def test_warmup_oat_train_no_vs_eval_vs(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        vs_warmup_epochs=5,
+    )
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    model.train()
+    out, _, loss = _loss(model, batch, target, mask)
+    assert torch.isfinite(loss) and "loss_vs" not in out
+    model.eval()
+    out, _, _ = _loss(model, batch, target, mask)
+    assert "loss_vs" in out
+
+
+def _predictor(cfg, transform_fixture):
+    input_transform, output_transform = transform_fixture
+    return OATPredictor(
+        field_roles=FIELD_ROLES,
+        oat_model_cfg=cfg,
+        input_transform=input_transform,
+        output_transform=output_transform,
+        output_var_names=list(cfg.output_head.variable_to_distribution),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+
+def test_epoch_hook_sets_epoch_and_logs(
+    model_cfg_fixture, transform_fixture, monkeypatch
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        vs_warmup_epochs=2,
+    )
+    pred = _predictor(cfg, transform_fixture)
+    monkeypatch.setattr(type(pred), "current_epoch", property(lambda s: 3))
+    logged = {}
+    monkeypatch.setattr(
+        pred, "log", lambda name, value, **kw: logged.__setitem__(name, float(value))
+    )
+    pred.on_train_epoch_start()
+    assert pred.model.sample_head.epoch == 3.0
+    assert set(logged) == {"noise_pi_0.1km", "noise_pi_8km", "vs_weight_effective"}
+    assert logged["vs_weight_effective"] == 0.5
+    assert logged["noise_pi_0.1km"] + logged["noise_pi_8km"] == pytest.approx(1.0)
+
+
+def test_epoch_hook_without_query_noise(model_cfg_fixture, transform_fixture):
+    pred = _predictor(model_cfg_fixture, transform_fixture)
+    pred.on_train_epoch_start()  # must not fail
+    assert not hasattr(pred.model, "sample_head")
+
+
+def test_per_variable_oat_loss_and_gradients(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        per_variable=True,
+    )
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    names = list(cfg.output_head.variable_to_distribution)
+    assert model.sample_head.pi.shape == (len(names), 2)
+    out, _, loss = _loss(model, batch, target, mask)
+    assert torch.isfinite(loss) and set(out["loss_vs"]) == set(names)
+    loss.backward()
+    assert model.sample_head.mixture_delta.grad is not None
+
+
+def test_epoch_hook_logs_pi_for_each_variable(
+    model_cfg_fixture, transform_fixture, monkeypatch
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        per_variable=True,
+    )
+    pred = _predictor(cfg, transform_fixture)
+    logged = {}
+    monkeypatch.setattr(
+        pred, "log", lambda name, value, **kw: logged.__setitem__(name, float(value))
+    )
+    pred.on_train_epoch_start()
+    names = list(cfg.output_head.variable_to_distribution)
+    expected = {f"noise_pi_{v}_{s}km" for v in names for s in ("0.1", "8")}
+    assert set(logged) == expected
