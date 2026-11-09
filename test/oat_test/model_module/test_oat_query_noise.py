@@ -195,3 +195,53 @@ def test_vs_config_validation(model_cfg_fixture, kw):
     model_cfg_fixture.pre_oat_loss_weight = 0.1
     with pytest.raises(ValueError):
         OAT(model_cfg_fixture)
+
+
+def test_mixture_nugget_index_is_argmin(model_cfg_fixture):
+    cfg = _noise_on(
+        model_cfg_fixture, mixing="scale_mixture", length_scales_km=(2.0, 0.1, 8.0)
+    )
+    head = OAT(cfg).sample_head
+    assert head.pi.argmax().item() == 1
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"mixing": "scale_mixture"},  # (2, 8): no scale of 1 km or less
+        {"length_scales_km": (0.0, 2.0)},
+        {"mixing": "other"},
+        {"vs_warmup_epochs": -1},
+    ],
+)
+def test_mixture_config_validation(model_cfg_fixture, kw):
+    with pytest.raises(ValueError):
+        OAT(_noise_on(model_cfg_fixture, **kw))
+
+
+def test_default_mixing_keeps_state_dict_keys(model_cfg_fixture):
+    keys_default = list(OAT(_noise_on(model_cfg_fixture)).state_dict())
+    keys_channels = list(
+        OAT(_noise_on(model_cfg_fixture, mixing="channels")).state_dict()
+    )
+    assert keys_default == keys_channels
+    assert not any("mixture" in k for k in keys_default)
+
+
+def test_warmup_oat_train_no_vs_eval_vs(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        vs_warmup_epochs=5,
+    )
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    model.train()
+    out, _, loss = _loss(model, batch, target, mask)
+    assert torch.isfinite(loss) and "loss_vs" not in out
+    model.eval()
+    out, _, _ = _loss(model, batch, target, mask)
+    assert "loss_vs" in out

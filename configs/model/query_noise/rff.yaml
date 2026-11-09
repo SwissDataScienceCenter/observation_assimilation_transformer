@@ -7,3 +7,9 @@ mlp_hidden_layers: 2
 train_members: 8
 vs_weight: 0.0
 vs_p: 0.5
+# Scale mixture of the noise channels (see the 2026-11-09 design): channels | scale_mixture.
+mixing: channels
+mixture_init_logit: -4.0
+# VS weight in training: 0 for vs_warmup_epochs, then linear over vs_ramp_epochs.
+vs_warmup_epochs: 0
+vs_ramp_epochs: 0
