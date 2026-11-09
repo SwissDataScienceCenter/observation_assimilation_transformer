@@ -13,3 +13,5 @@ mixture_init_logit: -4.0
 # VS weight in training: 0 for vs_warmup_epochs, then linear over vs_ramp_epochs.
 vs_warmup_epochs: 0
 vs_ramp_epochs: 0
+# One sample head and one scale mixture for each variable (same noise draw).
+per_variable: false

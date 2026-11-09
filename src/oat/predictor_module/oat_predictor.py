@@ -249,13 +249,21 @@ class OATPredictor(BasePredictor):
             field = self.model.noise_field
             scales_km = field.length_scales[:: head.channels_per_scale]
             scales_km = scales_km * self.model.km_per_unit
-            for scale, weight in zip(scales_km, pi, strict=True):
-                self.log(
-                    f"noise_pi_{float(scale):g}km",
-                    weight.detach(),
-                    on_step=False,
-                    on_epoch=True,
-                )
+            if pi.dim() == 1:
+                rows = [("", pi)]
+            else:
+                rows = [
+                    (f"{v}_", p)
+                    for v, p in zip(head.variable_names, pi, strict=True)
+                ]
+            for prefix, row in rows:
+                for scale, weight in zip(scales_km, row, strict=True):
+                    self.log(
+                        f"noise_pi_{prefix}{float(scale):g}km",
+                        weight.detach(),
+                        on_step=False,
+                        on_epoch=True,
+                    )
 
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
         # This is done in parallel by all group members.

@@ -169,6 +169,7 @@ class QueryNoiseConfig:
     mixture_init_logit: float = -4.0
     vs_warmup_epochs: int = 0
     vs_ramp_epochs: int = 0
+    per_variable: bool = False
 
 
 @dataclass
@@ -645,6 +646,7 @@ class OAT(UninformedOAT):
                 mixture_init_logit=qn.mixture_init_logit,
                 vs_warmup_epochs=qn.vs_warmup_epochs,
                 vs_ramp_epochs=qn.vs_ramp_epochs,
+                per_variable=qn.per_variable,
             )
 
     @property

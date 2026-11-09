@@ -289,3 +289,42 @@ def test_epoch_hook_without_query_noise(model_cfg_fixture, transform_fixture):
     pred = _predictor(model_cfg_fixture, transform_fixture)
     pred.on_train_epoch_start()  # must not fail
     assert not hasattr(pred.model, "sample_head")
+
+
+def test_per_variable_oat_loss_and_gradients(
+    model_cfg_fixture, batch_fixture, transform_fixture
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        per_variable=True,
+    )
+    model, batch, target, mask = _inputs(cfg, batch_fixture, transform_fixture)
+    names = list(cfg.output_head.variable_to_distribution)
+    assert model.sample_head.pi.shape == (len(names), 2)
+    out, _, loss = _loss(model, batch, target, mask)
+    assert torch.isfinite(loss) and set(out["loss_vs"]) == set(names)
+    loss.backward()
+    assert model.sample_head.mixture_delta.grad is not None
+
+
+def test_epoch_hook_logs_pi_for_each_variable(
+    model_cfg_fixture, transform_fixture, monkeypatch
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        per_variable=True,
+    )
+    pred = _predictor(cfg, transform_fixture)
+    logged = {}
+    monkeypatch.setattr(
+        pred, "log", lambda name, value, **kw: logged.__setitem__(name, float(value))
+    )
+    pred.on_train_epoch_start()
+    names = list(cfg.output_head.variable_to_distribution)
+    expected = {f"noise_pi_{v}_{s}km" for v in names for s in ("0.1", "8")}
+    assert set(logged) == expected
