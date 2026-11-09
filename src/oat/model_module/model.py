@@ -606,6 +606,11 @@ class OAT(UninformedOAT):
                     "scale_mixture needs a nugget scale "
                     "(a length scale of 1 km or less)."
                 )
+            scales = list(qn.length_scales_km)
+            if qn.mixing == "scale_mixture" and len(set(scales)) != len(scales):
+                # pi has one weight for each scale. Equal scales are not useful and
+                # give two pi logs with the same name.
+                raise ValueError("scale_mixture needs different length scales.")
             if (
                 config.output_head.observation_assimilation_as == "innovation"
                 and config.pre_oat_loss_weight <= 0

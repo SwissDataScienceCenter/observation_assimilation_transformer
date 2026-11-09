@@ -225,7 +225,8 @@ def test_mixture_output_has_C_channels_and_unit_variance():
 
 def test_mixture_correlation_matches_mixture_kernel():
     # The field and the head together: the head must group the channels of
-    # one length scale.
+    # one length scale. Check each output channel, because a wrong grouping
+    # can give the correct mean over the channels.
     torch.manual_seed(0)
     field = RFFNoiseField((0.1, 20.0), 1.0, 4, 512)
     head = _mix_head(S=2, C=4)
@@ -233,11 +234,12 @@ def test_mixture_correlation_matches_mixture_kernel():
         head.mixture_delta.copy_(torch.tensor([0.0, 4.0]))  # pi = [0.5, 0.5]
     coords = torch.tensor([[[0.0, 0.0], [10.0, 0.0]]]).expand(4000, 2, 2).contiguous()
     draw = field.draw(4000, 1, 2, torch.device("cpu"), torch.float32)
-    mixed = head.mix_noise(draw.evaluate(coords))
-    a, b = mixed[:, 0].flatten(), mixed[:, 1].flatten()
-    corr = torch.corrcoef(torch.stack([a, b]))[0, 1].item()
+    mixed = head.mix_noise(draw.evaluate(coords))  # [4000, 2, 1, 4]
     expected = 0.5 * math.exp(-(10.0**2) / (2 * 20.0**2))
-    assert abs(corr - expected) < 0.05
+    for c in range(4):
+        a, b = mixed[:, 0, 0, c], mixed[:, 1, 0, c]
+        corr = torch.corrcoef(torch.stack([a, b]))[0, 1].item()
+        assert abs(corr - expected) < 0.08, (c, corr)
 
 
 def test_mixture_needs_matching_channels():

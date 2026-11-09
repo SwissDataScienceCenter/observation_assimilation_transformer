@@ -212,6 +212,8 @@ def test_mixture_nugget_index_is_argmin(model_cfg_fixture):
         {"length_scales_km": (0.0, 2.0)},
         {"mixing": "other"},
         {"vs_warmup_epochs": -1},
+        # Two equal scales give two pi logs with the same name.
+        {"mixing": "scale_mixture", "length_scales_km": (0.1, 2.0, 2.0)},
     ],
 )
 def test_mixture_config_validation(model_cfg_fixture, kw):
