@@ -190,3 +190,78 @@ def test_sample_head_vs_dry_members_finite_gradients():
     grads = [p.grad for p in head.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
     assert torch.isfinite(h.grad).all()
+
+
+def _mix_head(S=2, C=4, nugget_index=0, **kw):
+    v2d = {"v0": "normal"}
+    return SampleHead(
+        in_features=8,
+        noise_channels=S * C,
+        output_head=OutputHead(8, v2d),
+        mixing="scale_mixture",
+        num_scales=S,
+        nugget_index=nugget_index,
+        **kw,
+    )
+
+
+def test_mixture_init_pi_on_nugget():
+    head = _mix_head(S=5, nugget_index=0)
+    pi = head.pi
+    assert torch.allclose(pi.sum(), torch.tensor(1.0))
+    assert abs(pi[0].item() - 1 / (1 + 4 * math.exp(-4.0))) < 1e-6
+    assert torch.allclose(pi[1:], pi[1].expand(4))
+
+
+def test_mixture_output_has_C_channels_and_unit_variance():
+    torch.manual_seed(0)
+    head = _mix_head(S=3, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([0.0, 3.0, 4.0]))
+    out = head.mix_noise(torch.randn(1, 2000, 8, 12))
+    assert out.shape == (1, 2000, 8, 4)
+    assert abs(out.var().item() - 1.0) < 0.05
+
+
+def test_mixture_correlation_matches_mixture_kernel():
+    # The field and the head together: the head must group the channels of
+    # one length scale.
+    torch.manual_seed(0)
+    field = RFFNoiseField((0.1, 20.0), 1.0, 4, 512)
+    head = _mix_head(S=2, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([0.0, 4.0]))  # pi = [0.5, 0.5]
+    coords = torch.tensor([[[0.0, 0.0], [10.0, 0.0]]]).expand(4000, 2, 2).contiguous()
+    draw = field.draw(4000, 1, 2, torch.device("cpu"), torch.float32)
+    mixed = head.mix_noise(draw.evaluate(coords))
+    a, b = mixed[:, 0].flatten(), mixed[:, 1].flatten()
+    corr = torch.corrcoef(torch.stack([a, b]))[0, 1].item()
+    expected = 0.5 * math.exp(-(10.0**2) / (2 * 20.0**2))
+    assert abs(corr - expected) < 0.05
+
+
+def test_mixture_needs_matching_channels():
+    with pytest.raises(ValueError):
+        SampleHead(
+            in_features=8,
+            noise_channels=10,
+            output_head=OutputHead(8, {"v0": "normal"}),
+            mixing="scale_mixture",
+            num_scales=3,
+        )
+
+
+def test_channels_mode_has_no_new_state():
+    head = _head()
+    assert head.pi is None
+    assert not any("mixture" in k for k in head.state_dict())
+    eps = torch.randn(2, 3, 5, 4)
+    assert torch.equal(head.mix_noise(eps), eps)
+
+
+def test_mixture_delta_gets_gradient():
+    torch.manual_seed(0)
+    head = _mix_head(S=2, C=4)
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 8))
+    y.sum().backward()
+    assert head.mixture_delta.grad is not None

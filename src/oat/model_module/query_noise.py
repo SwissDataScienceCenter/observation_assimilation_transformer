@@ -140,10 +140,35 @@ class SampleHead(nn.Module):
         mlp_hidden_layers: int = 2,
         vs_weight: float = 0.0,
         vs_p: float = 0.5,
+        mixing: str = "channels",
+        num_scales: int = 1,
+        nugget_index: int = 0,
+        mixture_init_logit: float = -4.0,
     ) -> None:
         super().__init__()
         self.vs_weight = vs_weight
         self.vs_p = vs_p
+        if mixing not in ("channels", "scale_mixture"):
+            raise ValueError(
+                f"mixing must be 'channels' or 'scale_mixture', not {mixing!r}."
+            )
+        self.mixing = mixing
+        self.num_scales = num_scales
+        head_noise_channels = noise_channels
+        if mixing == "scale_mixture":
+            if num_scales < 1 or noise_channels % num_scales != 0:
+                raise ValueError(
+                    f"noise_channels ({noise_channels}) must be a multiple of "
+                    f"num_scales ({num_scales})."
+                )
+            self.channels_per_scale = noise_channels // num_scales
+            head_noise_channels = self.channels_per_scale
+            a0 = torch.full((num_scales,), float(mixture_init_logit))
+            a0[nugget_index] = 0.0
+            # The logits are a0 + delta. The weight decay pulls delta to 0, thus
+            # it pulls pi back to the init (nugget only), not to a uniform pi.
+            self.register_buffer("mixture_a0", a0)
+            self.mixture_delta = nn.Parameter(torch.zeros(num_scales))
         names = list(output_head.variable_to_distribution)
         self.variable_names = names
         lower = [
@@ -159,12 +184,41 @@ class SampleHead(nn.Module):
         # Same loop as MLPTopographyEncoder and PointGlobalEncoder. Keep the copy
         # until a shared build_mlp helper exists.
         layers: list[nn.Module] = []
-        width = in_features + noise_channels
+        width = in_features + head_noise_channels
         for _ in range(mlp_hidden_layers):
             layers += [nn.Linear(width, in_features), get_activation("GELU")]
             width = in_features
         layers.append(nn.Linear(width, len(names)))
         self.mlp = nn.Sequential(*layers)
+
+    @property
+    def pi(self) -> Tensor | None:
+        """Mixture weight of each length scale, shape [S]. None for `channels`."""
+        if self.mixing != "scale_mixture":
+            return None
+        return torch.softmax(self.mixture_a0 + self.mixture_delta, dim=0)
+
+    def mix_noise(self, eps: Tensor) -> Tensor:
+        """Mix the length scales of the noise channels.
+
+        For `scale_mixture`, channel c of the output is
+        sum_s sqrt(pi_s) * eps[s, c]. It has unit variance and the correlation
+        sum_s pi_s * k_s(d). At one point the output is N(0, I) for all pi, thus
+        the CRPS does not change pi in expectation. Only the VS term does.
+        The field orders the channels scale first (c // channels_per_scale).
+
+        Args:
+            eps: Noise, shape [B, N, M, S*C].
+
+        Returns:
+            Noise, shape [B, N, M, C] for `scale_mixture`, else eps.
+        """
+        pi = self.pi
+        if pi is None:
+            return eps
+        grouped = eps.unflatten(-1, (self.num_scales, self.channels_per_scale))
+        weight = pi.sqrt().to(eps.dtype).unsqueeze(-1)  # [S, 1]
+        return (grouped * weight).sum(dim=-2)
 
     def forward(self, h: Tensor, eps: Tensor) -> Tensor:
         """Get samples.
@@ -176,6 +230,7 @@ class SampleHead(nn.Module):
         Returns:
             Samples, shape [B, N, M, V].
         """
+        eps = self.mix_noise(eps)
         h_exp = h.unsqueeze(2).expand(-1, -1, eps.shape[2], -1)
         z = self.mlp(torch.cat([h_exp, eps], dim=-1))
         lb = self.lower_bounds.to(z.dtype)
