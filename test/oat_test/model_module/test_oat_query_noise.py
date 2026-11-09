@@ -245,3 +245,45 @@ def test_warmup_oat_train_no_vs_eval_vs(
     model.eval()
     out, _, _ = _loss(model, batch, target, mask)
     assert "loss_vs" in out
+
+
+def _predictor(cfg, transform_fixture):
+    input_transform, output_transform = transform_fixture
+    return OATPredictor(
+        field_roles=FIELD_ROLES,
+        oat_model_cfg=cfg,
+        input_transform=input_transform,
+        output_transform=output_transform,
+        output_var_names=list(cfg.output_head.variable_to_distribution),
+        lr=1e-3,
+        optimizer_class=torch.optim.AdamW,
+    )
+
+
+def test_epoch_hook_sets_epoch_and_logs(
+    model_cfg_fixture, transform_fixture, monkeypatch
+):
+    cfg = _noise_on(
+        model_cfg_fixture,
+        mixing="scale_mixture",
+        length_scales_km=(0.1, 8.0),
+        vs_weight=0.5,
+        vs_warmup_epochs=2,
+    )
+    pred = _predictor(cfg, transform_fixture)
+    monkeypatch.setattr(type(pred), "current_epoch", property(lambda s: 3))
+    logged = {}
+    monkeypatch.setattr(
+        pred, "log", lambda name, value, **kw: logged.__setitem__(name, float(value))
+    )
+    pred.on_train_epoch_start()
+    assert pred.model.sample_head.epoch == 3.0
+    assert set(logged) == {"noise_pi_0.1km", "noise_pi_8km", "vs_weight_effective"}
+    assert logged["vs_weight_effective"] == 0.5
+    assert logged["noise_pi_0.1km"] + logged["noise_pi_8km"] == pytest.approx(1.0)
+
+
+def test_epoch_hook_without_query_noise(model_cfg_fixture, transform_fixture):
+    pred = _predictor(model_cfg_fixture, transform_fixture)
+    pred.on_train_epoch_start()  # must not fail
+    assert not hasattr(pred.model, "sample_head")

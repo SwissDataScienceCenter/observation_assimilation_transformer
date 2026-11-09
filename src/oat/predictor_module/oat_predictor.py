@@ -231,6 +231,31 @@ class OATPredictor(BasePredictor):
                     logger.info(f"OAT loss scheduler total steps matches trainer's estimated steps: {total_steps}.")
 
 
+    def on_train_epoch_start(self) -> None:
+        """Give the epoch to the sample head and log its VS weight and mixture."""
+        head = getattr(self.model, "sample_head", None)
+        if head is None:
+            return
+        head.epoch = float(self.current_epoch)
+        if head.vs_weight > 0:
+            self.log(
+                "vs_weight_effective",
+                head.train_vs_weight(),
+                on_step=False,
+                on_epoch=True,
+            )
+        pi = head.pi
+        if pi is not None:
+            field = self.model.noise_field
+            scales_km = field.length_scales[:: head.channels_per_scale]
+            for scale, weight in zip(scales_km * self.model.km_per_unit, pi):
+                self.log(
+                    f"noise_pi_{float(scale):g}km",
+                    weight.detach(),
+                    on_step=False,
+                    on_epoch=True,
+                )
+
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
         # This is done in parallel by all group members.
         # Ie. all GPUs advance their copy of the scheduler by one step
