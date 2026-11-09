@@ -248,7 +248,8 @@ class OATPredictor(BasePredictor):
         if pi is not None:
             field = self.model.noise_field
             scales_km = field.length_scales[:: head.channels_per_scale]
-            for scale, weight in zip(scales_km * self.model.km_per_unit, pi):
+            scales_km = scales_km * self.model.km_per_unit
+            for scale, weight in zip(scales_km, pi, strict=True):
                 self.log(
                     f"noise_pi_{float(scale):g}km",
                     weight.detach(),
