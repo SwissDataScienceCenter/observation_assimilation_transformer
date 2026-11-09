@@ -122,6 +122,19 @@ class RFFNoiseField(nn.Module):
         return NoiseFieldDraw(omega=omega, phase=phase, amplitude=amplitude)
 
 
+def _build_mlp(width: int, hidden: int, n_hidden: int, n_out: int) -> nn.Sequential:
+    """MLP with GELU. Same loop as MLPTopographyEncoder and PointGlobalEncoder.
+
+    Keep the copy until a shared build_mlp helper exists.
+    """
+    layers: list[nn.Module] = []
+    for _ in range(n_hidden):
+        layers += [nn.Linear(width, hidden), get_activation("GELU")]
+        width = hidden
+    layers.append(nn.Linear(width, n_out))
+    return nn.Sequential(*layers)
+
+
 class SampleHead(nn.Module):
     """MLP head that maps a query feature and a noise vector to one sample.
 
@@ -130,6 +143,9 @@ class SampleHead(nn.Module):
     The output for variable v is z_v, or lb + ST-ReLU(z_v - lb) if the support of
     v has a finite lower bound lb. ST-ReLU gives exact zeros in the forward pass
     and a gradient of 1 in the backward pass.
+
+    With per_variable, each variable has its own MLP and (for scale_mixture) its
+    own mixture weights pi_v. All variables read the same noise draw.
     """
 
     def __init__(
@@ -146,6 +162,7 @@ class SampleHead(nn.Module):
         mixture_init_logit: float = -4.0,
         vs_warmup_epochs: int = 0,
         vs_ramp_epochs: int = 0,
+        per_variable: bool = False,
     ) -> None:
         super().__init__()
         self.vs_weight = vs_weight
@@ -162,6 +179,11 @@ class SampleHead(nn.Module):
             )
         self.mixing = mixing
         self.num_scales = num_scales
+        self.per_variable = per_variable
+        names = list(output_head.variable_to_distribution)
+        self.variable_names = names
+        # One row of logits for each variable with per_variable, else one row.
+        n_rows = len(names) if per_variable else 1
         head_noise_channels = noise_channels
         if mixing == "scale_mixture":
             if num_scales < 1 or noise_channels % num_scales != 0:
@@ -171,14 +193,14 @@ class SampleHead(nn.Module):
                 )
             self.channels_per_scale = noise_channels // num_scales
             head_noise_channels = self.channels_per_scale
-            a0 = torch.full((num_scales,), float(mixture_init_logit))
-            a0[nugget_index] = 0.0
+            a0 = torch.full((n_rows, num_scales), float(mixture_init_logit))
+            a0[:, nugget_index] = 0.0
+            if not per_variable:
+                a0 = a0[0]
             # The logits are a0 + delta. The weight decay pulls delta to 0, thus
             # it pulls pi back to the init (nugget only), not to a uniform pi.
             self.register_buffer("mixture_a0", a0)
-            self.mixture_delta = nn.Parameter(torch.zeros(num_scales))
-        names = list(output_head.variable_to_distribution)
-        self.variable_names = names
+            self.mixture_delta = nn.Parameter(torch.zeros_like(a0))
         lower = [
             _to_bounds(output_head.distribution_mappers[v].support).lower_bound
             for v in names
@@ -189,15 +211,13 @@ class SampleHead(nn.Module):
             torch.as_tensor(output_head.loss_scaling, dtype=torch.float32).clone(),
             persistent=False,
         )
-        # Same loop as MLPTopographyEncoder and PointGlobalEncoder. Keep the copy
-        # until a shared build_mlp helper exists.
-        layers: list[nn.Module] = []
         width = in_features + head_noise_channels
-        for _ in range(mlp_hidden_layers):
-            layers += [nn.Linear(width, in_features), get_activation("GELU")]
-            width = in_features
-        layers.append(nn.Linear(width, len(names)))
-        self.mlp = nn.Sequential(*layers)
+        if per_variable:
+            self.mlps = nn.ModuleList(
+                _build_mlp(width, in_features, mlp_hidden_layers, 1) for _ in names
+            )
+        else:
+            self.mlp = _build_mlp(width, in_features, mlp_hidden_layers, len(names))
 
     def train_vs_weight(self) -> float:
         """VS weight in training for the current epoch.
@@ -214,12 +234,15 @@ class SampleHead(nn.Module):
 
     @property
     def pi(self) -> Tensor | None:
-        """Mixture weight of each length scale, shape [S]. None for `channels`."""
+        """Mixture weight of each length scale.
+
+        Shape [S], or [V, S] with per_variable. None for `channels`.
+        """
         if self.mixing != "scale_mixture":
             return None
-        return torch.softmax(self.mixture_a0 + self.mixture_delta, dim=0)
+        return torch.softmax(self.mixture_a0 + self.mixture_delta, dim=-1)
 
-    def mix_noise(self, eps: Tensor) -> Tensor:
+    def mix_noise(self, eps: Tensor, variable: int | None = None) -> Tensor:
         """Mix the length scales of the noise channels.
 
         For `scale_mixture`, channel c of the output is
@@ -230,6 +253,8 @@ class SampleHead(nn.Module):
 
         Args:
             eps: Noise, shape [B, N, M, S*C].
+            variable: Index of the variable whose pi to use. Needed with
+                per_variable.
 
         Returns:
             Noise, shape [B, N, M, C] for `scale_mixture`, else eps.
@@ -237,6 +262,10 @@ class SampleHead(nn.Module):
         pi = self.pi
         if pi is None:
             return eps
+        if self.per_variable:
+            if variable is None:
+                raise ValueError("mix_noise needs variable with per_variable.")
+            pi = pi[variable]
         grouped = eps.unflatten(-1, (self.num_scales, self.channels_per_scale))
         weight = pi.sqrt().to(eps.dtype).unsqueeze(-1)  # [S, 1]
         return (grouped * weight).sum(dim=-2)
@@ -251,9 +280,17 @@ class SampleHead(nn.Module):
         Returns:
             Samples, shape [B, N, M, V].
         """
-        eps = self.mix_noise(eps)
         h_exp = h.unsqueeze(2).expand(-1, -1, eps.shape[2], -1)
-        z = self.mlp(torch.cat([h_exp, eps], dim=-1))
+        if self.per_variable:
+            z = torch.cat(
+                [
+                    mlp(torch.cat([h_exp, self.mix_noise(eps, v)], dim=-1))
+                    for v, mlp in enumerate(self.mlps)
+                ],
+                dim=-1,
+            )
+        else:
+            z = self.mlp(torch.cat([h_exp, self.mix_noise(eps)], dim=-1))
         lb = self.lower_bounds.to(z.dtype)
         shifted = z - lb
         st_relu = shifted + (shifted.clamp(min=0.0) - shifted).detach()

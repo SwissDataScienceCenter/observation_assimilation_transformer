@@ -307,3 +307,69 @@ def test_epoch_is_not_state():
 def test_negative_schedule_rejected(kw):
     with pytest.raises(ValueError):
         _head(**kw)
+
+
+def _pv_head(S=2, C=4, dists=("normal", "zero_inflated_lognormal"), **kw):
+    v2d = {f"v{i}": d for i, d in enumerate(dists)}
+    return SampleHead(
+        in_features=8,
+        noise_channels=S * C,
+        output_head=OutputHead(8, v2d),
+        mixing="scale_mixture",
+        num_scales=S,
+        per_variable=True,
+        **kw,
+    )
+
+
+def test_per_variable_pi_has_one_row_per_variable_at_nugget():
+    head = _pv_head(S=3, nugget_index=1)
+    pi = head.pi
+    assert pi.shape == (2, 3)
+    assert torch.allclose(pi.sum(dim=1), torch.ones(2))
+    assert (pi.argmax(dim=1) == 1).all()
+
+
+def test_per_variable_heads_are_independent():
+    torch.manual_seed(0)
+    head = _pv_head()
+    y = head(torch.randn(2, 4, 8), torch.randn(2, 4, 5, 8))
+    assert y.shape == (2, 4, 5, 2)
+    y[..., 0].sum().backward()
+    assert head.mlps[0][0].weight.grad.abs().sum() > 0
+    grad_1 = head.mlps[1][0].weight.grad
+    assert grad_1 is None or grad_1.abs().sum() == 0
+    assert head.mixture_delta.grad[1].abs().sum() == 0
+    assert head.mixture_delta.grad[0].abs().sum() > 0
+
+
+def test_per_variable_mix_uses_its_own_pi():
+    torch.manual_seed(0)
+    head = _pv_head(S=2, C=4)
+    with torch.no_grad():
+        head.mixture_delta.copy_(torch.tensor([[0.0, 0.0], [0.0, 8.0]]))
+    eps = torch.randn(1, 3, 2, 8)
+    expected_1 = eps.unflatten(-1, (2, 4)) * head.pi[1].sqrt().unsqueeze(-1)
+    assert torch.allclose(head.mix_noise(eps, variable=1), expected_1.sum(-2))
+    assert not torch.allclose(head.mix_noise(eps, variable=0), expected_1.sum(-2))
+
+
+def test_per_variable_keeps_exact_zeros():
+    torch.manual_seed(0)
+    y = _pv_head()(torch.randn(2, 5, 8), torch.randn(2, 5, 6, 8))
+    assert (y[..., 1] >= 0).all()
+
+
+def test_per_variable_without_mixture_reads_raw_channels():
+    head = SampleHead(
+        in_features=8,
+        noise_channels=4,
+        output_head=OutputHead(8, {"a": "normal", "b": "normal"}),
+        per_variable=True,
+    )
+    assert head.pi is None
+    assert head(torch.randn(2, 3, 8), torch.randn(2, 3, 5, 4)).shape == (2, 3, 5, 2)
+
+
+def test_shared_head_has_no_per_variable_keys():
+    assert not any(k.startswith("mlps.") for k in _head().state_dict())
