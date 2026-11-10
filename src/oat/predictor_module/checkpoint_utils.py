@@ -1,3 +1,4 @@
+import logging
 from typing import Type, Tuple, Optional
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from omegaconf import OmegaConf, DictConfig
 from oat.paths import REGISTRY_PATH, checkpoint_root
 
 _DEFAULT_REGISTRY = REGISTRY_PATH
+
+logger = logging.getLogger(__name__)
 
 # Maps substrings of model_cls to the predictor class that loads them.
 _MODEL_CLS_TO_PREDICTOR = {
@@ -117,6 +120,27 @@ def _load_gp_predictor(
     state = torch.load(path, map_location=map_location, weights_only=False)
     predictor.load_state_dict(state["state_dict"])
     return predictor, cfg
+
+
+def load_init_weights(predictor: torch.nn.Module, cfg: DictConfig) -> None:
+    """Load the weights of ``cfg.init_weights_from`` into ``predictor``.
+
+    The load is strict and includes the transforms in the predictor state.
+    It loads no optimizer state, no scheduler state and no epoch counter.
+    This is different from ``resume_from_checkpoint``.
+
+    Raises:
+        ValueError: If ``resume_from_checkpoint`` is also set.
+        RuntimeError: If the checkpoint keys do not match the predictor.
+    """
+    path = cfg.get("init_weights_from", None)
+    if path is None:
+        return
+    if cfg.get("resume_from_checkpoint", None) is not None:
+        raise ValueError("Set init_weights_from or resume_from_checkpoint, not both.")
+    checkpoint = torch.load(str(path), map_location="cpu", weights_only=False)
+    predictor.load_state_dict(checkpoint["state_dict"], strict=True)
+    logger.info("Loaded the initial weights from %s", path)
 
 
 def resolve_checkpoint(

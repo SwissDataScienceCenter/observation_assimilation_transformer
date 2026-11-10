@@ -8,6 +8,7 @@ from oat.data_module.setup import setup_data_and_transform
 from oat.predictor_module.oat_predictor import setup_oat_cfg, setup_oat_predictor
 from oat.predictor_module.gp_predictor import setup_gp_predictor
 from oat.predictor_module import OATPredictor
+from oat.predictor_module.checkpoint_utils import load_init_weights
 from oat.predictor_module.schedulers import estimate_total_steps
 from omegaconf import DictConfig
 import hydra
@@ -242,6 +243,7 @@ def main(cfg: DictConfig) -> None:
             cfg=cfg,
         )
         predictor.set_index_projection(dataset)
+        load_init_weights(predictor, cfg)
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)
