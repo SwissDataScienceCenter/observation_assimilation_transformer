@@ -11,6 +11,7 @@ defaults:
 seed: 42
 
 resume_from_checkpoint: null  # path to a checkpoint to resume training from (e.g. last.ckpt)
+train_only: null  # "sample_head": train only the query-noise sample head (stage 2)
 run_name: null  # override the auto-generated checkpoint/W&B run name
 
 # Metric for best-checkpoint selection + early stopping. null = auto-derive per

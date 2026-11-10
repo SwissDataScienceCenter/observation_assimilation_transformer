@@ -110,6 +110,7 @@ class OATPredictor(BasePredictor):
                  oat_loss_scheduler_class: Optional[Type[nn.Module]] = None,
                  oat_loss_scheduler_params:  Optional[dict]  = None,
                  field_roles: dict | None = None,
+                 train_only: str | None = None,
                  ):
         super().__init__(output_var_names=output_var_names, field_roles=field_roles)
 
@@ -131,7 +132,11 @@ class OATPredictor(BasePredictor):
 
         self.input_transform = input_transform
         self.output_transform = output_transform
-        
+
+        self.train_only = train_only
+        if train_only is not None:
+            self._freeze_all_but(train_only)
+
         # NOTE perhaps make this configurable?
         self.metrics_fn = {
             # 'sample_mae': sample_mae,
@@ -195,6 +200,38 @@ class OATPredictor(BasePredictor):
                     f"support is {interval}. Ensure output_transform and "
                     "obs_variable_to_distribution are compatible."
                 )
+
+    def _freeze_all_but(self, train_only: str) -> None:
+        """Freeze all parameters except the parameters of `train_only`.
+
+        Only "sample_head" is valid. It needs a model with query noise.
+        """
+        if train_only != "sample_head":
+            raise ValueError(
+                f"train_only must be None or 'sample_head', not {train_only!r}."
+            )
+        if not hasattr(self.model, "sample_head"):
+            raise ValueError(
+                "train_only='sample_head' needs a model with query noise "
+                "(model/query_noise=rff)."
+            )
+        self.requires_grad_(False)
+        self.model.sample_head.requires_grad_(True)
+        self.train(self.training)
+
+    def train(self, mode: bool = True) -> "OATPredictor":
+        """Set the train mode. With train_only, only the sample head trains.
+
+        All other modules stay in eval mode, thus BatchNorm keeps its running
+        statistics and dropout is off. Lightning calls train() at the start of
+        fit and after each validation loop, thus the rule applies each time.
+        """
+        if mode and getattr(self, "train_only", None) is not None:
+            super().train(False)
+            self.model.sample_head.train(True)
+            return self
+        super().train(mode)
+        return self
 
     def on_fit_start(self) -> None:
         train_loader = self.trainer.train_dataloader
@@ -500,7 +537,10 @@ class OATPredictor(BasePredictor):
 
     def configure_optimizers(self) -> Optimizer:
 
-            optimizer = self.optimizer_class(self.parameters(), **self.optimizer_params)
+            # Frozen parameters (train_only) stay out of the optimizer. Thus no
+            # weight decay changes them.
+            trainable = [p for p in self.parameters() if p.requires_grad]
+            optimizer = self.optimizer_class(trainable, **self.optimizer_params)
 
             if self.lr_scheduler_class is not None:
                 scheduler = self.lr_scheduler_class(optimizer, **self.lr_scheduler_params)
@@ -762,7 +802,8 @@ def setup_oat_predictor(model_cfg: model.OATConfig | model.UninformedOATConfig,
         lr_scheduler_params=cfg.predictor.kwargs.lr_scheduler_params,
         oat_loss_scheduler_class=oat_loss_sched_cls,
         oat_loss_scheduler_params=oat_loss_sched_params,
-        field_roles=field_roles
+        field_roles=field_roles,
+        train_only=cfg.get("train_only", None),
     )
 
     return predictor
