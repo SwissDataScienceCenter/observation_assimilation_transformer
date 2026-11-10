@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from omegaconf import DictConfig, OmegaConf
 
-from oat.model_module import model
+from oat.model_module import model, query_noise
 from oat.model_module.model import (
     OATConfig,
     OAT,
@@ -232,6 +232,22 @@ class OATPredictor(BasePredictor):
             return self
         super().train(mode)
         return self
+
+    def on_train_epoch_end(self) -> None:
+        """Log the share of each noise length scale in the sample head.
+
+        The shares show if the head changes the spatial structure of the
+        members. The VS loss value is not sensitive to this change.
+        """
+        if not hasattr(self.model, "sample_head"):
+            return
+        field = self.model.noise_field
+        lengths = [
+            round(float(u) * self.model.km_per_unit, 6) for u in field.length_scales
+        ]
+        shares = query_noise.noise_scale_shares(self.model.sample_head, lengths)
+        for length, share in shares.items():
+            self.log(f"noise_share_{length:g}km", share, on_epoch=True)
 
     def on_fit_start(self) -> None:
         train_loader = self.trainer.train_dataloader

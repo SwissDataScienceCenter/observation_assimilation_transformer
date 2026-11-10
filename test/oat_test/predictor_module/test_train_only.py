@@ -163,3 +163,21 @@ def test_checkpoint_round_trip_with_train_only(stage2, batch_fixture, tmp_path):
     assert reloaded.train_only == "sample_head"
     samples = reloaded.predict_step(batch_fixture, 0, n_samples=3)
     assert torch.isfinite(samples).all()
+
+
+def test_train_epoch_end_logs_noise_scale_shares(stage2):
+    logged: dict[str, float] = {}
+    stage2.log = lambda name, value, **kw: logged.__setitem__(name, value)  # type: ignore[method-assign]
+    stage2.on_train_epoch_end()
+    assert set(logged) == {"noise_share_2km", "noise_share_8km"}
+    assert sum(logged.values()) == pytest.approx(1.0)
+
+
+def test_early_stopping_off_with_train_only():
+    from omegaconf import OmegaConf
+
+    from scripts.train_model import _early_stopping_enabled
+
+    assert _early_stopping_enabled(OmegaConf.create({"train_only": None}))
+    assert _early_stopping_enabled(OmegaConf.create({}))
+    assert not _early_stopping_enabled(OmegaConf.create({"train_only": "sample_head"}))
