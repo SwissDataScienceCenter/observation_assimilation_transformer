@@ -8,6 +8,7 @@ from oat.data_module.setup import setup_data_and_transform
 from oat.predictor_module.oat_predictor import setup_oat_cfg, setup_oat_predictor
 from oat.predictor_module.gp_predictor import setup_gp_predictor
 from oat.predictor_module import OATPredictor
+from oat.predictor_module.checkpoint_utils import load_init_weights
 from oat.predictor_module.schedulers import estimate_total_steps
 from omegaconf import DictConfig
 import hydra
@@ -76,6 +77,14 @@ def _resolve_checkpoint_monitor(cfg: DictConfig) -> Tuple[str, str]:
     return "val_loss", mode
 
 
+def _early_stopping_enabled(cfg: DictConfig) -> bool:
+    """Early stopping is off for a train_only run (stage 2).
+
+    In stage 2 the val_loss is almost flat, thus it gives no stop signal.
+    """
+    return cfg.get("train_only", None) is None
+
+
 def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     base_name = cfg.logging.run_name_prefix
     now_str = datetime.now().strftime("%Y%m%d")
@@ -129,12 +138,10 @@ def setup_logger_and_callbacks(cfg: DictConfig) -> Tuple[WandbLogger, List]:
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     OmegaConf.save(cfg, os.path.join(checkpoint_dir, "config.yaml"))
-    return wandb_logger, [
-        checkpoint_callback,
-        last_checkpoint_callback,
-        early_stop_callback,
-        lr_monitor,
-    ]
+    callbacks = [checkpoint_callback, last_checkpoint_callback, lr_monitor]
+    if _early_stopping_enabled(cfg):
+        callbacks.insert(2, early_stop_callback)
+    return wandb_logger, callbacks
 
 
 @hydra.main(config_path="../configs/", config_name="config", version_base="1.3")
@@ -242,6 +249,7 @@ def main(cfg: DictConfig) -> None:
             cfg=cfg,
         )
         predictor.set_index_projection(dataset)
+        load_init_weights(predictor, cfg)
 
         # NOTE check if compiling model helps
         # predictor = torch.compile(predictor)

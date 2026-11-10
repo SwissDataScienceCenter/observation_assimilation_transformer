@@ -190,3 +190,16 @@ def test_sample_head_vs_dry_members_finite_gradients():
     grads = [p.grad for p in head.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
     assert torch.isfinite(h.grad).all()
+
+
+def test_noise_scale_shares_from_first_layer_weights():
+    from oat.model_module.query_noise import noise_scale_shares
+
+    head = _head()  # in_features 8, noise_channels 4
+    with torch.no_grad():
+        w = head.mlp[0].weight  # [8, 8 + 4]
+        w.fill_(5.0)  # h columns must not count
+        w[:, 8:10] = 1.0  # 2 channels of the 2 km scale
+        w[:, 10:12] = 2.0  # 2 channels of the 64 km scale
+    shares = noise_scale_shares(head, [2.0, 2.0, 64.0, 64.0])
+    assert shares == pytest.approx({2.0: 0.2, 64.0: 0.8})

@@ -243,3 +243,30 @@ class SampleHead(nn.Module):
             per_var[name] = loss_v.detach()
             total = total + loss_v
         return per_var, total, vs_per_var
+
+
+def noise_scale_shares(
+    head: SampleHead, channel_lengths_km: Sequence[float]
+) -> dict[float, float]:
+    """Share of each noise length scale in the first layer of the head.
+
+    The share of scale L is the sum of the squared weights of the noise
+    channels with length L, divided by the same sum over all noise channels.
+    It shows how much the head uses each scale. The noise channels are the
+    last columns of the first layer, in the channel order of the noise field.
+
+    Args:
+        head: The sample head.
+        channel_lengths_km: Length in km of each noise channel.
+
+    Returns:
+        Map from length in km to share. The shares add up to 1.
+    """
+    weight = head.mlp[0].weight.detach()
+    noise = weight[:, weight.shape[1] - len(channel_lengths_km) :]
+    per_channel = (noise**2).sum(dim=0)
+    total = float(per_channel.sum())
+    shares: dict[float, float] = {}
+    for length, value in zip(channel_lengths_km, per_channel.tolist(), strict=True):
+        shares[length] = shares.get(length, 0.0) + value / total
+    return shares
